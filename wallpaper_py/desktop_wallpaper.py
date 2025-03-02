@@ -25,6 +25,7 @@ class Position(Enum):
     FILL = 4
     SPAN = 5
 
+
 @dataclass
 class Rectangle:
     x1: int
@@ -34,11 +35,12 @@ class Rectangle:
 
     def get_height(self) -> int:
         return self.y2 - self.y1
+
     def get_width(self) -> int:
         return self.x2 - self.x1
 
 
-class IDesktopWallpaper(IUnknown): # type: ignore[misc]
+class IDesktopWallpaper(IUnknown):  # type: ignore[misc]
     _iid_ = GUID("{B92B56A9-8B55-4E14-9A89-0199BBB6F93B}")
 
     @classmethod
@@ -81,7 +83,9 @@ class IDesktopWallpaper(IUnknown): # type: ignore[misc]
             (["out"], POINTER(RECT), "pRect"),
         ),
         COMMETHOD([], HRESULT, "SetBackgroundColor", (["in"], DWORD, "color")),
-        COMMETHOD([], HRESULT, "GetBackgroundColor", (["out"], POINTER(DWORD), "color")),
+        COMMETHOD(
+            [], HRESULT, "GetBackgroundColor", (["out"], POINTER(DWORD), "color")
+        ),
         COMMETHOD([], HRESULT, "SetPosition", (["in"], DWORD, "position")),
         COMMETHOD([], HRESULT, "GetPosition", (["out"], POINTER(DWORD), "position")),
     ]
@@ -97,9 +101,7 @@ class IDesktopWallpaper(IUnknown): # type: ignore[misc]
     def GetMonitorRECT(self, monitorId: str) -> Rectangle:
         rect = RECT()
         self.__com_GetMonitorRECT(LPCWSTR(monitorId), pointer(rect))
-        return Rectangle(
-            rect.left, rect.top, rect.right, rect.bottom
-        )
+        return Rectangle(rect.left, rect.top, rect.right, rect.bottom)
 
     def GetWallpaper(self, monitorId: str) -> str:
         wallpaper = LPWSTR()
@@ -112,23 +114,19 @@ class IDesktopWallpaper(IUnknown): # type: ignore[misc]
         self.__com_GetMonitorDevicePathAt(UINT(monitorIndex), pointer(monitorId))
         assert monitorId.value is not None
         return monitorId.value
-    
+
     def GetPosition(self) -> Position:
         dword = DWORD()
         self.__com_GetPosition(pointer(dword))
         assert dword.value is not None
         return Position(dword.value)
-    
+
     def SetPosition(self, position: Position) -> None:
         result = self.__com_SetPosition(DWORD(position.value))
         print(result)
 
-
-    
     def GetBackgroundColor(self) -> int:
         dword = DWORD()
         self.__com_GetBackgroundColor(pointer(dword))
         assert dword.value is not None
         return dword.value
-
-

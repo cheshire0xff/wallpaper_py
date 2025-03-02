@@ -1,10 +1,14 @@
 import argparse
 import os
 from pathlib import Path
+from typing import Optional
 import comtypes
 
+from wallpaper_py.cli_parsers import existing_file_type
+from wallpaper_py.image import ImageMode, image_mode_parse, process_image
 from wallpaper_py.monitor import get_monitors
 from .desktop_wallpaper import IDesktopWallpaper, Position
+
 
 def list_monitors() -> None:
     """List all connected monitors with their properties."""
@@ -13,7 +17,7 @@ def list_monitors() -> None:
         dw = IDesktopWallpaper.CoCreateInstance()
         monitors = get_monitors(dw)
         print(f"Connected monitors ({len(monitors)}):")
-        print("Position:", dw.GetPosition())
+        print("Global mode:", dw.GetPosition())
         print(f"Background color: #{dw.GetBackgroundColor():08X}")
 
         for monitor in monitors:
@@ -21,9 +25,7 @@ def list_monitors() -> None:
             rect = monitor.rect
             print(f"[Monitor {monitor.index}]")
             print(f"\tDevice ID: {monitor_id}")
-            print(
-                f"\tPosition:  {rect.x1}, {rect.y1} to {rect.x2}, {rect.y2}"
-            )
+            print(f"\tPosition:  {rect.x1}, {rect.y1} to {rect.x2}, {rect.y2}")
             print(f"\tSize:      {rect.get_width()}x{rect.get_height()}")
             print(f"\tWallpaper: {monitor.wallpaper}")
 
@@ -33,22 +35,27 @@ def list_monitors() -> None:
         comtypes.CoUninitialize()
 
 
-def set_wallpaper(image_path: str, monitor_ix: int, mode: Position) -> None:
+def set_wallpaper(
+    image_path: Path, monitor_ix: int, mode: Optional[ImageMode] = None
+) -> None:
     comtypes.CoInitialize()
     try:
         dw = IDesktopWallpaper.CoCreateInstance()
-
-        count = dw.GetMonitorDevicePathCount()
-        if monitor_ix >= count:
-            raise ValueError(f"Invalid index: {monitor_ix}. Found {count} monitors.")
-
-        abs_path = str(Path(image_path).absolute())
-        if not os.path.exists(abs_path):
-            raise FileNotFoundError(f"Wallpaper not found: {abs_path}")
-
-        monitor_id = dw.GetMonitorDevicePathAt(monitor_ix)
-        dw.SetWallpaper(monitor_id, abs_path)
-        dw.SetPosition(mode)
+        monitors = get_monitors(dw)
+        try:
+            monitor = [
+                monitor for monitor in monitors if (monitor.index == monitor_ix)
+            ][0]
+        except IndexError as err:
+            raise RuntimeError(
+                f"Invalid monitor index: {monitor_ix}! Found monitors: {monitors}"
+            ) from err
+        image = image_path
+        if mode is not None:
+            image = process_image(
+                image_path, monitor.rect.get_width(), monitor.rect.get_height(), mode
+            )
+        dw.SetWallpaper(monitor.id, str(image.absolute()))
 
     except comtypes.COMError as e:
         print(f"COM Error: {e}")
@@ -80,16 +87,17 @@ def get_args() -> argparse.Namespace:
 
     # Set command
     set_parser = subparsers.add_parser("set", help="Set wallpaper for a monitor")
-    set_parser.add_argument("image_path", help="Path to the image file")
+    set_parser.add_argument(
+        "image_path", type=existing_file_type, help="Path to the image file"
+    )
     set_parser.add_argument(
         "-m", "--monitor", type=int, default=0, help="Monitor index (default: 0)"
     )
     set_parser.add_argument(
         "--mode",
-        type=position_parse,
-        choices=list(Position),
-        default="FILL",
-        help="Wallpaper position mode (default: FILL)",
+        type=image_mode_parse,
+        choices=list(ImageMode),
+        help="Wallpaper position mode (default: None)",
     )
     return parser.parse_args()
 

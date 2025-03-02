@@ -18,10 +18,7 @@ def get_monitors(dw: IDesktopWallpaper) -> list[Monitor]:
         monitor_id = dw.GetMonitorDevicePathAt(index)
         rect = dw.GetMonitorRECT(monitor_id)
         wallpaper = dw.GetWallpaper(monitor_id)
-        result.append(Monitor(
-            id=monitor_id,
-            rect=rect,
-            wallpaper=wallpaper,
-            index=index
-        ))
+        result.append(
+            Monitor(id=monitor_id, rect=rect, wallpaper=wallpaper, index=index)
+        )
     return result
