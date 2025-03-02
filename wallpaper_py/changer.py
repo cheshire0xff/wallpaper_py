@@ -1,8 +1,9 @@
+import argparse
 import os
-import sys
 from pathlib import Path
 import comtypes
-from .desktop_wallpaper import IDesktopWallpaper
+from .desktop_wallpaper import IDesktopWallpaper, Position
+
 
 def list_monitors() -> None:
     """List all connected monitors with their properties."""
@@ -12,24 +13,29 @@ def list_monitors() -> None:
         print("Before")
         count = dw.GetMonitorDevicePathCount()
         print(f"Connected monitors ({count}):")
-        
+        print("Position:", dw.GetPosition())
+        print(f"Background color: #{dw.GetBackgroundColor():08X}")
+
         for index in range(count):
             monitor_id = dw.GetMonitorDevicePathAt(index)
             rect = dw.GetMonitorRECT(monitor_id)
             wallpaper = dw.GetWallpaper(monitor_id)
-            
+
             print(f"[Monitor {index}]")
             print(f"\tDevice ID: {monitor_id}")
-            print(f"\tPosition:  {rect.left}, {rect.top} to {rect.right}, {rect.bottom}")
+            print(
+                f"\tPosition:  {rect.left}, {rect.top} to {rect.right}, {rect.bottom}"
+            )
             print(f"\tSize:      {rect.right - rect.left}x{rect.bottom - rect.top}")
             print(f"\tWallpaper: {wallpaper}")
-            
+
     except comtypes.COMError as e:
         print(f"COM Error: {e}")
     finally:
         comtypes.CoUninitialize()
 
-def set_wallpaper(image_path: str, monitor_ix: int = 0) -> None:
+
+def set_wallpaper(image_path: str, monitor_ix: int, mode: Position) -> None:
     comtypes.CoInitialize()
     try:
         dw = IDesktopWallpaper.CoCreateInstance()
@@ -44,26 +50,50 @@ def set_wallpaper(image_path: str, monitor_ix: int = 0) -> None:
 
         monitor_id = dw.GetMonitorDevicePathAt(monitor_ix)
         dw.SetWallpaper(monitor_id, abs_path)
-        
+        dw.SetPosition(mode)
+
     except comtypes.COMError as e:
         print(f"COM Error: {e}")
     finally:
         comtypes.CoUninitialize()
 
+
+def position_parse(arg: str) -> Position:
+    return Position[arg.upper()]
+
+
 def main() -> None:
-    if len(sys.argv) < 2:
-        print("Usage: python changer.py [list|set]")
-        sys.exit(1)
-        
-    if sys.argv[1] == "list":
+    args = get_args()
+    if args.command == "list":
         list_monitors()
-    elif sys.argv[1] == "set":
-        if len(sys.argv) < 3:
-            print("Usage: python changer.py set <image_path> [monitor_index=0] [mode=FILL]")
-            sys.exit(1)
-        monitor_ix = int(sys.argv[3]) if len(sys.argv) > 2 else 0
-        set_wallpaper(sys.argv[2], monitor_ix)
-        print(f"Wallpaper set successfully on monitor {monitor_ix}")
+    elif args.command == "set":
+        set_wallpaper(args.image_path, args.monitor, args.mode)
+        print(
+            f"Wallpaper set successfully on monitor {args.monitor} with {args.mode} mode"
+        )
+
+
+def get_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Manage Windows desktop wallpapers")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    # List command
+    _list_parser = subparsers.add_parser("list", help="List all connected monitors")
+
+    # Set command
+    set_parser = subparsers.add_parser("set", help="Set wallpaper for a monitor")
+    set_parser.add_argument("image_path", help="Path to the image file")
+    set_parser.add_argument(
+        "-m", "--monitor", type=int, default=0, help="Monitor index (default: 0)"
+    )
+    set_parser.add_argument(
+        "--mode",
+        type=position_parse,
+        choices=list(Position),
+        default="FILL",
+        help="Wallpaper position mode (default: FILL)",
+    )
+    return parser.parse_args()
 
 
 if __name__ == "__main__":
