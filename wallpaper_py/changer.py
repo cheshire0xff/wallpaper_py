@@ -2,32 +2,30 @@ import argparse
 import os
 from pathlib import Path
 import comtypes
-from .desktop_wallpaper import IDesktopWallpaper, Position
 
+from wallpaper_py.monitor import get_monitors
+from .desktop_wallpaper import IDesktopWallpaper, Position
 
 def list_monitors() -> None:
     """List all connected monitors with their properties."""
     comtypes.CoInitialize()
     try:
         dw = IDesktopWallpaper.CoCreateInstance()
-        print("Before")
-        count = dw.GetMonitorDevicePathCount()
-        print(f"Connected monitors ({count}):")
+        monitors = get_monitors(dw)
+        print(f"Connected monitors ({len(monitors)}):")
         print("Position:", dw.GetPosition())
         print(f"Background color: #{dw.GetBackgroundColor():08X}")
 
-        for index in range(count):
-            monitor_id = dw.GetMonitorDevicePathAt(index)
-            rect = dw.GetMonitorRECT(monitor_id)
-            wallpaper = dw.GetWallpaper(monitor_id)
-
-            print(f"[Monitor {index}]")
+        for monitor in monitors:
+            monitor_id = monitor.id
+            rect = monitor.rect
+            print(f"[Monitor {monitor.index}]")
             print(f"\tDevice ID: {monitor_id}")
             print(
-                f"\tPosition:  {rect.left}, {rect.top} to {rect.right}, {rect.bottom}"
+                f"\tPosition:  {rect.x1}, {rect.y1} to {rect.x2}, {rect.y2}"
             )
-            print(f"\tSize:      {rect.right - rect.left}x{rect.bottom - rect.top}")
-            print(f"\tWallpaper: {wallpaper}")
+            print(f"\tSize:      {rect.get_width()}x{rect.get_height()}")
+            print(f"\tWallpaper: {monitor.wallpaper}")
 
     except comtypes.COMError as e:
         print(f"COM Error: {e}")

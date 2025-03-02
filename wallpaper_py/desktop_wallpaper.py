@@ -1,11 +1,11 @@
 import ctypes
 from ctypes import HRESULT, POINTER, Structure, pointer
 from ctypes.wintypes import LPCWSTR, UINT, LPWSTR, DWORD
+from dataclasses import dataclass
 from enum import Enum
 from typing import cast
 
-import comtypes.client
-from comtypes import IUnknown, GUID, COMMETHOD
+from comtypes import IUnknown, GUID, COMMETHOD, CoCreateInstance
 
 
 class RECT(Structure):
@@ -25,15 +25,27 @@ class Position(Enum):
     FILL = 4
     SPAN = 5
 
+@dataclass
+class Rectangle:
+    x1: int
+    y1: int
+    x2: int
+    y2: int
 
-class IDesktopWallpaper(IUnknown):
+    def get_height(self) -> int:
+        return self.y2 - self.y1
+    def get_width(self) -> int:
+        return self.x2 - self.x1
+
+
+class IDesktopWallpaper(IUnknown): # type: ignore[misc]
     _iid_ = GUID("{B92B56A9-8B55-4E14-9A89-0199BBB6F93B}")
 
     @classmethod
     def CoCreateInstance(cls) -> "IDesktopWallpaper":
         # Search `Desktop Wallpaper` in `\HKEY_CLASSES_ROOT\CLSID` to obtain the magic string
         class_id = GUID("{C2CF3110-460E-4fc1-B9D0-8A1C0C9CC4BD}")
-        instance = comtypes.CoCreateInstance(class_id, interface=cls)
+        instance = CoCreateInstance(class_id, interface=cls)
         return cast(IDesktopWallpaper, instance)
 
     _methods_ = [
@@ -82,10 +94,12 @@ class IDesktopWallpaper(IUnknown):
     def SetWallpaper(self, monitorId: str, wallpaper: str) -> None:
         self.__com_SetWallpaper(LPCWSTR(monitorId), LPCWSTR(wallpaper))
 
-    def GetMonitorRECT(self, monitorId: str) -> RECT:
+    def GetMonitorRECT(self, monitorId: str) -> Rectangle:
         rect = RECT()
         self.__com_GetMonitorRECT(LPCWSTR(monitorId), pointer(rect))
-        return rect
+        return Rectangle(
+            rect.left, rect.top, rect.right, rect.bottom
+        )
 
     def GetWallpaper(self, monitorId: str) -> str:
         wallpaper = LPWSTR()
