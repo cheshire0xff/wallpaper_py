@@ -1,4 +1,4 @@
-name: Python Code Quality Checks (Windows)
+name: "Windows CI: Code Quality & Integration Pipeline"
 
 on:
   push:
@@ -39,3 +39,6 @@ jobs:
 
     - name: Run Pylint analysis
       run: pylint wallpaper_py
+      
+    - name: Run Monitor List Integration Test
+      run: python -m wallpaper_py.changer list
