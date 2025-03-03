@@ -1,11 +1,10 @@
 import ctypes
 from ctypes import HRESULT, POINTER, Structure, pointer
 from ctypes.wintypes import LPCWSTR, UINT, LPWSTR, DWORD
-from dataclasses import dataclass
 from enum import Enum
 from typing import cast
-
 from comtypes import IUnknown, GUID, COMMETHOD, CoCreateInstance
+from wallpaper_py.desktop_protocol import Rectangle
 
 
 class RECT(Structure):
@@ -26,25 +25,11 @@ class Position(Enum):
     SPAN = 5
 
 
-@dataclass
-class Rectangle:
-    x1: int
-    y1: int
-    x2: int
-    y2: int
-
-    def get_height(self) -> int:
-        return self.y2 - self.y1
-
-    def get_width(self) -> int:
-        return self.x2 - self.x1
-
-
 class IDesktopWallpaper(IUnknown):  # type: ignore[misc]
     _iid_ = GUID("{B92B56A9-8B55-4E14-9A89-0199BBB6F93B}")
 
     @classmethod
-    def CoCreateInstance(cls) -> "IDesktopWallpaper":
+    def co_create_instance(cls) -> "IDesktopWallpaper":
         # Search `Desktop Wallpaper` in `\HKEY_CLASSES_ROOT\CLSID` to obtain the magic string
         class_id = GUID("{C2CF3110-460E-4fc1-B9D0-8A1C0C9CC4BD}")
         instance = CoCreateInstance(class_id, interface=cls)
@@ -90,42 +75,42 @@ class IDesktopWallpaper(IUnknown):  # type: ignore[misc]
         COMMETHOD([], HRESULT, "GetPosition", (["out"], POINTER(DWORD), "position")),
     ]
 
-    def GetMonitorDevicePathCount(self) -> int:
+    def get_monitor_device_path_count(self) -> int:
         count = UINT()
         self.__com_GetMonitorDevicePathCount(pointer(count))
         return count.value
 
-    def SetWallpaper(self, monitorId: str, wallpaper: str) -> None:
-        self.__com_SetWallpaper(LPCWSTR(monitorId), LPCWSTR(wallpaper))
+    def set_wallpaper(self, monitor_id: str, wallpaper: str) -> None:
+        self.__com_SetWallpaper(LPCWSTR(monitor_id), LPCWSTR(wallpaper))
 
-    def GetMonitorRECT(self, monitorId: str) -> Rectangle:
+    def get_monitor_rect(self, monitor_id: str) -> Rectangle:
         rect = RECT()
-        self.__com_GetMonitorRECT(LPCWSTR(monitorId), pointer(rect))
+        self.__com_GetMonitorRECT(LPCWSTR(monitor_id), pointer(rect))
         return Rectangle(rect.left, rect.top, rect.right, rect.bottom)
 
-    def GetWallpaper(self, monitorId: str) -> str:
+    def get_wallpaper(self, monitor_id: str) -> str:
         wallpaper = LPWSTR()
-        self.__com_GetWallpaper(LPCWSTR(monitorId), pointer(wallpaper))
+        self.__com_GetWallpaper(LPCWSTR(monitor_id), pointer(wallpaper))
         assert wallpaper.value is not None
         return wallpaper.value
 
-    def GetMonitorDevicePathAt(self, monitorIndex: int) -> str:
-        monitorId = LPWSTR()
-        self.__com_GetMonitorDevicePathAt(UINT(monitorIndex), pointer(monitorId))
-        assert monitorId.value is not None
-        return monitorId.value
+    def get_monitor_device_path_at(self, monitor_index: int) -> str:
+        monitor_id = LPWSTR()
+        self.__com_GetMonitorDevicePathAt(UINT(monitor_index), pointer(monitor_id))
+        assert monitor_id.value is not None
+        return monitor_id.value
 
-    def GetPosition(self) -> Position:
+    def get_position(self) -> Position:
         dword = DWORD()
         self.__com_GetPosition(pointer(dword))
         assert dword.value is not None
         return Position(dword.value)
 
-    def SetPosition(self, position: Position) -> None:
+    def set_position(self, position: Position) -> None:
         result = self.__com_SetPosition(DWORD(position.value))
         print(result)
 
-    def GetBackgroundColor(self) -> int:
+    def get_background_color(self) -> int:
         dword = DWORD()
         self.__com_GetBackgroundColor(pointer(dword))
         assert dword.value is not None

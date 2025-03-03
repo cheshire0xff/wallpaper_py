@@ -1,33 +1,31 @@
 import argparse
-import os
 from pathlib import Path
 from typing import Optional
 import comtypes
 
 from wallpaper_py.cli_parsers import existing_file_type
-from wallpaper_py.image import ImageMode, image_mode_parse, process_image
-from wallpaper_py.monitor import get_monitors
-from .desktop_wallpaper import IDesktopWallpaper, Position
+from wallpaper_py.image import image_mode_parse, process_image
+from .desktop_manager import DesktopManager
+from .desktop_protocol import ImageMode
 
 
 def list_monitors() -> None:
     """List all connected monitors with their properties."""
-    comtypes.CoInitialize()
     try:
-        dw = IDesktopWallpaper.CoCreateInstance()
-        monitors = get_monitors(dw)
-        print(f"Connected monitors ({len(monitors)}):")
-        print("Global mode:", dw.GetPosition())
-        print(f"Background color: #{dw.GetBackgroundColor():08X}")
+        manager = DesktopManager()
+        monitors = manager.get_monitors()
 
-        for monitor in monitors:
-            monitor_id = monitor.id
-            rect = monitor.rect
-            print(f"[Monitor {monitor.index}]")
-            print(f"\tDevice ID: {monitor_id}")
+        print(f"Connected monitors ({len(monitors)}):")
+        if not manager.is_mode_per_monitor_supported():
+            mode = manager.get_global_mode()
+            print("Global mode:", mode)
+
+        for index, monitor in enumerate(monitors):
+            rect = monitor.monitor_description.rect
+            print(f"\tIndex:     {index}")
             print(f"\tPosition:  {rect.x1}, {rect.y1} to {rect.x2}, {rect.y2}")
             print(f"\tSize:      {rect.get_width()}x{rect.get_height()}")
-            print(f"\tWallpaper: {monitor.wallpaper}")
+            print(f"\tWallpaper: {monitor.wallpaper_settings.wallpaper}")
 
     except comtypes.COMError as e:
         print(f"COM Error: {e}")
@@ -40,31 +38,24 @@ def set_wallpaper(
 ) -> None:
     comtypes.CoInitialize()
     try:
-        dw = IDesktopWallpaper.CoCreateInstance()
-        monitors = get_monitors(dw)
+        manager = DesktopManager()
+        monitors = manager.get_monitors()
         try:
-            monitor = [
-                monitor for monitor in monitors if (monitor.index == monitor_ix)
-            ][0]
+            monitor = monitors[monitor_ix]
         except IndexError as err:
             raise RuntimeError(
                 f"Invalid monitor index: {monitor_ix}! Found monitors: {monitors}"
             ) from err
         image = image_path
         if mode is not None:
-            image = process_image(
-                image_path, monitor.rect.get_width(), monitor.rect.get_height(), mode
-            )
-        dw.SetWallpaper(monitor.id, str(image.absolute()))
+            rect = monitor.monitor_description.rect
+            image = process_image(image_path, rect.get_width(), rect.get_height(), mode)
+        manager.set_wallpaper(monitor.monitor_description, image)
 
     except comtypes.COMError as e:
         print(f"COM Error: {e}")
     finally:
         comtypes.CoUninitialize()
-
-
-def position_parse(arg: str) -> Position:
-    return Position[arg.upper()]
 
 
 def main() -> None:

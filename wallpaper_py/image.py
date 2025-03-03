@@ -1,18 +1,63 @@
 import argparse
-from enum import Enum
 from pathlib import Path
 from PIL import Image
 
-from wallpaper_py.cli_parsers import existing_file_type
+from .cli_parsers import existing_file_type
+from .desktop_protocol import ImageMode
 
 
 DESTINATION = Path(__file__).parent.joinpath("processed")
 
 
-class ImageMode(Enum):
-    FILL = "fill"
-    FIT = "fit"
-    STRETCH = "stretch"
+def process_stretch(img: Image.Image, target_size: tuple[int, int]) -> Image.Image:
+    """Resize the image to exactly fill target dimensions (stretch mode)."""
+    return img.resize(target_size)
+
+
+def process_fit(img: Image.Image, target_size: tuple[int, int]) -> Image.Image:
+    """
+    Resize the image to fit within target dimensions (keeping aspect ratio),
+    and then center it on a black background.
+    """
+    target_width, target_height = target_size
+    width_ratio = target_width / img.width
+    height_ratio = target_height / img.height
+    ratio = min(width_ratio, height_ratio)
+    new_width = int(img.width * ratio)
+    new_height = int(img.height * ratio)
+
+    resized = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+    new_img = Image.new("RGB", target_size, (0, 0, 0))  # Black background
+    x = (target_width - new_width) // 2
+    y = (target_height - new_height) // 2
+    new_img.paste(resized, (x, y))
+    return new_img
+
+
+def process_fill(img: Image.Image, target_size: tuple[int, int]) -> Image.Image:
+    """
+    Resize the image such that it completely fills the target dimensions
+    (keeping aspect ratio), then crop the excess.
+    """
+    target_width, target_height = target_size
+    img_ratio = img.width / img.height
+    target_ratio = target_width / target_height
+
+    if img_ratio > target_ratio:
+        # Image is wider than target: scale by height
+        new_height = target_height
+        new_width = int(img.width * (new_height / img.height))
+    else:
+        # Image is taller than target: scale by width
+        new_width = target_width
+        new_height = int(img.height * (new_width / img.width))
+
+    resized = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+    left = (resized.width - target_width) / 2
+    top = (resized.height - target_height) / 2
+    right = left + target_width
+    bottom = top + target_height
+    return resized.crop((left, top, right, bottom))
 
 
 def process_image(
@@ -23,34 +68,14 @@ def process_image(
     target_size = (target_width, target_height)
 
     if mode == ImageMode.STRETCH:
-        processed_img = img.resize(target_size)
+        processed_img = process_stretch(img, target_size)
     elif mode == ImageMode.FIT:
-        processed_img = img.copy()
-        processed_img.thumbnail(target_size, Image.Resampling.LANCZOS)
-        new_img = Image.new("RGB", target_size, (0, 0, 0))  # Black background
-        x = (target_width - processed_img.width) // 2
-        y = (target_height - processed_img.height) // 2
-        new_img.paste(processed_img, (x, y))
-        processed_img = new_img
+        processed_img = process_fit(img, target_size)
     elif mode == ImageMode.FILL:
-        img_ratio = img.width / img.height
-        target_ratio = target_width / target_height
-        if img_ratio > target_ratio:
-            new_height = target_height
-            new_width = int(img.width * (new_height / img.height))
-        else:
-            new_width = target_width
-            new_height = int(img.height * (new_width / img.width))
-        img_resized = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-        left = (img_resized.width - target_width) / 2
-        top = (img_resized.height - target_height) / 2
-        right = left + target_width
-        bottom = top + target_height
-        processed_img = img_resized.crop((left, top, right, bottom))
+        processed_img = process_fill(img, target_size)
     else:
         raise ValueError(f"Unsupported mode: {mode}")
 
-    # Save to temporary file
     output_path = (
         DESTINATION
         / f"{mode.name} {target_width}x{target_height} {source_path.stem}.png"
@@ -83,13 +108,6 @@ def main() -> None:
 
     # Process image
     result_path = process_image(args.source, args.width, args.height, args.mode)
-
-    # Rename if output specified
-    if args.output:
-        output_path = Path(args.output)
-        Path(result_path).rename(output_path)
-        result_path = str(output_path)
-
     print(f"Processed image saved to: {result_path}")
 
 
