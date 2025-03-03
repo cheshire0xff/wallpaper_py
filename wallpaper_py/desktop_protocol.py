@@ -1,7 +1,15 @@
+"""
+This module defines the base protocol for desktop wallpaper management.
+It specifies interfaces for MonitorDescription, DesktopManager, and related types.
+Note: The Windows-specific implementation (in desktop_manager.py) extends MonitorDescription
+with additional attributes (e.g., 'id', 'index') required for Windows.
+Cross-platform code should only rely on the attributes defined here.
+"""
+
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Iterable, Optional, Protocol
+from typing import Iterable, Optional, Protocol, Sequence
 
 
 @dataclass
@@ -48,7 +56,7 @@ class DesktopManager(Protocol):
     and image modes.
     """
 
-    def get_monitors(self) -> list[Monitor]:
+    def get_monitors(self) -> Sequence[Monitor]:
         """
         Retrieve all monitors connected to the desktop.
 
