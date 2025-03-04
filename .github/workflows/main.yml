@@ -32,13 +32,13 @@ jobs:
       run: pip install -r requirements_dev.txt
 
     - name: Run Black formatting check
-      run: black --check wallpaper_py
+      run: python scripts/black.py --check
 
     - name: Run Mypy type checking
-      run: mypy wallpaper_py
+      run: python scripts/mypy.py
 
     - name: Run Pylint analysis
-      run: pylint wallpaper_py
+      run: python scripts/pylint.py
       
     - name: Run Monitor List Integration Test
       run: python -m wallpaper_py.changer list
