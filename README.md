@@ -56,7 +56,7 @@ This separation keeps the cross‑platform core clean while isolating Windows‑
 - **List Monitors:**
 
   ```bash
-  python -m wallpaper_py changer list
+  python -m wallpaper_py.changer list
   ```
 
   This command displays all connected monitors along with their positions, sizes, and current wallpaper paths.
@@ -64,7 +64,7 @@ This separation keeps the cross‑platform core clean while isolating Windows‑
 - **Set Wallpaper:**
 
   ```bash
-  python -m wallpaper_py changer set /path/to/image.jpg --monitor 0 --mode FIT
+  python -m wallpaper_py.changer set /path/to/image.jpg --monitor 0 --mode FIT
   ```
 
   This sets the wallpaper on monitor 0 using the FIT mode. The image is processed to match the monitor's resolution.
@@ -94,10 +94,6 @@ This separation keeps the cross‑platform core clean while isolating Windows‑
 
 - **Extended Windows Types:**  
   Windows‑specific implementations (like `WindowsMonitorDescription`) include extra fields needed only on Windows. Windows‑only code can safely cast to these richer types. Cross‑platform code remains unaffected, adhering to LSP.
-
-## Contributing
-
-Contributions are welcome! Please refer to `CONTRIBUTING.md` for guidelines. If adding platform‑specific features, document them clearly and ensure that the cross‑platform core remains independent.
 
 ## License
 
