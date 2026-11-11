@@ -53,6 +53,8 @@ AppClient = Callable[[Request, Path], Reply]
 # The command line that starts the app for a config file.
 AppCommand = Callable[[Path], list[str]]
 
+log = logging.getLogger(__name__)
+
 START_TIMEOUT_S = 10.0  # for a started app to answer
 RETRY_INTERVAL_S = 0.2
 
@@ -72,15 +74,19 @@ def send_to_app(
 
     name = ipc.server_name(paths.data_dir())
     envelope = Envelope(request=request, config=config_path)
+    log.info("Asking the running app (socket %s)", name)
     reply = ipc.send(name, envelope)
     if reply is not None:
+        log.info("The running app answered")
         return reply
+    log.info("No app is running: starting one")
     start_detached((app_command or autostart_command)(config_path))
-    deadline = time.monotonic() + START_TIMEOUT_S
-    while time.monotonic() < deadline:
+    started = time.monotonic()
+    while time.monotonic() < started + START_TIMEOUT_S:
         time.sleep(RETRY_INTERVAL_S)
         reply = ipc.send(name, envelope)
         if reply is not None:
+            log.info("The new app answered after %.1f s", time.monotonic() - started)
             return reply
     raise WallpaperError(f"could not start wallpaper_py; see {paths.log_file()}")
 
@@ -152,7 +158,9 @@ def cmd_playlist(ctx: Context, args: argparse.Namespace) -> int:
     """status / next / prev / fav / unfav / remove: always in the app."""
     command: Command = args.command  # a subparser name from COMMANDS
     request = Request(command=command, target=getattr(args, "target", None))
-    text = format_reply(ctx.app_client(request, ctx.config_path))
+    reply = ctx.app_client(request, ctx.config_path)
+    log.info("Reply: %s", reply.model_dump_json())
+    text = format_reply(reply)
     if text.out:
         print(text.out)
     if text.err:
@@ -285,6 +293,15 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=f"playlist config file (default: {paths.config_file()})",
     )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help=(
+            "log what the command does to stderr: whether it reached the "
+            "running app or started one, and the raw reply (run, tray and ui "
+            "always log)"
+        ),
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     list_parser = sub.add_parser("list", help="list monitors")
@@ -361,6 +378,11 @@ def main(
 ) -> int:
     args = build_parser().parse_args(argv)
     handler: Callable[[Context, argparse.Namespace], int] = args.handler
+    if args.verbose and handler not in (cmd_app, cmd_ui):  # those set up their own
+        # pylint: disable=import-outside-toplevel
+        from .app.processes import setup_logging
+
+        setup_logging(None)
     ctx = Context(
         backend_factory=backend_factory,
         presence_factory=presence_factory,

@@ -1,3 +1,4 @@
+import logging
 import sys
 from functools import partial
 from pathlib import Path
@@ -217,6 +218,21 @@ def test_playlist_command_explains_when_the_app_does_not_start(
     assert capsys.readouterr().err == (
         f"error: could not start wallpaper_py; see {paths.log_file()}\n"
     )
+
+
+def test_verbose_tells_how_the_app_was_reached(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(cli, "START_TIMEOUT_S", 0.5)
+    client = partial(
+        cli.send_to_app, app_command=lambda _: [sys.executable, "-c", "pass"]
+    )
+    with caplog.at_level(logging.INFO, logger="wallpaper_py"):
+        assert cli.main(["--verbose", "next"], app_client=client) == 1
+    messages = [record.getMessage() for record in caplog.records]
+    assert messages[0].startswith("Asking the running app (socket wallpaper_py-")
+    assert messages[1] == "No app is running: starting one"
+    assert messages[2].startswith("Starting ")
 
 
 def test_reply_texts() -> None:

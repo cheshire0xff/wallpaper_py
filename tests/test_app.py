@@ -21,7 +21,7 @@ from wallpaper_py.app.runtime import AppOptions, Platform, run_app
 from wallpaper_py.core import paths
 from wallpaper_py.core.model import WallpaperError
 
-from .clients import CLI, CLI_STARTING, run_python
+from .clients import CLI, CLI_STARTING, NO_WINDOW, run_python
 from .fakes import (
     FakeAutostart,
     FakeBackend,
@@ -132,7 +132,11 @@ def test_two_clis_racing_reach_one_app(qtbot: QtBot, tmp_path: Path) -> None:
             clis = [
                 stack.enter_context(
                     subprocess.Popen(
-                        argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+                        argv,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        creationflags=NO_WINDOW,
                     )
                 )
                 for _ in range(2)

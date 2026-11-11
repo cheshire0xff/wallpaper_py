@@ -143,8 +143,9 @@ Implemented (decisions made while building it):
   when *Start at login* is ticked.
 - Logs: the tray app writes `wallpaper.log` in the per-user log directory.
 
-Not done yet: the trial on the real desktop (autostart entry, tray on
-Windows 11, monitor switch-off with the app running).
+Not done yet: parts of the trial on the real desktop (autostart entry,
+monitor switch-off with the app running); see
+[desktop-checks.md](desktop-checks.md).
 
 ## Phase 4: UI process and layout window
 
@@ -306,7 +307,8 @@ is needed (closing the window does that).
 
 plasmashell D-Bus (`evaluateScript`) for per-monitor wallpapers (per
 activity), KScreen for monitor identity. Run `spikes/kde_probe.sh` on Arch
-first. Then CI and checks on Kubuntu 26.04 as well.
+first. Then CI and checks on Kubuntu 26.04 as well, and the whole of
+[desktop-checks.md](desktop-checks.md) by hand on Arch and Kubuntu.
 
 Linux Qt dependencies (promised early on, not done yet):
 

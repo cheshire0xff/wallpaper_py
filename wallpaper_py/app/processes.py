@@ -63,7 +63,10 @@ def start_detached(command: Sequence[str]) -> None:
     """Start a process that outlives this one, without a console or our pipes."""
     log.info("Starting %s", " ".join(command))
     if sys.platform == "win32":
-        flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+        # A hidden console of its own, not none (DETACHED_PROCESS): a venv's
+        # python.exe is a launcher that starts the real interpreter, which
+        # would open a visible console if the launcher had none to pass on.
+        flags = subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP
         try:  # leave our job object too, so closing the terminal can't end it
             _popen(command, flags | subprocess.CREATE_BREAKAWAY_FROM_JOB)
         except OSError:  # the job doesn't allow that

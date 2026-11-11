@@ -12,6 +12,13 @@ from pathlib import Path
 
 from pytestqt.qtbot import QtBot
 
+# For every child process a test starts: Windows would otherwise open a
+# console window for it whenever the test run has none (an IDE's runner).
+if sys.platform == "win32":
+    NO_WINDOW = subprocess.CREATE_NO_WINDOW
+else:
+    NO_WINDOW = 0
+
 # argv: server name, command, config, timeout. Prints the reply as JSON,
 # NONE (no app running) or ERROR <message>.
 SEND = """
@@ -130,6 +137,7 @@ def run_python(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        creationflags=NO_WINDOW,
     ) as process:
         try:
             qtbot.waitUntil(lambda: process.poll() is not None, timeout=timeout_ms)

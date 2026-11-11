@@ -26,7 +26,7 @@ from wallpaper_py.core import paths
 from wallpaper_py.core.service import Change
 from wallpaper_py.protocol import MonitorView, Overview, PlaylistView, Request
 
-from .clients import run_python
+from .clients import NO_WINDOW, run_python
 from .hosts import make_host
 from .fakes import FakeAutostart, FakeBackend, FakePresence, make_monitor, write_config
 from .test_ui_launcher import SHOW
@@ -169,6 +169,7 @@ def test_one_ui_process_that_ends_with_the_app(qtbot: QtBot, tmp_path: Path) -> 
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
+                    creationflags=NO_WINDOW,
                 )
             )
             name = ipc.server_name(Path(data), "ui")
