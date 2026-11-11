@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from platformdirs import user_cache_path, user_config_path, user_data_path
+from platformdirs import (
+    user_cache_path,
+    user_config_path,
+    user_data_path,
+    user_log_path,
+)
 
 APP_NAME = "wallpaper_py"
 
@@ -25,6 +30,16 @@ def config_file() -> Path:
 def state_db() -> Path:
     """SQLite state: history, shuffle decks, per-playlist and per-monitor state."""
     return data_dir() / "state.sqlite3"
+
+
+def instance_lock() -> Path:
+    """Held by the running app: one process rotates (and writes the state)."""
+    return data_dir() / "app.lock"
+
+
+def log_file() -> Path:
+    """The app's log (the tray app has no terminal)."""
+    return user_log_path(APP_NAME, appauthor=False) / "wallpaper.log"
 
 
 def cache_dir() -> Path:

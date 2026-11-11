@@ -10,8 +10,8 @@ thin. See [architecture.md](architecture.md) for the layers.
 | 0 | Spikes: monitor identity on Windows, 20k-image grid, KDE probe | done (KDE probe pending, needs Arch) |
 | 1 | Core model, safe setter, Windows backend, CLI `list`/`set`, tooling, CI | done |
 | 2 | Playlists, mirrored groups, scheduler, history, favourites, to-remove | done (awaiting a real-desktop trial) |
-| 3 | App shell: tray, single instance, IPC, autostart | next |
-| 4 | Layout window | |
+| 3 | App shell: tray, single instance, IPC, autostart | done (awaiting a real-desktop trial) |
+| 4 | Layout window | next |
 | 5 | Library window | |
 | 6 | KDE backend | |
 | 7 | Polish | |
@@ -102,6 +102,35 @@ would freeze the library grid mid-scroll.
 - Still no locking: the service is used from exactly one thread.
 - Windows that read state (library, history) open their own read-only
   SQLite connection; WAL allows readers alongside the writer.
+
+Implemented (decisions made while building it):
+
+- `wallpaper tray` and `wallpaper run` start the same app, with and without
+  the tray icon; both hold the instance lock and serve the socket, so
+  nothing rotates without taking commands. A second start is refused.
+- Single instance: a `QLockFile` next to the state database (a second
+  `QLocalServer` *can* listen on the same pipe name on Windows); the socket
+  name is derived from the data directory, so it is per user.
+- `commands.py` (Qt-free): commands as data (`Request` -> `Reply`), run by
+  the CLI when no app is running and by the app otherwise; the socket
+  carries them as pydantic models. A request naming another config file
+  than the app's is refused.
+- Screen signals: a plain 2 s debounce then one extra tick (no snapshot
+  comparison); the 5 s tick covers COM lagging longer.
+- Tray menu: flat sections per playlist (monitor names with *off* / *not
+  found*, current image opens on click, Next, Previous, Favourite toggle,
+  Remove), then Paused, Reload config, Open config folder, Start at login,
+  Quit. Left-click opens the same menu. Icon: grey while paused, red badge
+  on a config error. New CLI command `unfav` for the toggle.
+- Config errors keep the app running: shown in the tray, *Reload config*
+  retries.
+- Autostart: HKCU Run key / `~/.config/autostart`, running
+  `pythonw -m wallpaper_py tray` from the current environment. Written only
+  when *Start at login* is ticked.
+- Logs: the tray app writes `wallpaper.log` in the per-user log directory.
+
+Not done yet: the trial on the real desktop (autostart entry, tray on
+Windows 11, monitor switch-off with the app running).
 
 ## Phase 4: layout window
 

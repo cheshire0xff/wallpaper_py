@@ -258,6 +258,11 @@ class PlaylistService:
         image = self._require_current(playlist)
         return image, self.favourites.add(image)
 
+    def unfavourite(self, playlist: PlaylistConfig) -> tuple[Path, bool]:
+        """Unmark the current image; returns it and False if it wasn't marked."""
+        image = self._require_current(playlist)
+        return image, self.favourites.discard(image)
+
     def remove(self, playlist: PlaylistConfig) -> tuple[Path, Change | None]:
         """
         Put the current image on the to-remove list (it is only listed and

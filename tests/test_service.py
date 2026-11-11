@@ -267,6 +267,17 @@ def test_favourite_writes_the_txt_file(env: Env) -> None:
     assert text == f"{image}\n"
 
 
+def test_unfavourite_removes_only_the_current_image(env: Env) -> None:
+    env.service.tick()
+    env.config.favourites_file.parent.mkdir()
+    env.config.favourites_file.write_text("# mine\nother.png\n", encoding="utf-8")
+    image, _ = env.service.favourite(env.fantasy)
+    assert env.service.unfavourite(env.fantasy) == (image, True)
+    assert env.service.unfavourite(env.fantasy) == (image, False)
+    text = env.config.favourites_file.read_text(encoding="utf-8")
+    assert text == "# mine\nother.png\n"
+
+
 def test_remove_lists_hides_and_moves_on(env: Env) -> None:
     env.service.tick()
     image, change = env.service.remove(env.konachan)

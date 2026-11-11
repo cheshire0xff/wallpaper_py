@@ -6,12 +6,40 @@ assert sys.platform == "win32"  # pylint: disable=wrong-import-position
 
 # pylint: disable=wrong-import-position,wrong-import-order
 import ctypes
+import gc
+from collections.abc import Iterator
+from contextlib import contextmanager
 from ctypes import HRESULT, POINTER, Structure, pointer
 from ctypes.wintypes import LPCWSTR, UINT, LPWSTR, DWORD
 from enum import Enum
 from typing import cast
-from comtypes import IUnknown, GUID, COMMETHOD, CoCreateInstance
+from comtypes import (
+    COINIT_APARTMENTTHREADED,
+    COMMETHOD,
+    GUID,
+    CoCreateInstance,
+    CoInitializeEx,
+    CoUninitialize,
+    IUnknown,
+)
 from wallpaper_py.core.model import Rectangle
+
+
+@contextmanager
+def com_apartment() -> Iterator[None]:
+    """
+    Initialize COM (single-threaded apartment) on the calling thread, for
+    as long as it creates and uses COM objects. (comtypes initializes only
+    the thread that imports it.) Every COM object made on this thread must
+    be released before leaving.
+    """
+    CoInitializeEx(COINIT_APARTMENTTHREADED)
+    try:
+        yield
+    finally:
+        gc.collect()  # release objects that only a cycle collection frees
+        CoUninitialize()
+
 
 _ole32 = ctypes.WinDLL("ole32")
 _ole32.CoTaskMemFree.argtypes = [ctypes.c_void_p]

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -103,6 +103,20 @@ class FakeBackend:
         return self._global_mode
 
 
+class FakeAutostart:
+    def __init__(self) -> None:
+        self.command: list[str] | None = None
+
+    def enabled(self) -> bool:
+        return self.command is not None
+
+    def enable(self, command: Sequence[str]) -> None:
+        self.command = list(command)
+
+    def disable(self) -> None:
+        self.command = None
+
+
 class FakeClock:
     """Manual clock: `advance()` moves time on."""
 
@@ -126,6 +140,22 @@ class FakePresence:
 
     def idle_seconds(self) -> float | None:
         return self.idle
+
+
+def write_config(directory: Path, monitors: str = '["Main"]') -> Path:
+    """A config with one sorted playlist "walls" of a.jpg, b.jpg, c.jpg."""
+    make_images(directory / "walls", "a.jpg", "b.jpg", "c.jpg")
+    config = directory / "config.toml"
+    config.write_text(
+        "pause_when_idle = false\n"
+        "[playlists.walls]\n"
+        "directory = 'walls'\n"
+        f"monitors = {monitors}\n"
+        'order = "sorted"\n'
+        'interval = "10m"\n',
+        encoding="utf-8",
+    )
+    return config
 
 
 def make_images(directory: Path, *names: str) -> list[Path]:

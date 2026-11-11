@@ -8,9 +8,8 @@ libraries (10k+ images). See [todo.md](todo.md) for the feature list,
 [docs/plan.md](docs/plan.md) for the phases and
 [docs/architecture.md](docs/architecture.md) for the design.
 
-**Status:** the core, the Windows backend and the playlist service exist,
-driven from the CLI (`wallpaper run` in a terminal). The tray and GUI are
-next.
+**Status:** the core, the Windows backend, the playlist service and the tray
+app exist. The layout and library windows are next.
 
 ## Install
 
@@ -44,9 +43,10 @@ wallpaper set IMAGE --monitor NAME [--mode fill|fit|stretch]
 ### Playlists
 
 ```
-wallpaper [-c CONFIG] run [--poll SECONDS]   # rotate in the foreground (Ctrl+C stops)
+wallpaper [-c CONFIG] tray                   # the app, in the tray (what starts at login)
+wallpaper [-c CONFIG] run [--poll SECONDS]   # the app, headless in this terminal (Ctrl+C stops)
 wallpaper status                             # playlists, monitors, current, upcoming
-wallpaper next|prev|fav|remove [TARGET]      # TARGET: playlist or monitor name
+wallpaper next|prev|fav|unfav|remove [TARGET]  # TARGET: playlist or monitor name
 ```
 
 Playlists are defined in a TOML file; start from
@@ -63,15 +63,27 @@ Playlists are defined in a TOML file; start from
   (a group keeps going on its other members) and the monitor gets the
   current image when it comes back.
 - `fav` and `remove` append the current image to `favourites.txt` /
-  `to-remove.txt` (one full path per line, editable by hand). `remove` only
-  lists the image and hides it from rotation; deleting is up to you.
-- `next` / `prev` / `fav` / `remove` work while `run` is running in another
-  terminal: both use the same state database.
+  `to-remove.txt` (one full path per line, editable by hand); `unfav` takes
+  it out of favourites again. `remove` only lists the image and hides it
+  from rotation; deleting is up to you.
 
-**Known limitation (until the tray app, Phase 3):** if a command lands in
-the second or so while `run` is itself changing that playlist (rendering a
-4K image), both may pick the same image and log it twice in history.
-Harmless; it goes away once commands are sent to the running app.
+### The app
+
+`tray` and `run` start the same app; only one can run at a time (per
+user). It rotates the playlists, and the other commands (`status`, `next`,
+...) are sent to it, so they never collide with a change in progress. When
+no app is running, those commands act on their own.
+
+The tray menu has a section per playlist (its monitors by name, the current
+image, which opens on click, *Next*, *Previous*, a *Favourite* toggle,
+*Remove*), then *Reload config* (after editing it), *Open config folder*,
+*Start at login* and *Quit*. Left-click opens the same menu. The icon turns
+grey while rotation is paused and shows a red badge if the config can't be
+loaded. Start at login uses the per-user Run key on Windows and
+`~/.config/autostart` on Linux; it starts `pythonw -m wallpaper_py tray`
+from the current environment, so no console window opens. The tray app logs
+to `wallpaper.log` in the per-user log directory (on Windows
+`%LOCALAPPDATA%\wallpaper_py\Logs`).
 
 `python -m wallpaper_py ...` works too.
 
@@ -83,7 +95,9 @@ python scripts/check.py black      # format
 ```
 
 CI runs the same on Windows and Ubuntu. Tests marked `windows` read the real
-desktop (never change it) and are skipped elsewhere.
+desktop (never change it) and are skipped elsewhere. Qt tests run offscreen
+(`tests/conftest.py`) with per-test data directories, so they never show an
+icon or reach a running app.
 
 `spikes/` holds throwaway experiments (monitor behaviour when switched off,
 the 20k-image grid prototype); see [spikes/README.md](spikes/README.md).

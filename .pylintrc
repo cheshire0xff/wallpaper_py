@@ -1,6 +1,6 @@
 [MAIN]
-# comtypes only exists on Windows; don't report it as missing elsewhere.
-ignored-modules=comtypes
+# Windows-only modules; don't report them as missing elsewhere.
+ignored-modules=comtypes,winreg
 # Compiled extension modules pylint may introspect.
 extension-pkg-allow-list=PySide6
 
@@ -10,6 +10,10 @@ disable=
     missing-function-docstring,
     missing-class-docstring,
     too-few-public-methods,
+
+[TYPECHECK]
+# Qt signals look like methods to pylint (e.g. QLocalSocket.readyRead).
+generated-members=connect,disconnect,emit
 
 [FORMAT]
 # Match black.
