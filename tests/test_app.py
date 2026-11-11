@@ -7,7 +7,7 @@ import logging
 import signal
 import subprocess
 import sys
-from contextlib import nullcontext
+from contextlib import ExitStack, nullcontext
 from pathlib import Path
 
 import pytest
@@ -15,11 +15,12 @@ from PySide6.QtCore import QCoreApplication, QTimer
 from pytestqt.qtbot import QtBot
 
 from wallpaper_py.app.instance import InstanceLock
+from wallpaper_py.app.ipc import CommandServer
 from wallpaper_py.app.runtime import AppOptions, Platform, autostart_command, run_app
 from wallpaper_py.core import paths
 from wallpaper_py.core.model import WallpaperError
 
-from .clients import CLI, run_python
+from .clients import CLI, CLI_STARTING, run_python
 from .fakes import (
     FakeAutostart,
     FakeBackend,
@@ -88,6 +89,74 @@ def test_cli_commands_go_through_the_running_app(
     assert "already running" in results["run"].stderr
     # Every change was made by the app (the CLI's backend factory fails).
     assert [c.image.name for c in backend.set_calls] == ["a.jpg", "b.jpg", "a.jpg"]
+
+
+def app_running() -> bool:
+    lock = InstanceLock(paths.instance_lock())
+    if lock.acquire():
+        lock.release()
+        return False
+    return True
+
+
+def stop_started_app(qtbot: QtBot) -> None:
+    """Quit an app started by CLI_STARTING, and wait until it has."""
+    paths.data_dir().mkdir(parents=True, exist_ok=True)
+    (paths.data_dir() / "stop").touch()
+    qtbot.waitUntil(lambda: not app_running(), timeout=15_000)
+
+
+def test_cli_starts_the_app_when_none_runs(qtbot: QtBot, tmp_path: Path) -> None:
+    config = write_config(tmp_path)
+    cli = [str(paths.data_dir()), "--config", str(config)]
+    try:
+        result = run_python(qtbot, CLI_STARTING, *cli, "next")
+        assert result.returncode == 0, result.stderr
+        # The first tick showed a.jpg; then the command ran in the started app.
+        assert result.stdout.strip() == "walls: b.jpg on Main"
+        assert app_running()  # it outlives the CLI
+        assert run_python(qtbot, CLI, *cli, "next").stdout.strip() == (
+            "walls: c.jpg on Main"
+        )
+    finally:
+        stop_started_app(qtbot)
+
+
+def test_two_clis_racing_reach_one_app(qtbot: QtBot, tmp_path: Path) -> None:
+    config = write_config(tmp_path)
+    argv = [sys.executable, "-c", CLI_STARTING, str(paths.data_dir())]
+    argv += ["--config", str(config), "next"]
+    try:
+        with ExitStack() as stack:
+            clis = [
+                stack.enter_context(
+                    subprocess.Popen(
+                        argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+                    )
+                )
+                for _ in range(2)
+            ]
+            outputs = [cli.communicate(timeout=60) for cli in clis]
+    finally:
+        stop_started_app(qtbot)
+    assert [cli.returncode for cli in clis] == [0, 0], outputs
+    # Both ran in the same app, one after the other.
+    assert sorted(out.strip() for out, _ in outputs) == [
+        "walls: b.jpg on Main",
+        "walls: c.jpg on Main",
+    ]
+
+
+def test_socket_failure_stops_the_app(
+    tmp_path: Path, platform: Platform, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def cannot_listen(self: CommandServer) -> None:
+        raise WallpaperError(f"Cannot open the command socket {self.name}: busy")
+
+    monkeypatch.setattr(CommandServer, "listen", cannot_listen)
+    with pytest.raises(WallpaperError, match="Cannot open the command socket"):
+        run_app(AppOptions(write_config(tmp_path), tray=False), platform)
+    assert not app_running()
 
 
 def test_autostart_command_starts_the_tray_without_a_console(tmp_path: Path) -> None:

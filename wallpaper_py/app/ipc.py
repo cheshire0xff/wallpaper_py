@@ -9,7 +9,8 @@ One request per connection, one line of JSON each way (pydantic models):
     <- {"code": 0, "out": "konachan: 123.jpg on AW3225QF", "err": ""}
 
 The CLI uses `send()` (blocking); `None` means no app is running, and the
-CLI then runs the command itself.
+CLI then starts one. The server lives on the app's service thread and runs
+each request there as it arrives.
 """
 
 from __future__ import annotations
@@ -175,12 +176,15 @@ class CommandServer(QObject):
     Accepts requests and emits `received(connection_id, Request)`; the owner
     answers with `reply(connection_id, Reply)`. Malformed requests, other
     versions and requests for a different config file are answered here.
+    Never blocks: it may share its thread with the playlist service.
     """
 
     received = Signal(int, object)  # connection id, commands.Request
 
-    def __init__(self, name: str, config_path: Path) -> None:
-        super().__init__()
+    def __init__(
+        self, name: str, config_path: Path, parent: QObject | None = None
+    ) -> None:
+        super().__init__(parent)
         self.name = name
         self._config_path = config_path
         self._server = QLocalServer(self)

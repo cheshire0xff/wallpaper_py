@@ -69,9 +69,10 @@ lags Qt by 1-2 s.
 
 Must fix: while the CLI and `wallpaper run` are separate processes sharing
 the database, a command during an in-progress change can double-commit
-(same image twice in history). Once the app runs, CLI commands go through
-its socket and run on the one service, serialized with its ticks. If the
-app isn't running, the CLI may still act directly (as now).
+(same image twice in history). CLI commands always go through the app's
+socket and run on the one service, serialized with its ticks. If the app
+isn't running, the CLI starts it in the tray first (detached, so it
+outlives the CLI) and then sends the command.
 
 Ticks and events: keep polling as the safety net, use events only where
 they make a visible difference.
@@ -83,8 +84,8 @@ they make a visible difference.
 - Qt screen signals (`screenAdded`, `screenRemoved`, geometry changes)
   restart a ~2 s single-shot debounce timer that runs an extra tick, so a
   monitor coming back gets its image right away.
-- Commands (tray, socket) are queued to the service thread and run at
-  once, between ticks (never during one).
+- Commands (tray, socket) run on the service thread as they arrive,
+  between ticks (never during one).
 - Not used: native lock / unlock and sleep / resume notifications. The 5 s
   tick already notices both within 5 s (lock via the WTS session flag, sleep
   via the tick gap), so they would add platform code for no visible gain.
@@ -96,9 +97,10 @@ would freeze the library grid mid-scroll.
 - One worker `QThread` owns the `PlaylistService`: its tick `QTimer`, the
   rendering, COM (initialized on that thread) and the SQLite connection
   (created there). The core stays synchronous and unchanged.
-- The UI thread only draws. Tray actions, socket commands and screen
-  signals reach the service as queued signals; results (changes, status,
-  errors) come back as signals. The UI never waits on the service.
+- The UI thread only draws. Tray actions and screen signals reach the
+  service as queued signals; results (changes, status, errors) come back
+  as signals. The command socket lives on the service thread itself. The
+  UI never waits on the service.
 - Still no locking: the service is used from exactly one thread.
 - Windows that read state (library, history) open their own read-only
   SQLite connection; WAL allows readers alongside the writer.
@@ -111,10 +113,22 @@ Implemented (decisions made while building it):
 - Single instance: a `QLockFile` next to the state database (a second
   `QLocalServer` *can* listen on the same pipe name on Windows); the socket
   name is derived from the data directory, so it is per user.
-- `commands.py` (Qt-free): commands as data (`Request` -> `Reply`), run by
-  the CLI when no app is running and by the app otherwise; the socket
+- `commands.py` (Qt-free): commands as data (`Request` -> `Reply`, plus
+  the wallpaper change a command made), run only by the app; the socket
   carries them as pydantic models. A request naming another config file
   than the app's is refused.
+- The command socket lives on the service thread, created once at start
+  (it answers across config reloads, with the error while the config is
+  broken). Socket requests call `ServiceWorker.execute` directly; the tray
+  goes through `ServiceHost`. Commands that change a wallpaper emit
+  `changed` like ticks. The UI thread holds only UI.
+- The CLI always goes through the app: if the socket doesn't answer, it
+  starts the tray app (the autostart command) and retries for up to 10 s,
+  else it points to the log file. Two CLIs racing both reach the one app
+  the instance lock keeps. `list` and `set` don't need the app. It starts
+  the tray rather than a headless `run`: the user can see and quit it, and
+  it logs to a file. On Linux without a display it can't start; if that
+  matters, fall back to `run` plus a `quit` command.
 - Screen signals: a plain 2 s debounce then one extra tick (no snapshot
   comparison); the 5 s tick covers COM lagging longer.
 - Tray menu: flat sections per playlist (monitor names with *off* / *not

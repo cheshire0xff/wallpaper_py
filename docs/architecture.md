@@ -3,17 +3,18 @@
 ## Layers
 
 ```
-cli.py                        command line; playlist commands go to the running app
+cli.py                        command line; playlist commands go to the app (started if needed)
 app/                          PySide6 app shell (Qt only here)
-  runtime.py     wires it up: lock, socket, service thread, screens, tray
-  worker.py      ServiceWorker (owns the service, on its own QThread) + ServiceHost
+  runtime.py     wires it up: lock, service thread, screens, tray
+  worker.py      ServiceWorker (owns the service and the socket, on its own
+                 QThread) + ServiceHost (the UI thread's proxy)
   ipc.py         command socket (QLocalServer), pydantic messages, blocking client
   instance.py    single instance: a QLockFile next to the state database
   screens.py     Qt screen signals -> one debounced extra tick
   tray.py        tray icon and menu, drawn from an Overview
   icon.py        the icon, drawn in code
-commands.py                   commands as data: Request -> Reply, shared by CLI and app;
-                              Overview (what the tray shows). Qt-free
+commands.py                   commands as data: Request -> Reply (+ the change made),
+                              run by the app; Overview (what the tray shows). Qt-free
         │
 core/                         pure Python, no Qt, no platform APIs
   model.py       Monitor, Rectangle, ImageMode, error types
@@ -64,13 +65,20 @@ listens on a per-user `QLocalServer` (name derived from the data
 directory).
 
 Threads: the `PlaylistService` lives on a worker `QThread`, which creates
-everything it uses there (COM via `backends.thread_scope()`, the backend,
-the SQLite connection, the 5 s tick `QTimer`). A change renders for
-~200 ms, which must never happen on the UI thread. The UI thread only
-draws: tray actions, socket requests, extra ticks and reload reach the
-worker as queued signals; replies, changes and the `Overview` come back
-the same way. Requests run one at a time between ticks, in order, so the
-core needs no locking. The UI waits on the worker only at shutdown.
+everything it uses there (the command socket, COM via
+`backends.thread_scope()`, the backend, the SQLite connection, the 5 s tick
+`QTimer`). A change renders for ~200 ms, which must never happen on the UI
+thread. The UI thread holds only UI (tray, screen watcher, later the
+windows) and `ServiceHost`, a thin proxy: tray actions, extra ticks and
+reload reach the worker as queued signals; replies, changes and the
+`Overview` come back the same way. Socket requests need no hop: the socket
+lives on the service thread and calls `ServiceWorker.execute` directly, the
+one entry point for every command. Commands run one at a time between
+ticks, in order, so the core needs no locking; nothing on that thread may
+block on a client or spin a nested event loop. A command that changes a
+wallpaper (`next`, `prev`, `remove`) emits `changed` like a tick does. The
+socket is created once at start and closed at stop, so it keeps answering
+across config reloads. The UI waits on the worker only at shutdown.
 
 Ticks: the 5 s tick is the source of truth (it re-reads the real state).
 Qt screen signals only restart a 2 s single-shot timer that triggers one
@@ -78,13 +86,17 @@ extra tick, so a returning monitor gets its image without waiting. Lock /
 unlock and sleep / resume are noticed by the tick itself (WTS flag, tick
 gap); no native notifications.
 
-CLI: playlist commands are sent to the app as one line of JSON (`ipc.py`,
-pydantic models) and the app runs them with the same `commands.execute()`
-the CLI uses when no app is running, so output is identical. A request
-naming a different config file than the app's is refused. The client
-blocks without an event loop; PySide keeps the GIL while it waits, so it
-must run in a different process from the server (tests use child
-processes, `tests/clients.py`).
+CLI: playlist commands always run in the app, sent as one line of JSON
+(`ipc.py`, pydantic models) and run with `commands.execute()`. If no app
+answers, the CLI starts the tray app detached (the autostart command;
+`pythonw` on Windows, a new session elsewhere, so it outlives the CLI) and
+retries for up to 10 s; if it doesn't come up, it points to the log file.
+Two CLIs racing both start an app; the instance lock keeps one and both
+reach it. `list` and `set` don't need the app. A request naming a
+different config file than the app's is refused. The client blocks
+without an event loop; PySide keeps the GIL while it waits, so it must run
+in a different process from the server (tests use child processes,
+`tests/clients.py`).
 
 Config errors don't stop the app: it shows the error in the tray and
 answers commands with it until *Reload config* succeeds.
@@ -96,9 +108,9 @@ State lives in two places, by design:
 - **SQLite** (`store.py`) holds app-internal state only: history with a
   cursor per playlist, the shuffle deck, active seconds since the last
   change, and which image each monitor was given. It is the single source
-  of truth. While the app runs it is the only writer (CLI commands go
-  through its socket); without the app, a one-shot command opens it
-  directly. WAL mode lets later read-only windows read alongside.
+  of truth. The app is its only writer (CLI commands go through its
+  socket, starting the app if needed). WAL mode lets later read-only
+  windows read alongside.
 - **Favourites / to-remove** live only in their `.txt` files. Every change
   re-reads the file, applies one add or remove and writes it atomically;
   reads reload when the file's mtime/size changes. Entries for missing

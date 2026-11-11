@@ -2,15 +2,20 @@
 The playlist service on its own thread.
 
 `ServiceWorker` lives on a worker `QThread` and creates everything it uses
-there: the backend (COM on Windows), the SQLite connection, the tick timer.
-A change renders for ~200 ms, which must never happen on the UI thread.
-The core stays synchronous and lock-free: only this thread touches it.
+there: the command socket, the backend (COM on Windows), the SQLite
+connection, the tick timer. A change renders for ~200 ms, which must never
+happen on the UI thread. The core stays synchronous and lock-free: only
+this thread touches it.
+
+Everything reaches the service through `ServiceWorker.execute`, one at a
+time, between ticks: socket requests directly (the socket lives on this
+thread), the tray through `ServiceHost`. Nothing on this thread may block
+waiting for a client or spin a nested event loop.
 
 `ServiceHost` is the UI thread's handle. It reaches the worker only through
 queued signals (requests, extra ticks, reload, stop) and gets results back
 the same way (replies, the overview, changes); it never waits on the
-worker, except once at shutdown. Requests run one at a time between ticks,
-in the order sent.
+worker, except once at shutdown.
 """
 
 from __future__ import annotations
@@ -29,6 +34,7 @@ from ..core.backend import Backend
 from ..core.model import WallpaperError
 from ..core.presence import Presence
 from ..core.service import PlaylistService
+from .ipc import CommandServer
 
 log = logging.getLogger(__name__)
 
@@ -43,6 +49,7 @@ class ServiceSettings:
     # Per-thread platform setup around the backend's life (backends.thread_scope).
     thread_scope: Callable[[], AbstractContextManager[None]]
     tick_period: float = 5.0  # seconds
+    server_name: str | None = None  # the command socket (ipc.server_name); None: none
 
 
 class ServiceWorker(QObject):
@@ -54,6 +61,7 @@ class ServiceWorker(QObject):
     changed = Signal(object)  # core.service.Change
     overview_changed = Signal(object)  # commands.Overview
     replied = Signal(int, object)  # request id, commands.Reply
+    failed = Signal(str)  # the command socket could not open; nothing runs
 
     def __init__(self, settings: ServiceSettings) -> None:
         super().__init__()
@@ -64,11 +72,25 @@ class ServiceWorker(QObject):
         self._error: str | None = None
         self._restored = False
         self._timer: QTimer | None = None
+        self._server: CommandServer | None = None
         self._overview: Overview | None = None
 
     @Slot()
     def start(self) -> None:
         self._thread_scope.enter_context(self._settings.thread_scope())
+        if self._settings.server_name is not None:
+            # Once for the app's life: it keeps answering across reloads
+            # (with the error while the config is broken).
+            self._server = CommandServer(
+                self._settings.server_name, self._settings.config_path, self
+            )
+            self._server.received.connect(self._answer)
+            try:
+                self._server.listen()
+            except WallpaperError as err:
+                log.error("%s", err)
+                self.failed.emit(str(err))
+                return
         self._timer = QTimer(self)
         self._timer.setInterval(round(self._settings.tick_period * 1000))
         self._timer.timeout.connect(self.tick)
@@ -80,6 +102,8 @@ class ServiceWorker(QObject):
     def stop(self) -> None:
         if self._timer is not None:
             self._timer.stop()
+        if self._server is not None:
+            self._server.close()
         self._close()
         self._thread_scope.close()
         self.thread().quit()
@@ -107,20 +131,32 @@ class ServiceWorker(QObject):
         self._publish()
         self.ticked.emit()
 
-    @Slot(int, object)
-    def execute(self, request_id: int, request: Request) -> None:
+    def execute(self, request: Request) -> Reply:
+        """Run one command: the only way in for socket, tray and windows."""
         if self._service is None:
             reply = Reply.error(self._error or "The service is not running")
         else:
             try:
-                reply = execute(self._service, request)
+                reply, change = execute(self._service, request)
             except Exception as err:  # pylint: disable=broad-exception-caught
                 log.exception("Command %s failed", request.command)
-                reply = Reply.error(f"Unexpected error: {err}")
+                reply, change = Reply.error(f"Unexpected error: {err}"), None
+            if change is not None:
+                self.changed.emit(change)
         if request.command != "status":
             log.info("%s %s: %s", request.command, request.target or "", reply)
-        self.replied.emit(request_id, reply)
         self._publish()
+        return reply
+
+    @Slot(int, object)
+    def submit(self, request_id: int, request: Request) -> None:
+        """A request queued by `ServiceHost.submit`; answered by `replied`."""
+        self.replied.emit(request_id, self.execute(request))
+
+    def _answer(self, connection_id: int, request: Request) -> None:
+        """A request from the socket (on this thread, so no queueing)."""
+        assert self._server is not None
+        self._server.reply(connection_id, self.execute(request))
 
     def _open(self) -> None:
         settings = self._settings
@@ -180,9 +216,10 @@ class ServiceHost(QObject):
     ticked = Signal()
     changed = Signal(object)  # core.service.Change
     overview_changed = Signal(object)  # commands.Overview
+    failed = Signal(str)  # see ServiceWorker.failed
 
     # Queued into the worker thread.
-    _execute = Signal(int, object)
+    _submit = Signal(int, object)
     _tick = Signal()
     _reload = Signal()
     _stop = Signal()
@@ -200,7 +237,7 @@ class ServiceHost(QObject):
         self._thread.finished.connect(self._worker.deleteLater)
 
         queued = Qt.ConnectionType.QueuedConnection
-        self._execute.connect(self._worker.execute, queued)
+        self._submit.connect(self._worker.submit, queued)
         self._tick.connect(self._worker.tick, queued)
         self._reload.connect(self._worker.reload, queued)
         self._stop.connect(self._worker.stop, queued)
@@ -208,6 +245,7 @@ class ServiceHost(QObject):
         self._worker.overview_changed.connect(self._on_overview, queued)
         self._worker.changed.connect(self.changed, queued)
         self._worker.ticked.connect(self.ticked, queued)
+        self._worker.failed.connect(self.failed, queued)
 
     def start(self) -> None:
         self._thread.start()
@@ -217,7 +255,7 @@ class ServiceHost(QObject):
         request_id = self._next_id
         self._next_id += 1
         self._callbacks[request_id] = callback
-        self._execute.emit(request_id, request)
+        self._submit.emit(request_id, request)
 
     def request_tick(self) -> None:
         """An extra tick soon (e.g. a monitor came back)."""
@@ -228,8 +266,8 @@ class ServiceHost(QObject):
 
     def shutdown(self, timeout_ms: int = 10_000) -> bool:
         """
-        Stop the worker after what it is doing now and wait for its thread;
-        False if it did not finish in time.
+        Stop the worker (and its socket) after what it is doing now and wait
+        for its thread; False if it did not finish in time.
         """
         if not self._thread.isRunning():
             return True

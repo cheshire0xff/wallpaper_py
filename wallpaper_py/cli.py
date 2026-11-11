@@ -2,28 +2,23 @@
 Command-line interface.
 
 Monitor commands (`list`, `set`) work on their own. Playlist commands
-(`status`, `next`, ...) are sent to the running app if there is one, so
-they never overlap its ticks; otherwise they run here, on the same state
-database. `run` and `tray` start the app (see wallpaper_py.app).
+(`status`, `next`, ...) always run in the app, so they never overlap its
+ticks: if it isn't running, it is started in the tray first. `run` and
+`tray` start the app (see wallpaper_py.app).
 """
 
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from .backends import get_backend, get_presence
-from .commands import (
-    TARGET_COMMANDS,
-    Command,
-    Reply,
-    Request,
-    execute,
-    open_service,
-)
+from .commands import TARGET_COMMANDS, Command, Reply, Request
 from .core import paths
 from .core.backend import Backend
 from .core.model import ImageMode, Monitor, WallpaperError
@@ -33,16 +28,68 @@ from .core.setter import apply_wallpaper
 
 BackendFactory = Callable[[], Backend]
 PresenceFactory = Callable[[], Presence]
-# Runs a request in the running app; None if no app is running.
-AppClient = Callable[[Request, Path], Reply | None]
+# Runs a request in the app (starting it if needed) and returns its reply.
+AppClient = Callable[[Request, Path], Reply]
+# The command line that starts the app for a config file.
+AppCommand = Callable[[Path], list[str]]
+
+START_TIMEOUT_S = 10.0  # for a started app to answer
+RETRY_INTERVAL_S = 0.2
 
 
-def send_to_app(request: Request, config_path: Path) -> Reply | None:
+def send_to_app(
+    request: Request, config_path: Path, app_command: AppCommand | None = None
+) -> Reply:
+    """
+    Run `request` in the app. If none is running, start it in the tray
+    (`app_command`, by default the autostart command) and retry until it
+    answers. Two CLIs may race to start it: the instance lock keeps one app,
+    and both reach it.
+    """
     # pylint: disable=import-outside-toplevel
     from .app import ipc  # Qt is imported only for playlist commands
 
+    name = ipc.server_name(paths.data_dir())
     envelope = ipc.Envelope(request=request, config=config_path)
-    return ipc.send(ipc.server_name(paths.data_dir()), envelope)
+    reply = ipc.send(name, envelope)
+    if reply is not None:
+        return reply
+    if app_command is None:
+        from .app.runtime import autostart_command
+
+        app_command = autostart_command
+    start_detached(app_command(config_path))
+    deadline = time.monotonic() + START_TIMEOUT_S
+    while time.monotonic() < deadline:
+        time.sleep(RETRY_INTERVAL_S)
+        reply = ipc.send(name, envelope)
+        if reply is not None:
+            return reply
+    raise WallpaperError(f"could not start wallpaper_py; see {paths.log_file()}")
+
+
+def start_detached(command: Sequence[str]) -> None:
+    """Start a process that outlives this one, without a console or our pipes."""
+    if sys.platform == "win32":
+        flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+        try:  # leave our job object too, so closing the terminal can't end it
+            _popen(command, flags | subprocess.CREATE_BREAKAWAY_FROM_JOB)
+        except OSError:  # the job doesn't allow that
+            _popen(command, flags)
+    else:
+        _popen(command)
+
+
+def _popen(command: Sequence[str], creationflags: int = 0) -> None:
+    # Never waited for: it runs on after this process exits.
+    subprocess.Popen(  # pylint: disable=consider-using-with
+        list(command),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=creationflags,  # Windows only
+        start_new_session=True,  # POSIX only: not ended with our session
+    )
 
 
 @dataclass
@@ -101,15 +148,11 @@ def cmd_set(ctx: Context, args: argparse.Namespace) -> int:
 
 
 def cmd_playlist(ctx: Context, args: argparse.Namespace) -> int:
-    """status / next / prev / fav / unfav / remove: in the app, or here."""
+    """status / next / prev / fav / unfav / remove: always in the app."""
     command: Command = args.command  # a subparser name from COMMANDS
-    request = Request(command, getattr(args, "target", None))
-    reply = ctx.app_client(request, ctx.config_path)
-    if reply is None:  # no app running: act directly
-        with open_service(
-            ctx.config_path, ctx.backend, ctx.presence_factory()
-        ) as service:
-            reply = execute(service, request)
+    reply = ctx.app_client(
+        Request(command, getattr(args, "target", None)), ctx.config_path
+    )
     if reply.out:
         print(reply.out)
     if reply.err:

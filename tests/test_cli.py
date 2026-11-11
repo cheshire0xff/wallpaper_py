@@ -1,9 +1,12 @@
+import sys
+from functools import partial
 from pathlib import Path
 
 import pytest
 from PIL import Image
 
 from wallpaper_py import cli
+from wallpaper_py.commands import Reply, Request, execute, open_service
 from wallpaper_py.core import paths
 from wallpaper_py.core.backend import Backend
 
@@ -113,10 +116,20 @@ class TestPlaylistCommands:
         return config
 
     def run(self, backend: FakeBackend, config: Path, *argv: str) -> int:
+        """Playlist commands go to a stand-in for the app, in this process."""
+
+        def app_client(request: Request, config_path: Path) -> Reply:
+            with open_service(config_path, backend, FakePresence()) as service:
+                return execute(service, request).reply
+
+        def no_backend() -> Backend:
+            raise AssertionError("playlist commands must not use a backend")
+
         return cli.main(
             ["--config", str(config), *argv],
-            backend_factory=lambda: backend,
+            backend_factory=no_backend if argv[0] != "run" else lambda: backend,
             presence_factory=FakePresence,
+            app_client=app_client,
         )
 
     def test_run_shows_the_first_image(
@@ -176,3 +189,21 @@ class TestPlaylistCommands:
         backend = FakeBackend([make_monitor("Main", attached=False)])
         assert self.run(backend, config, "next", "walls") == 1
         assert "attached" in capsys.readouterr().err
+
+
+def test_playlist_command_explains_when_the_app_does_not_start(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(cli, "START_TIMEOUT_S", 0.5)
+    started: list[Path] = []
+
+    def app_that_exits(config: Path) -> list[str]:
+        started.append(config)
+        return [sys.executable, "-c", "pass"]
+
+    client = partial(cli.send_to_app, app_command=app_that_exits)
+    assert cli.main(["next"], app_client=client) == 1
+    assert started == [paths.config_file()]
+    assert capsys.readouterr().err == (
+        f"error: could not start wallpaper_py; see {paths.log_file()}\n"
+    )

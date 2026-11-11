@@ -2,9 +2,11 @@
 The app: the one process that rotates the wallpapers and serves commands.
 
 `wallpaper tray` runs it with the tray icon (that is what starts at login);
-`wallpaper run` runs it headless in a terminal. Either way it holds the
-instance lock, listens on the command socket and runs the playlist service
-on its own thread, so CLI commands and ticks never overlap.
+`wallpaper run` runs it headless in a terminal; the CLI starts it (as
+`tray`) when a command finds none running. Either way it holds the instance
+lock and runs the playlist service on its own thread, together with the
+command socket, so CLI commands and ticks never overlap. The UI thread
+holds only UI.
 """
 
 from __future__ import annotations
@@ -25,14 +27,13 @@ from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QApplication
 
 from .. import backends
-from ..commands import Request
 from ..core import paths
 from ..core.autostart import Autostart
 from ..core.backend import Backend
 from ..core.model import WallpaperError
 from ..core.presence import Presence
 from .instance import InstanceLock
-from .ipc import CommandServer, server_name
+from .ipc import server_name
 from .screens import ScreenWatcher
 from .tray import Tray
 from .worker import ServiceHost, ServiceSettings
@@ -82,7 +83,10 @@ def setup_logging(to_file: bool) -> None:
 
 
 def autostart_command(config_path: Path) -> list[str]:
-    """How login starts the tray app: this interpreter, windowless on Windows."""
+    """
+    How login (and the CLI, if no app runs) starts the tray app: this
+    interpreter, windowless on Windows.
+    """
     python = Path(sys.executable)
     if sys.platform == "win32" and python.name.lower() == "python.exe":
         windowless = python.with_name("pythonw.exe")
@@ -109,6 +113,7 @@ def run_app(options: AppOptions, platform: Platform) -> int:
 
 
 def _run_locked(app: QCoreApplication, options: AppOptions, platform: Platform) -> int:
+    socket_name = server_name(paths.data_dir())
     host = ServiceHost(
         ServiceSettings(
             config_path=options.config_path,
@@ -116,15 +121,16 @@ def _run_locked(app: QCoreApplication, options: AppOptions, platform: Platform) 
             presence_factory=platform.presence_factory,
             thread_scope=platform.thread_scope,
             tick_period=options.tick_period,
+            server_name=socket_name,
         )
     )
-    server = CommandServer(server_name(paths.data_dir()), options.config_path)
+    failures: list[str] = []
 
-    def received(connection_id: int, request: Request) -> None:
-        host.submit(request, lambda reply: server.reply(connection_id, reply))
+    def failed(error: str) -> None:
+        failures.append(error)
+        app.exit(1)
 
-    server.received.connect(received)
-    server.listen()
+    host.failed.connect(failed)
 
     tray: Tray | None = None
     if options.tray:
@@ -141,7 +147,7 @@ def _run_locked(app: QCoreApplication, options: AppOptions, platform: Platform) 
     if options.quit_after_ticks is not None:
         host.ticked.connect(_countdown(options.quit_after_ticks, app.quit))
 
-    log.info("Started (config: %s, socket: %s)", options.config_path, server.name)
+    log.info("Started (config: %s, socket: %s)", options.config_path, socket_name)
     with _quit_on_interrupt(app):
         host.start()
         if tray is not None:
@@ -151,7 +157,6 @@ def _run_locked(app: QCoreApplication, options: AppOptions, platform: Platform) 
         finally:
             if tray is not None:
                 tray.hide()
-            server.close()
             log.info("Stopping the playlist service")
             stopped = host.shutdown(SHUTDOWN_TIMEOUT_MS)
     if not stopped:
@@ -160,6 +165,8 @@ def _run_locked(app: QCoreApplication, options: AppOptions, platform: Platform) 
         logging.shutdown()
         os._exit(1)
     log.info("Stopped")
+    if failures:
+        raise WallpaperError(failures[0])
     return int(code)
 
 

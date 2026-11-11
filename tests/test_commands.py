@@ -58,7 +58,7 @@ def fixture_service(tmp_path: Path, backend: FakeBackend) -> Iterator[PlaylistSe
 
 
 def run(service: PlaylistService, command: Command, target: str | None = None) -> Reply:
-    return execute(service, Request(command, target))
+    return execute(service, Request(command, target)).reply
 
 
 def test_unknown_command_is_rejected() -> None:
@@ -78,8 +78,30 @@ def test_commands(service: PlaylistService) -> None:
     assert "(not deleted)" in remove[0] and remove[1] == "walls: b.jpg on Main"
 
 
+def test_commands_that_change_wallpapers_return_the_change(
+    service: PlaylistService,
+) -> None:
+    def change(command: Command) -> tuple[str, str] | None:
+        outcome = execute(service, Request(command, "walls"))
+        assert outcome.reply.code == 0, outcome.reply.err
+        if outcome.change is None:
+            return None
+        assert outcome.change.playlist == "walls"
+        return outcome.change.image.name, outcome.change.reason
+
+    assert change("next") == ("a.jpg", "next")
+    assert change("next") == ("b.jpg", "next")
+    assert change("prev") == ("a.jpg", "previous")
+    assert change("prev") is None  # nothing earlier
+    assert change("fav") is None and change("unfav") is None
+    assert change("remove") == ("b.jpg", "next")
+    assert execute(service, Request("status")).change is None
+
+
 def test_errors_become_a_reply(service: PlaylistService) -> None:
-    reply = run(service, "next")  # two playlists: a target is needed
+    outcome = execute(service, Request("next"))  # two playlists: name one
+    assert outcome.change is None
+    reply = outcome.reply
     assert reply.code == 1 and reply.err.startswith("error: Name a playlist")
     assert run(service, "next", "strip").err.startswith("error: None of strip's")
 

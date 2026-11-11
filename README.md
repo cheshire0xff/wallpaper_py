@@ -72,7 +72,9 @@ Playlists are defined in a TOML file; start from
 `tray` and `run` start the same app; only one can run at a time (per
 user). It rotates the playlists, and the other commands (`status`, `next`,
 ...) are sent to it, so they never collide with a change in progress. When
-no app is running, those commands act on their own.
+no app is running, those commands start it in the tray first (as *Start at
+login* would) and then run in it; if it doesn't come up within ~10 s, they
+say so and point to the log file. `list` and `set` work without the app.
 
 The tray menu has a section per playlist (its monitors by name, the current
 image, which opens on click, *Next*, *Previous*, a *Favourite* toggle,

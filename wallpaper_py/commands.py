@@ -1,9 +1,10 @@
 """
 Playlist commands as data: a `Request` in, a `Reply` (exit code and text) out.
 
-The same `execute()` runs a command in the CLI's own process (when no app is
-running) and on the app's service thread (sent over its socket, or from the
-tray), so the output is identical either way. Qt-free, like the core.
+`execute()` runs a command on the app's service thread, whether it came over
+the socket (from the CLI) or from the tray. Besides the reply it returns the
+wallpaper change the command made, if any, so the app announces it like a
+tick's. Qt-free, like the core.
 
 `overview()` is the small snapshot the tray draws its menu from.
 """
@@ -14,14 +15,14 @@ from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, get_args
+from typing import Literal, NamedTuple, get_args
 
 from .core import paths
 from .core.backend import Backend
 from .core.config import PlaylistConfig, format_duration, load_config
 from .core.model import WallpaperError
 from .core.presence import Presence
-from .core.service import PlaylistService, PlaylistStatus
+from .core.service import Change, PlaylistService, PlaylistStatus
 from .core.store import Store
 
 Command = Literal["status", "next", "prev", "fav", "unfav", "remove"]
@@ -51,6 +52,13 @@ class Reply:
         return cls(1, err=f"error: {message}")
 
 
+class Outcome(NamedTuple):
+    """What a command did: its reply, and the wallpaper change it made."""
+
+    reply: Reply
+    change: Change | None = None
+
+
 @contextmanager
 def open_service(
     config_path: Path, backend: Backend, presence: Presence, tick_period: float = 5.0
@@ -68,61 +76,60 @@ def open_service(
         )
 
 
-def execute(service: PlaylistService, request: Request) -> Reply:
+def execute(service: PlaylistService, request: Request) -> Outcome:
     try:
         if request.command == "status":
             return _status(service)
         playlist = service.find_playlist(request.target)
         return _TARGET_HANDLERS[request.command](service, playlist)
     except WallpaperError as err:
-        return Reply.error(err)
+        return Outcome(Reply.error(err))
 
 
-def _status(service: PlaylistService) -> Reply:
+def _status(service: PlaylistService) -> Outcome:
     warnings = [f"Warning: {w}" for w in service.config.warnings()]
-    return Reply(
-        0,
-        out=format_status(service.status(), service.pause_reason()),
-        err="\n".join(warnings),
-    )
+    status = format_status(service.status(), service.pause_reason())
+    return Outcome(Reply(0, out=status, err="\n".join(warnings)))
 
 
-def _next(service: PlaylistService, playlist: PlaylistConfig) -> Reply:
-    return Reply(0, out=service.next(playlist).describe())
+def _next(service: PlaylistService, playlist: PlaylistConfig) -> Outcome:
+    change = service.next(playlist)
+    return Outcome(Reply(0, out=change.describe()), change)
 
 
-def _prev(service: PlaylistService, playlist: PlaylistConfig) -> Reply:
+def _prev(service: PlaylistService, playlist: PlaylistConfig) -> Outcome:
     change = service.previous(playlist)
-    return Reply(
-        0, out=change.describe() if change else f"{playlist.name}: no earlier image"
-    )
+    if change is None:
+        return Outcome(Reply(0, out=f"{playlist.name}: no earlier image"))
+    return Outcome(Reply(0, out=change.describe()), change)
 
 
-def _fav(service: PlaylistService, playlist: PlaylistConfig) -> Reply:
+def _fav(service: PlaylistService, playlist: PlaylistConfig) -> Outcome:
     image, added = service.favourite(playlist)
     if added:
-        return Reply(0, out=f"Added {image} to {service.favourites.file}")
-    return Reply(0, out=f"{image.name} is already a favourite")
+        return Outcome(Reply(0, out=f"Added {image} to {service.favourites.file}"))
+    return Outcome(Reply(0, out=f"{image.name} is already a favourite"))
 
 
-def _unfav(service: PlaylistService, playlist: PlaylistConfig) -> Reply:
+def _unfav(service: PlaylistService, playlist: PlaylistConfig) -> Outcome:
     image, removed = service.unfavourite(playlist)
     if removed:
-        return Reply(0, out=f"Removed {image} from {service.favourites.file}")
-    return Reply(0, out=f"{image.name} is not a favourite")
+        return Outcome(Reply(0, out=f"Removed {image} from {service.favourites.file}"))
+    return Outcome(Reply(0, out=f"{image.name} is not a favourite"))
 
 
-def _remove(service: PlaylistService, playlist: PlaylistConfig) -> Reply:
+def _remove(service: PlaylistService, playlist: PlaylistConfig) -> Outcome:
     image, change = service.remove(playlist)
     lines = [f"Listed {image} in {service.to_remove.file} (not deleted)"]
     if change:
         lines.append(change.describe())
     else:
         lines.append(f"{playlist.name}: changes once a monitor is attached")
-    return Reply(0, out="\n".join(lines))
+    return Outcome(Reply(0, out="\n".join(lines)), change)
 
 
-_TARGET_HANDLERS: dict[Command, Callable[[PlaylistService, PlaylistConfig], Reply]] = {
+_Handler = Callable[[PlaylistService, PlaylistConfig], Outcome]
+_TARGET_HANDLERS: dict[Command, _Handler] = {
     "next": _next,
     "prev": _prev,
     "fav": _fav,
