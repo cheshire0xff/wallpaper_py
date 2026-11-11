@@ -66,6 +66,22 @@ class Config:
         wanted = name.strip().lower()
         return next((p for p in self.playlists if p.name.lower() == wanted), None)
 
+    def warnings(self) -> list[str]:
+        """Settings that are valid but probably not what was meant."""
+        idle = self.pause_when_idle
+        if idle is None:
+            return []
+        # The idle pause starts `idle` seconds after the last input. A shorter
+        # interval can change the image twice in that time, so one goes by
+        # unseen. (With a longer one, the image shown then stays on screen.)
+        return [
+            f"[playlists.{p.name}] interval ({format_duration(p.interval)}) is "
+            f"shorter than pause_when_idle ({format_duration(idle)}): an image "
+            f"can change unseen before the idle pause starts"
+            for p in self.playlists
+            if p.interval < idle
+        ]
+
 
 _DURATION = re.compile(
     r"(?:(?P<d>\d+)d)?(?:(?P<h>\d+)h)?(?:(?P<m>\d+)m)?(?:(?P<s>\d+)s)?"
@@ -92,6 +108,16 @@ def parse_duration(text: str) -> float:
     return float(
         sum(int(v) * _UNIT_SECONDS[unit] for unit, v in match.groupdict().items() if v)
     )
+
+
+def format_duration(seconds: float) -> str:
+    """Seconds -> '1h30m', '45s' (the inverse of parse_duration, without days)."""
+    seconds = max(0, round(seconds))
+    hours, rest = divmod(seconds, 3600)
+    minutes, secs = divmod(rest, 60)
+    parts = [f"{hours}h" if hours else "", f"{minutes}m" if minutes else ""]
+    parts.append(f"{secs}s" if secs or not (hours or minutes) else "")
+    return "".join(parts)
 
 
 def load_config(path: Path, default_dir: Path) -> Config:

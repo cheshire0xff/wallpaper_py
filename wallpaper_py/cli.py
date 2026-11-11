@@ -21,7 +21,7 @@ from pathlib import Path
 from .backends import get_backend, get_presence
 from .core import paths
 from .core.backend import Backend
-from .core.config import load_config
+from .core.config import format_duration, load_config
 from .core.model import ImageMode, Monitor, WallpaperError
 from .core.presence import Presence
 from .core.selection import resolve_monitor
@@ -42,7 +42,7 @@ class Context:
     config_path: Path
 
     @contextmanager
-    def service(self) -> Iterator[PlaylistService]:
+    def service(self, tick_period: float = 5.0) -> Iterator[PlaylistService]:
         config = load_config(self.config_path, default_dir=paths.data_dir())
         with Store(paths.state_db()) as store:
             yield PlaylistService(
@@ -51,6 +51,7 @@ class Context:
                 self.presence_factory(),
                 store,
                 paths.render_dir(),
+                tick_period=tick_period,
             )
 
 
@@ -93,13 +94,9 @@ def cmd_set(ctx: Context, args: argparse.Namespace) -> int:
 # -- playlists ---------------------------------------------------------------
 
 
-def format_duration(seconds: float) -> str:
-    seconds = max(0, round(seconds))
-    hours, rest = divmod(seconds, 3600)
-    minutes, secs = divmod(rest, 60)
-    parts = [f"{hours}h" if hours else "", f"{minutes}m" if minutes else ""]
-    parts.append(f"{secs}s" if secs or not (hours or minutes) else "")
-    return "".join(parts)
+def warn_about_config(service: PlaylistService) -> None:
+    for warning in service.config.warnings():
+        print(f"Warning: {warning}", file=sys.stderr)
 
 
 def format_status(statuses: Sequence[PlaylistStatus], pause: str | None) -> str:
@@ -131,6 +128,7 @@ def format_status(statuses: Sequence[PlaylistStatus], pause: str | None) -> str:
 
 def cmd_status(ctx: Context, _: argparse.Namespace) -> int:
     with ctx.service() as service:
+        warn_about_config(service)
         print(format_status(service.status(), service.pause_reason()))
     return 0
 
@@ -175,7 +173,8 @@ def cmd_run(ctx: Context, args: argparse.Namespace) -> int:
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S"
     )
-    with ctx.service() as service:
+    with ctx.service(tick_period=args.poll) as service:
+        warn_about_config(service)
         names = ", ".join(p.name for p in service.config.playlists)
         log.info("Running playlists: %s (Ctrl+C to stop)", names)
         service.restore()

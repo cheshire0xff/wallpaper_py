@@ -4,8 +4,11 @@ from typing import Any
 import pytest
 
 from wallpaper_py.core.config import (
+    Config,
     ConfigError,
     Order,
+    PlaylistConfig,
+    format_duration,
     load_config,
     parse_config,
     parse_duration,
@@ -121,3 +124,31 @@ def test_bad_toml_names_the_file(tmp_path: Path) -> None:
     path.write_text("[playlists.a\n", encoding="utf-8")
     with pytest.raises(ConfigError, match="config.toml"):
         load_config(path, default_dir=tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("seconds", "text"),
+    [(0, "0s"), (59.6, "1m"), (90, "1m30s"), (3600, "1h"), (5430, "1h30m30s")],
+)
+def test_format_duration(seconds: float, text: str) -> None:
+    assert format_duration(seconds) == text
+    assert parse_duration(text) == round(seconds)
+
+
+def config_with(interval: float, idle: float | None) -> Config:
+    return Config(
+        playlists=(PlaylistConfig("walls", Path("d"), ("A",), interval),),
+        favourites_file=Path("f.txt"),
+        to_remove_file=Path("r.txt"),
+        pause_when_idle=idle,
+    )
+
+
+def test_warns_when_interval_is_shorter_than_idle_pause() -> None:
+    (warning,) = config_with(interval=120, idle=300).warnings()
+    assert "walls" in warning and "2m" in warning and "5m" in warning
+
+
+@pytest.mark.parametrize(("interval", "idle"), [(300, 300), (1800, 300), (60, None)])
+def test_no_warning_otherwise(interval: float, idle: float | None) -> None:
+    assert not config_with(interval, idle).warnings()

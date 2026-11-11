@@ -45,8 +45,9 @@ from .store import HistoryEntry, Store
 
 log = logging.getLogger(__name__)
 
-# Longer gaps between ticks (sleep, hibernation, a stopped process) are not
-# counted: nobody was looking at the wallpaper.
+# Gaps between ticks longer than this, and longer than two tick periods
+# (sleep, hibernation, a stopped process), are not counted: nobody was
+# looking at the wallpaper.
 MAX_TICK_GAP = 60.0
 # Unreadable images to skip in one go before giving up until the next tick.
 MAX_ATTEMPTS = 20
@@ -106,7 +107,9 @@ class PlaylistService:
         clock: Clock = time.time,
         rng: random.Random | None = None,
         library: Library | None = None,
+        tick_period: float = 5.0,
     ) -> None:
+        """`tick_period`: how often the caller calls `tick()`, in seconds."""
         self.config = config
         self._backend = backend
         self._presence = presence
@@ -119,6 +122,7 @@ class PlaylistService:
         self.to_remove = MarkFile(config.to_remove_file)
         self._broken: set[str] = set()  # path keys that failed to load
         self._last_tick: float | None = None
+        self._max_tick_gap = max(MAX_TICK_GAP, 2 * tick_period)
         self._pause_reason: str | None = None
         self._postponed: set[str] = set()
 
@@ -184,7 +188,7 @@ class PlaylistService:
     def _seconds_since_last_tick(self) -> float:
         now = self._clock()
         last, self._last_tick = self._last_tick, now
-        if last is None or not 0 <= now - last <= MAX_TICK_GAP:
+        if last is None or not 0 <= now - last <= self._max_tick_gap:
             return 0.0
         return now - last
 

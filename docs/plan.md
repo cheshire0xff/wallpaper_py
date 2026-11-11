@@ -67,6 +67,15 @@ socket. Starts at login to the tray (Windows Run key / XDG autostart). Screen
 signals are debounced: re-query until two backend snapshots match, because COM
 lags Qt by 1-2 s.
 
+Must fix: while the CLI and `wallpaper run` are separate processes sharing
+the database, a command during an in-progress change can double-commit
+(same image twice in history). Once the app runs, CLI commands go through
+its socket and run on the one service, serialized with its ticks. If the
+app isn't running, the CLI may still act directly (as now).
+
+The tick timer passes its period as `tick_period`, so gaps up to two
+periods count as active time (longer ones are sleep).
+
 ## Phase 4: layout window
 
 Monitors drawn to scale in their real arrangement, each showing a thumbnail

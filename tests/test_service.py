@@ -57,7 +57,7 @@ class Env:
         return found.wallpaper
 
 
-def make_service(env: Env) -> PlaylistService:
+def make_service(env: Env, tick_period: float = STEP) -> PlaylistService:
     return PlaylistService(
         env.config,
         env.backend,
@@ -67,6 +67,7 @@ def make_service(env: Env) -> PlaylistService:
         clock=env.clock,
         rng=random.Random(0),
         library=Library(env.clock, max_age=0),
+        tick_period=tick_period,
     )
 
 
@@ -162,6 +163,16 @@ def test_presence_unknown_never_pauses(env: Env) -> None:
 def test_sleep_is_not_counted(env: Env) -> None:
     env.service.tick()
     env.clock.advance(8 * 3600)  # PC asleep overnight
+    assert not env.service.tick()
+
+
+def test_slow_ticks_are_not_mistaken_for_sleep(env: Env) -> None:
+    """`wallpaper run --poll 120`: two minutes between ticks still count."""
+    env.service = make_service(env, tick_period=120)
+    env.service.tick()
+    env.clock.advance(120)
+    assert {c.reason for c in env.service.tick()} == {"scheduled"}
+    env.clock.advance(8 * 3600)  # but a night asleep still doesn't
     assert not env.service.tick()
 
 

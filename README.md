@@ -68,6 +68,11 @@ Playlists are defined in a TOML file; start from
 - `next` / `prev` / `fav` / `remove` work while `run` is running in another
   terminal: both use the same state database.
 
+**Known limitation (until the tray app, Phase 3):** if a command lands in
+the second or so while `run` is itself changing that playlist (rendering a
+4K image), both may pick the same image and log it twice in history.
+Harmless; it goes away once commands are sent to the running app.
+
 `python -m wallpaper_py ...` works too.
 
 ## Development

@@ -176,11 +176,3 @@ class TestPlaylistCommands:
         backend = FakeBackend([make_monitor("Main", attached=False)])
         assert self.run(backend, config, "next", "walls") == 1
         assert "attached" in capsys.readouterr().err
-
-
-@pytest.mark.parametrize(
-    ("seconds", "text"),
-    [(0, "0s"), (59.6, "1m"), (90, "1m30s"), (3600, "1h"), (5430, "1h30m30s")],
-)
-def test_format_duration(seconds: float, text: str) -> None:
-    assert cli.format_duration(seconds) == text
