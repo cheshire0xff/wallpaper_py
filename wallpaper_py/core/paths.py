@@ -23,7 +23,7 @@ def config_file() -> Path:
 
 
 def state_db() -> Path:
-    """SQLite state: history, shuffle decks, favourites, to-remove."""
+    """SQLite state: history, shuffle decks, per-playlist and per-monitor state."""
     return data_dir() / "state.sqlite3"
 
 
