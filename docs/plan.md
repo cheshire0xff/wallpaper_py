@@ -266,13 +266,14 @@ of the app's socket; see Phase 4):
 Tabs: Library, Favourites, Removed, History, Upcoming. Grids that scale to
 20k images (`QListView` icon mode with a virtual model; thumbnails decoded in
 worker threads with a LIFO queue, Pillow draft mode, an LRU memory budget
-(built in, generous: ~1.5 GB, no setting; plus a "Free memory" button), a
+(built in, generous: ~1.5 GB, no setting), a
 disk cache, at tile size x DPR). Background pre-generation of the disk cache.
 
 Memory: the thumbnails live in the UI process, so closing the last window
 ends that process and gives everything back; the always-running app never
 holds thumbnails. The disk cache stays, so reopening is still fast. The
-budget and "Free memory" cover long sessions with the window open.
+budget covers long sessions with the window open; no "Free memory" button
+is needed (closing the window does that).
 
 ## Phase 6: KDE backend
 

@@ -41,10 +41,6 @@ the wallpapers.
 1. Reset the shuffle cycle (start over, everything unseen again), with a
    confirmation.
 1. Settings / about: data and config paths, version with git hash.
-1. "Free memory" button: after browsing a big library, give the thumbnail
-   memory back without restarting the app (clear the in-memory thumbnail
-   cache + gc.collect()). Show the app's memory use next to it. No
-   settings or caps beyond the grid's built-in safety budget.
 
 ## Nice to have
 
