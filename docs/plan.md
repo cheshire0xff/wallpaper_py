@@ -73,8 +73,35 @@ the database, a command during an in-progress change can double-commit
 its socket and run on the one service, serialized with its ticks. If the
 app isn't running, the CLI may still act directly (as now).
 
-The tick timer passes its period as `tick_period`, so gaps up to two
-periods count as active time (longer ones are sleep).
+Ticks and events: keep polling as the safety net, use events only where
+they make a visible difference.
+
+- A `QTimer` calls `service.tick()` every 5 s and passes that period as
+  `tick_period` (gaps up to two periods count as active time, longer ones
+  are sleep). The tick stays the source of truth: it re-reads the real state
+  each time, so a missed event costs at most one tick.
+- Qt screen signals (`screenAdded`, `screenRemoved`, geometry changes)
+  restart a ~2 s single-shot debounce timer that runs an extra tick, so a
+  monitor coming back gets its image right away.
+- Commands (tray, socket) are queued to the service thread and run at
+  once, between ticks (never during one).
+- Not used: native lock / unlock and sleep / resume notifications. The 5 s
+  tick already notices both within 5 s (lock via the WTS session flag, sleep
+  via the tick gap), so they would add platform code for no visible gain.
+
+Threads: the service runs on **its own thread**, never the UI thread. A
+change renders for ~200 ms (more for big PNG sources); on the UI thread that
+would freeze the library grid mid-scroll.
+
+- One worker `QThread` owns the `PlaylistService`: its tick `QTimer`, the
+  rendering, COM (initialized on that thread) and the SQLite connection
+  (created there). The core stays synchronous and unchanged.
+- The UI thread only draws. Tray actions, socket commands and screen
+  signals reach the service as queued signals; results (changes, status,
+  errors) come back as signals. The UI never waits on the service.
+- Still no locking: the service is used from exactly one thread.
+- Windows that read state (library, history) open their own read-only
+  SQLite connection; WAL allows readers alongside the writer.
 
 ## Phase 4: layout window
 
@@ -83,6 +110,9 @@ of its current wallpaper. Assign playlists and groups, and run next/prev/fav
 from here.
 
 ## Phase 5: library window
+
+Features: the "Library window" section of [todo.md](../todo.md) (enlarge
+with path / size / dimensions, toggles, filter, sort, ...).
 
 Tabs: Library, Favourites, Removed, History, Upcoming. Grids that scale to
 20k images (`QListView` icon mode with a virtual model; thumbnails decoded in

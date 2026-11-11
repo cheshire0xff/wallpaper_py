@@ -13,6 +13,35 @@ so I need to pass it first through my lib management script to delete it properl
 
 1. Investiage if this is still the preffered way to manage monitors and wallpapers on windows.
 
+## Library window
+
+Modelled on my phone app (C:\Users\fanta\Repos\WallpaperSwitcherApp), minus
+its manual "set as wallpaper" and lock screen parts: here the playlists set
+the wallpapers.
+
+1. Tabs: All images, Favourites, To remove, History, Upcoming. The last
+   opened tab is remembered.
+1. Every image in every grid can be clicked to enlarge it. The enlarged view
+   shows the full path (selectable, copyable), dimensions and file size, and
+   has favourite and to-remove buttons that toggle (un-favourite and
+   un-remove too).
+1. Enlarged view: zoom (wheel, up to ~5x; double-click toggles zoom / fit)
+   and drag to pan; click hides / shows the info overlay.
+1. Filter by name: case-insensitive part of the filename, with live results
+   (small thumbnails) while typing; picking one opens it enlarged.
+1. Sort each tab, remembered per tab: name A-Z / Z-A, newest / oldest
+   added.
+1. "Hide removed" toggle in All images.
+1. Image count of the current tab / filter.
+1. Grid: columns adapt to the window width; draggable fast-scroll
+   scrollbar; jumps back to the top when the sort or filter changes.
+   Must stay smooth with 20k images.
+1. Current wallpaper per playlist (in the layout window): thumbnail, name,
+   size, dimensions, favourite / to-remove toggles, click to enlarge.
+1. Reset the shuffle cycle (start over, everything unseen again), with a
+   confirmation.
+1. Settings / about: data and config paths, version with git hash.
+
 ## Nice to have
 
 1. Library grid: fade in from black when a thumbnail loads (like the phone app).
