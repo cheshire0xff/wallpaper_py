@@ -10,7 +10,7 @@ early signal costs at most one regular tick.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QObject, QTimer, Signal
+from PySide6.QtCore import QObject, QTimer, Signal, Slot
 from PySide6.QtGui import QGuiApplication, QScreen
 
 DEBOUNCE_MS = 2_000
@@ -31,10 +31,12 @@ class ScreenWatcher(QObject):
         for screen in app.screens():
             self._watch(screen)
 
+    @Slot()
     def poke(self, *_: object) -> None:
         """Something changed: (re)start the countdown."""
         self._timer.start()
 
+    @Slot(QScreen)
     def _added(self, screen: QScreen) -> None:
         self._watch(screen)
         self.poke()

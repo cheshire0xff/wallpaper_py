@@ -1,0 +1,640 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "wallpaper_py socket protocol",
+  "description": "Protocol version 2. One JSON object per line: a Request in; a Reply out, or Events while subscribed. See docs/protocol.md.",
+  "anyOf": [
+    {
+      "$ref": "#/$defs/Request"
+    },
+    {
+      "$ref": "#/$defs/Reply"
+    },
+    {
+      "$ref": "#/$defs/Event"
+    }
+  ],
+  "$defs": {
+    "Change": {
+      "properties": {
+        "playlist": {
+          "title": "Playlist",
+          "type": "string"
+        },
+        "image": {
+          "format": "path",
+          "title": "Image",
+          "type": "string"
+        },
+        "reason": {
+          "enum": [
+            "scheduled",
+            "next",
+            "previous",
+            "restored"
+          ],
+          "title": "Reason",
+          "type": "string"
+        },
+        "shown_on": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Shown On",
+          "type": "array"
+        },
+        "missed": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Missed",
+          "type": "array"
+        }
+      },
+      "required": [
+        "playlist",
+        "image",
+        "reason",
+        "shown_on"
+      ],
+      "title": "Change",
+      "type": "object"
+    },
+    "ChangedEvent": {
+      "description": "A wallpaper changed, by a tick or by a command.",
+      "properties": {
+        "event": {
+          "const": "changed",
+          "default": "changed",
+          "title": "Event",
+          "type": "string"
+        },
+        "change": {
+          "$ref": "#/$defs/Change"
+        }
+      },
+      "required": [
+        "change"
+      ],
+      "title": "ChangedEvent",
+      "type": "object"
+    },
+    "Envelope": {
+      "additionalProperties": false,
+      "description": "A request on the wire.",
+      "properties": {
+        "v": {
+          "default": 2,
+          "title": "V",
+          "type": "integer"
+        },
+        "request": {
+          "discriminator": {
+            "mapping": {
+              "fav": "#/$defs/Request",
+              "next": "#/$defs/Request",
+              "prev": "#/$defs/Request",
+              "remove": "#/$defs/Request",
+              "status": "#/$defs/Request",
+              "subscribe": "#/$defs/Subscribe",
+              "unfav": "#/$defs/Request"
+            },
+            "propertyName": "command"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Request"
+            },
+            {
+              "$ref": "#/$defs/Subscribe"
+            }
+          ],
+          "title": "Request"
+        },
+        "config": {
+          "format": "path",
+          "title": "Config",
+          "type": "string"
+        }
+      },
+      "required": [
+        "request",
+        "config"
+      ],
+      "title": "Envelope",
+      "type": "object"
+    },
+    "ErrorInfo": {
+      "properties": {
+        "kind": {
+          "enum": [
+            "protocol",
+            "wrong_config",
+            "config_error",
+            "unknown_target",
+            "not_attached",
+            "no_images",
+            "nothing_shown",
+            "failed",
+            "internal",
+            "unreachable"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "message"
+      ],
+      "title": "ErrorInfo",
+      "type": "object"
+    },
+    "ErrorReply": {
+      "properties": {
+        "error": {
+          "$ref": "#/$defs/ErrorInfo"
+        }
+      },
+      "required": [
+        "error"
+      ],
+      "title": "ErrorReply",
+      "type": "object"
+    },
+    "Event": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ChangedEvent"
+        },
+        {
+          "$ref": "#/$defs/OverviewChangedEvent"
+        }
+      ],
+      "discriminator": {
+        "propertyName": "event",
+        "mapping": {
+          "changed": "#/$defs/ChangedEvent",
+          "overview_changed": "#/$defs/OverviewChangedEvent"
+        }
+      }
+    },
+    "ImageMode": {
+      "enum": [
+        "fill",
+        "fit",
+        "stretch"
+      ],
+      "title": "ImageMode",
+      "type": "string"
+    },
+    "MarkResult": {
+      "properties": {
+        "command": {
+          "enum": [
+            "fav",
+            "unfav"
+          ],
+          "title": "Command",
+          "type": "string"
+        },
+        "playlist": {
+          "title": "Playlist",
+          "type": "string"
+        },
+        "image": {
+          "format": "path",
+          "title": "Image",
+          "type": "string"
+        },
+        "list_file": {
+          "format": "path",
+          "title": "List File",
+          "type": "string"
+        },
+        "changed": {
+          "title": "Changed",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "command",
+        "playlist",
+        "image",
+        "list_file",
+        "changed"
+      ],
+      "title": "MarkResult",
+      "type": "object"
+    },
+    "MonitorView": {
+      "properties": {
+        "selector": {
+          "title": "Selector",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "attached": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Attached"
+        }
+      },
+      "required": [
+        "selector",
+        "name",
+        "attached"
+      ],
+      "title": "MonitorView",
+      "type": "object"
+    },
+    "NextResult": {
+      "properties": {
+        "command": {
+          "const": "next",
+          "default": "next",
+          "title": "Command",
+          "type": "string"
+        },
+        "playlist": {
+          "title": "Playlist",
+          "type": "string"
+        },
+        "change": {
+          "$ref": "#/$defs/Change"
+        }
+      },
+      "required": [
+        "playlist",
+        "change"
+      ],
+      "title": "NextResult",
+      "type": "object"
+    },
+    "Order": {
+      "enum": [
+        "sorted",
+        "shuffle"
+      ],
+      "title": "Order",
+      "type": "string"
+    },
+    "Overview": {
+      "description": "The small snapshot the tray and the windows draw from.",
+      "properties": {
+        "playlists": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/PlaylistView"
+          },
+          "title": "Playlists",
+          "type": "array"
+        },
+        "paused": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Paused"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        }
+      },
+      "title": "Overview",
+      "type": "object"
+    },
+    "OverviewChangedEvent": {
+      "description": "The overview changed; also the first event of every subscription.",
+      "properties": {
+        "event": {
+          "const": "overview_changed",
+          "default": "overview_changed",
+          "title": "Event",
+          "type": "string"
+        },
+        "overview": {
+          "$ref": "#/$defs/Overview"
+        }
+      },
+      "required": [
+        "overview"
+      ],
+      "title": "OverviewChangedEvent",
+      "type": "object"
+    },
+    "PlaylistDetails": {
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "monitors": {
+          "items": {
+            "$ref": "#/$defs/MonitorView"
+          },
+          "title": "Monitors",
+          "type": "array"
+        },
+        "current": {
+          "anyOf": [
+            {
+              "format": "path",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Current"
+        },
+        "favourite": {
+          "title": "Favourite",
+          "type": "boolean"
+        },
+        "directory": {
+          "format": "path",
+          "title": "Directory",
+          "type": "string"
+        },
+        "order": {
+          "$ref": "#/$defs/Order"
+        },
+        "interval": {
+          "title": "Interval",
+          "type": "number"
+        },
+        "mode": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ImageMode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "next_in_seconds": {
+          "title": "Next In Seconds",
+          "type": "number"
+        },
+        "upcoming": {
+          "items": {
+            "format": "path",
+            "type": "string"
+          },
+          "title": "Upcoming",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "monitors",
+        "current",
+        "favourite",
+        "directory",
+        "order",
+        "interval",
+        "mode",
+        "next_in_seconds",
+        "upcoming"
+      ],
+      "title": "PlaylistDetails",
+      "type": "object"
+    },
+    "PlaylistView": {
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "monitors": {
+          "items": {
+            "$ref": "#/$defs/MonitorView"
+          },
+          "title": "Monitors",
+          "type": "array"
+        },
+        "current": {
+          "anyOf": [
+            {
+              "format": "path",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Current"
+        },
+        "favourite": {
+          "title": "Favourite",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "monitors",
+        "current",
+        "favourite"
+      ],
+      "title": "PlaylistView",
+      "type": "object"
+    },
+    "PrevResult": {
+      "properties": {
+        "command": {
+          "const": "prev",
+          "default": "prev",
+          "title": "Command",
+          "type": "string"
+        },
+        "playlist": {
+          "title": "Playlist",
+          "type": "string"
+        },
+        "change": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Change"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "playlist",
+        "change"
+      ],
+      "title": "PrevResult",
+      "type": "object"
+    },
+    "RemoveResult": {
+      "properties": {
+        "command": {
+          "const": "remove",
+          "default": "remove",
+          "title": "Command",
+          "type": "string"
+        },
+        "playlist": {
+          "title": "Playlist",
+          "type": "string"
+        },
+        "image": {
+          "format": "path",
+          "title": "Image",
+          "type": "string"
+        },
+        "list_file": {
+          "format": "path",
+          "title": "List File",
+          "type": "string"
+        },
+        "change": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Change"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "playlist",
+        "image",
+        "list_file",
+        "change"
+      ],
+      "title": "RemoveResult",
+      "type": "object"
+    },
+    "Reply": {
+      "anyOf": [
+        {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/StatusResult"
+            },
+            {
+              "$ref": "#/$defs/NextResult"
+            },
+            {
+              "$ref": "#/$defs/PrevResult"
+            },
+            {
+              "$ref": "#/$defs/MarkResult"
+            },
+            {
+              "$ref": "#/$defs/RemoveResult"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "command",
+            "mapping": {
+              "status": "#/$defs/StatusResult",
+              "next": "#/$defs/NextResult",
+              "prev": "#/$defs/PrevResult",
+              "fav": "#/$defs/MarkResult",
+              "unfav": "#/$defs/MarkResult",
+              "remove": "#/$defs/RemoveResult"
+            }
+          }
+        },
+        {
+          "$ref": "#/$defs/ErrorReply"
+        }
+      ]
+    },
+    "Request": {
+      "$ref": "#/$defs/Envelope"
+    },
+    "StatusResult": {
+      "properties": {
+        "command": {
+          "const": "status",
+          "default": "status",
+          "title": "Command",
+          "type": "string"
+        },
+        "playlists": {
+          "items": {
+            "$ref": "#/$defs/PlaylistDetails"
+          },
+          "title": "Playlists",
+          "type": "array"
+        },
+        "paused": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Paused"
+        },
+        "warnings": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Warnings",
+          "type": "array"
+        }
+      },
+      "required": [
+        "playlists",
+        "paused"
+      ],
+      "title": "StatusResult",
+      "type": "object"
+    },
+    "Subscribe": {
+      "additionalProperties": false,
+      "description": "Keep the connection open and receive one `Event` per line.",
+      "properties": {
+        "command": {
+          "const": "subscribe",
+          "default": "subscribe",
+          "title": "Command",
+          "type": "string"
+        }
+      },
+      "title": "Subscribe",
+      "type": "object"
+    }
+  }
+}

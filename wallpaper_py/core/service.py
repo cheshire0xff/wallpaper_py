@@ -25,6 +25,7 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from .backend import Backend
 from .config import Config, Order, PlaylistConfig
@@ -54,14 +55,29 @@ MAX_ATTEMPTS = 20
 
 
 class PlaylistError(WallpaperError):
-    """Unknown playlist, or nothing to show."""
+    """A playlist command that can't be done."""
+
+
+class UnknownTargetError(PlaylistError):
+    """No playlist matches the target, or none was named among several."""
+
+
+class NoImagesError(PlaylistError):
+    """The playlist's directory has nothing to show."""
+
+
+class NothingShownError(PlaylistError):
+    """The playlist has not shown an image yet, so there is no current one."""
+
+
+ChangeReason = Literal["scheduled", "next", "previous", "restored"]
 
 
 @dataclass(frozen=True)
 class Change:
     playlist: str
     image: Path
-    reason: str  # "scheduled", "next", "previous", "restored"
+    reason: ChangeReason
     shown_on: tuple[str, ...]  # monitor names
     missed: tuple[str, ...] = ()  # detached members; they get it when back
 
@@ -219,7 +235,7 @@ class PlaylistService:
             if len(self.config.playlists) == 1:
                 return self.config.playlists[0]
             names = ", ".join(p.name for p in self.config.playlists)
-            raise PlaylistError(f"Name a playlist or monitor: {names}")
+            raise UnknownTargetError(f"Name a playlist or monitor: {names}")
         playlist = self.config.playlist(selector)
         if playlist is not None:
             return playlist
@@ -227,7 +243,7 @@ class PlaylistService:
         for playlist in self.config.playlists:
             if any(find_exact([monitor], s) for s in playlist.monitors):
                 return playlist
-        raise PlaylistError(f"{monitor.name} is not in any playlist")
+        raise UnknownTargetError(f"{monitor.name} is not in any playlist")
 
     def next(self, playlist: PlaylistConfig) -> Change:
         change = self._step(
@@ -237,7 +253,7 @@ class PlaylistService:
             "next",
         )
         if change is None:
-            raise PlaylistError(f"{playlist.name}: no images in {playlist.directory}")
+            raise NoImagesError(f"{playlist.name}: no images in {playlist.directory}")
         return change
 
     def previous(self, playlist: PlaylistConfig) -> Change | None:
@@ -305,7 +321,7 @@ class PlaylistService:
     def _require_current(self, playlist: PlaylistConfig) -> Path:
         image = self.current(playlist)
         if image is None:
-            raise PlaylistError(f"{playlist.name} has not shown an image yet")
+            raise NothingShownError(f"{playlist.name} has not shown an image yet")
         return image
 
     def _showable(self, image: Path, removed: set[str]) -> bool:
@@ -398,7 +414,7 @@ class PlaylistService:
         playlist: PlaylistConfig,
         members: Sequence[Monitor],
         peek: Callable[[], _Candidate | None],
-        reason: str,
+        reason: ChangeReason,
     ) -> Change | None:
         """
         Show the first candidate that loads, then commit it.

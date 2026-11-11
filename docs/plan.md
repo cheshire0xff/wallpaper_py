@@ -11,7 +11,7 @@ thin. See [architecture.md](architecture.md) for the layers.
 | 1 | Core model, safe setter, Windows backend, CLI `list`/`set`, tooling, CI | done |
 | 2 | Playlists, mirrored groups, scheduler, history, favourites, to-remove | done (awaiting a real-desktop trial) |
 | 3 | App shell: tray, single instance, IPC, autostart | done (awaiting a real-desktop trial) |
-| 4 | Layout window | next |
+| 4 | UI process and layout window | in progress: foundation done (awaiting review) |
 | 5 | Library window | |
 | 6 | KDE backend | |
 | 7 | Polish | |
@@ -230,6 +230,33 @@ socket, and our windows use the same models):
 - Not needed: paging for history / library lists (the UI reads SQLite
   directly, see Phase 5). Thumbnails stay off the socket; clients read the
   image files by path.
+
+Foundation, implemented (decisions made while building it):
+
+- `protocol.py` (Qt-free) holds the wire models; `commands.py` returns them
+  and `cli.py` formats its text from them (output unchanged). The overview
+  moved there too, since it now goes over the socket. Protocol version 2.
+- Results carry `playlist` (the resolved one: the target may be a monitor),
+  `fav` / `unfav` / `remove` also `list_file`, and `status` also
+  `warnings`, so the CLI can print what it printed before. Monitors carry
+  `selector` (as in the config) besides `name` and `attached`.
+- Error kinds: `protocol`, `wrong_config`, `config_error`,
+  `unknown_target` (playlist or monitor), `not_attached`, `no_images`,
+  `nothing_shown`, `failed`, `internal`, and the client-side
+  `unreachable`. The core got exception subclasses for them.
+- `subscribe`: the first event is the current overview, so a client needs
+  no separate request; a subscriber more than 4 MB behind is dropped.
+- The UI process listens on `<app socket>-ui` while holding `ui.lock`; it
+  refuses a "show" for another config. Tray and UI process ask without
+  blocking (`ipc.LineRequest`); a starting UI process asks blocking, before
+  its loop runs. On Windows the asker calls `AllowSetForegroundWindow` so
+  the window can come to the front.
+- The UI process logs to `ui.log` next to `wallpaper.log`. Run from a
+  terminal, `wallpaper ui` stays in the foreground like `run` / `tray`.
+- Found while testing: Qt signals must connect to bound methods, not
+  lambdas holding `self` (a double delete on teardown; it was latent in
+  Phase 3's socket server too), and pydantic must be fully loaded before
+  PySide6 (`app/__init__.py`).
 
 Open: "assign playlists and groups" from this window means the app edits
 config.toml. If we do it, edit with a comment-preserving TOML library

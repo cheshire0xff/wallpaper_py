@@ -18,15 +18,15 @@ SEND = """
 import sys
 from pathlib import Path
 from wallpaper_py.app import ipc
-from wallpaper_py.commands import Request
+from wallpaper_py.protocol import Envelope, Request
 name, command, config, timeout = sys.argv[1:5]
-envelope = ipc.Envelope(request=Request(command), config=Path(config))
+envelope = Envelope(request=Request(command=command), config=Path(config))
 try:
     reply = ipc.send(name, envelope, timeout=float(timeout))
 except ipc.WallpaperError as err:
     print("ERROR", err)
 else:
-    print("NONE" if reply is None else ipc.encode_reply(reply).decode().strip())
+    print("NONE" if reply is None else ipc.encode(reply).decode().strip())
 """
 
 # argv: server name, raw request line. Prints the raw reply line.

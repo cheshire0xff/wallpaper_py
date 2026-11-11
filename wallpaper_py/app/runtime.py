@@ -2,27 +2,26 @@
 The app: the one process that rotates the wallpapers and serves commands.
 
 `wallpaper tray` runs it with the tray icon (that is what starts at login);
-`wallpaper run` runs it headless in a terminal; the CLI starts it (as
-`tray`) when a command finds none running. Either way it holds the instance
-lock and runs the playlist service on its own thread, together with the
-command socket, so CLI commands and ticks never overlap. The UI thread
-holds only UI.
+`wallpaper run` runs it headless in a terminal; the CLI and the UI process
+start it (as `tray`) when they find none running. Either way it holds the
+instance lock and runs the playlist service on its own thread, together
+with the command socket, so commands and ticks never overlap. The UI thread
+holds only the tray; the windows run in a process of their own
+(app/ui/process.py), which the tray starts on demand.
 """
 
 from __future__ import annotations
 
 import logging
 import os
-import signal
 import sys
-import threading
-from collections.abc import Callable, Iterator
-from contextlib import AbstractContextManager, contextmanager
+from collections.abc import Callable
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
-from logging.handlers import RotatingFileHandler
+from functools import partial
 from pathlib import Path
 
-from PySide6.QtCore import QCoreApplication, QTimer
+from PySide6.QtCore import QCoreApplication
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QApplication
 
@@ -34,8 +33,10 @@ from ..core.model import WallpaperError
 from ..core.presence import Presence
 from .instance import InstanceLock
 from .ipc import server_name
+from .processes import autostart_command, quit_on_interrupt, ui_command
 from .screens import ScreenWatcher
 from .tray import Tray
+from .ui.launcher import WindowOpener, ui_server_name
 from .worker import ServiceHost, ServiceSettings
 
 log = logging.getLogger(__name__)
@@ -59,43 +60,6 @@ class Platform:
     presence_factory: Callable[[], Presence]
     autostart_factory: Callable[[], Autostart] = backends.get_autostart
     thread_scope: Callable[[], AbstractContextManager[None]] = backends.thread_scope
-
-
-def setup_logging(to_file: bool) -> None:
-    """Terminal (if there is one) and, for the tray app, a rotating file."""
-    handlers: list[logging.Handler] = []
-    if sys.stderr is not None:  # None under pythonw
-        stream = logging.StreamHandler()
-        stream.setFormatter(logging.Formatter("%(asctime)s %(message)s", "%H:%M:%S"))
-        handlers.append(stream)
-    if to_file:
-        log_file = paths.log_file()
-        log_file.parent.mkdir(parents=True, exist_ok=True)
-        file = RotatingFileHandler(
-            log_file, maxBytes=1_000_000, backupCount=3, encoding="utf-8"
-        )
-        file.setFormatter(
-            logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s")
-        )
-        handlers.append(file)
-    # A no-op if logging is already set up (e.g. by an embedding test run).
-    logging.basicConfig(level=logging.INFO, handlers=handlers)
-
-
-def autostart_command(config_path: Path) -> list[str]:
-    """
-    How login (and the CLI, if no app runs) starts the tray app: this
-    interpreter, windowless on Windows.
-    """
-    python = Path(sys.executable)
-    if sys.platform == "win32" and python.name.lower() == "python.exe":
-        windowless = python.with_name("pythonw.exe")
-        if windowless.is_file():
-            python = windowless
-    command = [str(python), "-m", "wallpaper_py"]
-    if config_path != paths.config_file():
-        command += ["--config", str(config_path.resolve())]
-    return [*command, "tray"]
 
 
 def run_app(options: AppOptions, platform: Platform) -> int:
@@ -134,13 +98,20 @@ def _run_locked(app: QCoreApplication, options: AppOptions, platform: Platform) 
 
     tray: Tray | None = None
     if options.tray:
+        opener = WindowOpener(
+            ui_server_name(paths.data_dir()),
+            options.config_path,
+            partial(ui_command, options.config_path),
+        )
         tray = Tray(
             host,
             platform.autostart_factory(),
             autostart_command(options.config_path),
             options.config_path.parent,
             app.quit,
+            open_window=opener.open,
         )
+        opener.failed.connect(tray.notify)
     watcher = ScreenWatcher(app) if isinstance(app, QGuiApplication) else None
     if watcher is not None:
         watcher.settled.connect(host.request_tick)
@@ -148,7 +119,7 @@ def _run_locked(app: QCoreApplication, options: AppOptions, platform: Platform) 
         host.ticked.connect(_countdown(options.quit_after_ticks, app.quit))
 
     log.info("Started (config: %s, socket: %s)", options.config_path, socket_name)
-    with _quit_on_interrupt(app):
+    with quit_on_interrupt(app):
         host.start()
         if tray is not None:
             tray.show()
@@ -193,37 +164,3 @@ def _countdown(ticks: int, done: Callable[[], None]) -> Callable[[], None]:
             done()
 
     return count
-
-
-@contextmanager
-def _quit_on_interrupt(app: QCoreApplication) -> Iterator[None]:
-    """
-    Ctrl+C quits cleanly; a second Ctrl+C exits at once (e.g. if stopping
-    hangs). Python only runs signal handlers between bytecodes, so a timer
-    wakes the interpreter while Qt's loop waits.
-    """
-    if threading.current_thread() is not threading.main_thread():
-        yield
-        return
-    presses = 0
-
-    def interrupted(*_: object) -> None:
-        nonlocal presses
-        presses += 1
-        if presses == 1:
-            log.info("Ctrl+C: stopping (press it again to exit at once)")
-            app.quit()
-            return
-        log.warning("Ctrl+C again: exiting without waiting")
-        logging.shutdown()
-        os._exit(130)
-
-    previous = signal.signal(signal.SIGINT, interrupted)
-    wake = QTimer()
-    wake.timeout.connect(lambda: None)
-    wake.start(250)
-    try:
-        yield
-    finally:
-        wake.stop()
-        signal.signal(signal.SIGINT, previous)

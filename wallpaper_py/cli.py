@@ -3,28 +3,48 @@ Command-line interface.
 
 Monitor commands (`list`, `set`) work on their own. Playlist commands
 (`status`, `next`, ...) always run in the app, so they never overlap its
-ticks: if it isn't running, it is started in the tray first. `run` and
-`tray` start the app (see wallpaper_py.app).
+ticks: if it isn't running, it is started in the tray first. The app
+replies with data (protocol.py); the text printed here is made here. `run`
+and `tray` start the app, `ui` the windows (see wallpaper_py.app).
 """
 
 from __future__ import annotations
 
 import argparse
-import subprocess
+import logging
 import sys
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import NamedTuple
 
 from .backends import get_backend, get_presence
-from .commands import TARGET_COMMANDS, Command, Reply, Request
 from .core import paths
 from .core.backend import Backend
+from .core.config import format_duration
 from .core.model import ImageMode, Monitor, WallpaperError
 from .core.presence import Presence
 from .core.selection import resolve_monitor
 from .core.setter import apply_wallpaper
+from .protocol import (
+    TARGET_COMMANDS,
+    Command,
+    Envelope,
+    ErrorReply,
+    MarkResult,
+    NextResult,
+    PlaylistDetails,
+    PrevResult,
+    RemoveResult,
+    Reply,
+    Request,
+    StatusResult,
+)
+
+# The windows `wallpaper ui` opens (app/ui/launcher.py WINDOWS; not
+# imported from there, which would load Qt for every command).
+WINDOWS = ("layout", "library")
 
 BackendFactory = Callable[[], Backend]
 PresenceFactory = Callable[[], Presence]
@@ -48,17 +68,14 @@ def send_to_app(
     """
     # pylint: disable=import-outside-toplevel
     from .app import ipc  # Qt is imported only for playlist commands
+    from .app.processes import autostart_command, start_detached
 
     name = ipc.server_name(paths.data_dir())
-    envelope = ipc.Envelope(request=request, config=config_path)
+    envelope = Envelope(request=request, config=config_path)
     reply = ipc.send(name, envelope)
     if reply is not None:
         return reply
-    if app_command is None:
-        from .app.runtime import autostart_command
-
-        app_command = autostart_command
-    start_detached(app_command(config_path))
+    start_detached((app_command or autostart_command)(config_path))
     deadline = time.monotonic() + START_TIMEOUT_S
     while time.monotonic() < deadline:
         time.sleep(RETRY_INTERVAL_S)
@@ -66,30 +83,6 @@ def send_to_app(
         if reply is not None:
             return reply
     raise WallpaperError(f"could not start wallpaper_py; see {paths.log_file()}")
-
-
-def start_detached(command: Sequence[str]) -> None:
-    """Start a process that outlives this one, without a console or our pipes."""
-    if sys.platform == "win32":
-        flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
-        try:  # leave our job object too, so closing the terminal can't end it
-            _popen(command, flags | subprocess.CREATE_BREAKAWAY_FROM_JOB)
-        except OSError:  # the job doesn't allow that
-            _popen(command, flags)
-    else:
-        _popen(command)
-
-
-def _popen(command: Sequence[str], creationflags: int = 0) -> None:
-    # Never waited for: it runs on after this process exits.
-    subprocess.Popen(  # pylint: disable=consider-using-with
-        list(command),
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        creationflags=creationflags,  # Windows only
-        start_new_session=True,  # POSIX only: not ended with our session
-    )
 
 
 @dataclass
@@ -147,26 +140,92 @@ def cmd_set(ctx: Context, args: argparse.Namespace) -> int:
 # -- playlists ---------------------------------------------------------------
 
 
+class Text(NamedTuple):
+    """What a playlist command prints, and its exit code."""
+
+    code: int
+    out: str = ""
+    err: str = ""
+
+
 def cmd_playlist(ctx: Context, args: argparse.Namespace) -> int:
     """status / next / prev / fav / unfav / remove: always in the app."""
     command: Command = args.command  # a subparser name from COMMANDS
-    reply = ctx.app_client(
-        Request(command, getattr(args, "target", None)), ctx.config_path
-    )
-    if reply.out:
-        print(reply.out)
-    if reply.err:
-        print(reply.err, file=sys.stderr)
-    return reply.code
+    request = Request(command=command, target=getattr(args, "target", None))
+    text = format_reply(ctx.app_client(request, ctx.config_path))
+    if text.out:
+        print(text.out)
+    if text.err:
+        print(text.err, file=sys.stderr)
+    return text.code
+
+
+def format_reply(reply: Reply) -> Text:
+    # pylint: disable=too-many-return-statements
+    match reply:
+        case ErrorReply():
+            return Text(1, err=f"error: {reply.error.message}")
+        case StatusResult():
+            warnings = "\n".join(f"Warning: {w}" for w in reply.warnings)
+            return Text(0, format_status(reply.playlists, reply.paused), warnings)
+        case NextResult():
+            return Text(0, reply.change.describe())
+        case PrevResult():
+            if reply.change is None:
+                return Text(0, f"{reply.playlist}: no earlier image")
+            return Text(0, reply.change.describe())
+        case MarkResult(command="fav"):
+            if reply.changed:
+                return Text(0, f"Added {reply.image} to {reply.list_file}")
+            return Text(0, f"{reply.image.name} is already a favourite")
+        case MarkResult():
+            if reply.changed:
+                return Text(0, f"Removed {reply.image} from {reply.list_file}")
+            return Text(0, f"{reply.image.name} is not a favourite")
+        case RemoveResult():
+            lines = [f"Listed {reply.image} in {reply.list_file} (not deleted)"]
+            if reply.change:
+                lines.append(reply.change.describe())
+            else:
+                lines.append(f"{reply.playlist}: changes once a monitor is attached")
+            return Text(0, "\n".join(lines))
+    raise AssertionError(f"Unhandled reply {reply!r}")
+
+
+def format_status(playlists: Sequence[PlaylistDetails], paused: str | None) -> str:
+    lines: list[str] = []
+    for playlist in playlists:
+        mode = playlist.mode.value if playlist.mode else "as is"
+        lines.append(
+            f"{playlist.name}  ({playlist.order.value}, every "
+            f"{format_duration(playlist.interval)}, {mode})"
+        )
+        members = []
+        for monitor in playlist.monitors:
+            if monitor.attached is None:
+                state = "not found"
+            else:
+                state = "attached" if monitor.attached else "detached"
+            members.append(f"{monitor.selector} ({state})")
+        lines.append(f"  monitors:  {', '.join(members)}")
+        lines.append(f"  directory: {playlist.directory}")
+        lines.append(f"  current:   {playlist.current or '-'}")
+        next_in = format_duration(playlist.next_in_seconds)
+        lines.append(f"  next in:   {next_in} of active time")
+        upcoming = ", ".join(p.name for p in playlist.upcoming) or "-"
+        lines.append(f"  upcoming:  {upcoming}")
+    lines.append(f"Rotation paused: {paused}" if paused else "Rotation active")
+    return "\n".join(lines)
 
 
 def cmd_app(ctx: Context, args: argparse.Namespace) -> int:
     """`run` (headless, in this terminal) and `tray`."""
     # pylint: disable=import-outside-toplevel
-    from .app.runtime import AppOptions, Platform, run_app, setup_logging
+    from .app.processes import setup_logging
+    from .app.runtime import AppOptions, Platform, run_app
 
     tray = args.command == "tray"
-    setup_logging(to_file=tray)
+    setup_logging(paths.log_file() if tray else None)
     options = AppOptions(
         ctx.config_path,
         tray=tray,
@@ -174,6 +233,20 @@ def cmd_app(ctx: Context, args: argparse.Namespace) -> int:
         quit_after_ticks=args.ticks,
     )
     return run_app(options, Platform(ctx.backend_factory, ctx.presence_factory))
+
+
+def cmd_ui(ctx: Context, args: argparse.Namespace) -> int:
+    """`ui [layout|library]`: the windows, in their own process."""
+    # pylint: disable=import-outside-toplevel
+    from .app.processes import setup_logging
+    from .app.ui.process import UiOptions, run_ui
+
+    setup_logging(paths.ui_log_file())
+    try:
+        return run_ui(UiOptions(ctx.config_path, args.window))
+    except WallpaperError as err:  # started by the tray, nobody sees stderr
+        logging.getLogger(__name__).error("%s", err)
+        raise
 
 
 # -- arguments ---------------------------------------------------------------
@@ -253,6 +326,14 @@ def build_parser() -> argparse.ArgumentParser:
             "--ticks", type=int, default=None, help=argparse.SUPPRESS
         )
         app_parser.set_defaults(handler=cmd_app)
+
+    ui_parser = sub.add_parser(
+        "ui", help="open a window (in the running UI process, or start one)"
+    )
+    ui_parser.add_argument(
+        "window", nargs="?", choices=WINDOWS, default="layout", help="default: layout"
+    )
+    ui_parser.set_defaults(handler=cmd_ui)
 
     status_parser = sub.add_parser("status", help="show playlists and their state")
     status_parser.set_defaults(handler=cmd_playlist)

@@ -4,12 +4,18 @@ import re
 from pathlib import Path
 from types import ModuleType
 
-from wallpaper_py import backends, commands
-from wallpaper_py.app import ipc, runtime
+from wallpaper_py import backends, cli, commands
+from wallpaper_py.app import ipc, processes, runtime
 from wallpaper_py.app.ipc import CommandServer
 from wallpaper_py.app.screens import ScreenWatcher
 from wallpaper_py.app.tray import Tray
+from wallpaper_py.app.ui import launcher
+from wallpaper_py.app.ui.client import Client, SocketClient
+from wallpaper_py.app.ui.launcher import UiServer, WindowOpener
+from wallpaper_py.app.ui.process import Windows
+from wallpaper_py.app.ui.window import PlaceholderWindow
 from wallpaper_py.app.worker import ServiceHost, ServiceWorker
+from wallpaper_py.core import paths
 
 WIRING = Path(__file__).parents[1] / "docs" / "app-wiring.md"
 
@@ -17,16 +23,27 @@ WIRING = Path(__file__).parents[1] / "docs" / "app-wiring.md"
 # of these must exist; other owners (Qt classes) aren't checked.
 OWNERS: dict[str, type | ModuleType] = {
     "backends": backends,
+    "cli": cli,
+    "Client": Client,
     "CommandServer": CommandServer,
+    "PlaceholderWindow": PlaceholderWindow,
     "ScreenWatcher": ScreenWatcher,
     "ServiceHost": ServiceHost,
     "ServiceWorker": ServiceWorker,
+    "SocketClient": SocketClient,
     "Tray": Tray,
+    "UiServer": UiServer,
+    "WindowOpener": WindowOpener,
+    "Windows": Windows,
     "commands": commands,
     "ipc": ipc,
+    "launcher": launcher,
+    "paths": paths,
+    "processes": processes,
     "runtime": runtime,
 }
-REFERENCE = re.compile(rf"\b({'|'.join(OWNERS)})\.(\w+)")
+# (Not file names: "commands.py" is no reference.)
+REFERENCE = re.compile(rf"\b({'|'.join(OWNERS)})\.(?!py\b)(\w+)")
 
 
 def test_app_wiring_names_exist() -> None:
@@ -34,3 +51,11 @@ def test_app_wiring_names_exist() -> None:
     missing = sorted(f"{o}.{m}" for o, m in references if not hasattr(OWNERS[o], m))
     assert not missing, f"{WIRING.name} names code that no longer exists: {missing}"
     assert len(references) >= 30, "the doc should reference the code it describes"
+
+
+def test_agents_notes_names_exist() -> None:
+    notes = Path(__file__).parents[1] / "AGENTS.md"
+    references = set(REFERENCE.findall(notes.read_text(encoding="utf-8")))
+    missing = sorted(f"{o}.{m}" for o, m in references if not hasattr(OWNERS[o], m))
+    assert not missing, f"{notes.name} names code that no longer exists: {missing}"
+    assert references, "AGENTS.md should name code the docs test can check"

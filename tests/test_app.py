@@ -16,7 +16,8 @@ from pytestqt.qtbot import QtBot
 
 from wallpaper_py.app.instance import InstanceLock
 from wallpaper_py.app.ipc import CommandServer
-from wallpaper_py.app.runtime import AppOptions, Platform, autostart_command, run_app
+from wallpaper_py.app.processes import autostart_command
+from wallpaper_py.app.runtime import AppOptions, Platform, run_app
 from wallpaper_py.core import paths
 from wallpaper_py.core.model import WallpaperError
 

@@ -10,7 +10,9 @@ this thread touches it.
 Everything reaches the service through `ServiceWorker.execute`, one at a
 time, between ticks: socket requests directly (the socket lives on this
 thread), the tray through `ServiceHost`. Nothing on this thread may block
-waiting for a client or spin a nested event loop.
+waiting for a client or spin a nested event loop. Events (a change, a new
+overview) go to the UI thread as signals and to socket subscribers (the UI
+process) as lines, both from here.
 
 `ServiceHost` is the UI thread's handle. It reaches the worker only through
 queued signals (requests, extra ticks, reload, stop) and gets results back
@@ -29,11 +31,20 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, Slot
 
-from ..commands import Overview, Reply, Request, execute, open_service, overview
+from ..commands import error_reply, execute, open_service, overview
 from ..core.backend import Backend
 from ..core.model import WallpaperError
 from ..core.presence import Presence
-from ..core.service import PlaylistService
+from ..core.service import Change, PlaylistService
+from ..protocol import (
+    ChangedEvent,
+    ErrorReply,
+    Event,
+    Overview,
+    OverviewChangedEvent,
+    Reply,
+    Request,
+)
 from .ipc import CommandServer
 
 log = logging.getLogger(__name__)
@@ -59,8 +70,8 @@ class ServiceWorker(QObject):
 
     ticked = Signal()
     changed = Signal(object)  # core.service.Change
-    overview_changed = Signal(object)  # commands.Overview
-    replied = Signal(int, object)  # request id, commands.Reply
+    overview_changed = Signal(object)  # protocol.Overview
+    replied = Signal(int, object)  # request id, protocol.Reply
     failed = Signal(str)  # the command socket could not open; nothing runs
 
     def __init__(self, settings: ServiceSettings) -> None:
@@ -69,7 +80,7 @@ class ServiceWorker(QObject):
         self._thread_scope = ExitStack()
         self._session = ExitStack()  # backend, database and service
         self._service: PlaylistService | None = None
-        self._error: str | None = None
+        self._error: ErrorReply | None = None  # why there is no service
         self._restored = False
         self._timer: QTimer | None = None
         self._server: CommandServer | None = None
@@ -85,6 +96,7 @@ class ServiceWorker(QObject):
                 self._settings.server_name, self._settings.config_path, self
             )
             self._server.received.connect(self._answer)
+            self._server.subscribed.connect(self._welcome)
             try:
                 self._server.listen()
             except WallpaperError as err:
@@ -121,7 +133,7 @@ class ServiceWorker(QObject):
             try:
                 for change in self._service.tick():
                     log.info("%s", change.describe())
-                    self.changed.emit(change)
+                    self._announce(change)
             except WallpaperError as err:
                 log.warning("%s", err)
             # The loop must outlive surprises (e.g. a COM error while a
@@ -133,18 +145,21 @@ class ServiceWorker(QObject):
 
     def execute(self, request: Request) -> Reply:
         """Run one command: the only way in for socket, tray and windows."""
+        reply: Reply
         if self._service is None:
-            reply = Reply.error(self._error or "The service is not running")
+            reply = self._error or ErrorReply.make(
+                "failed", "The service is not running"
+            )
         else:
             try:
                 reply, change = execute(self._service, request)
             except Exception as err:  # pylint: disable=broad-exception-caught
                 log.exception("Command %s failed", request.command)
-                reply, change = Reply.error(f"Unexpected error: {err}"), None
+                reply, change = error_reply(err), None
             if change is not None:
-                self.changed.emit(change)
+                self._announce(change)
         if request.command != "status":
-            log.info("%s %s: %s", request.command, request.target or "", reply)
+            log.info("%s %s: %r", request.command, request.target or "", reply)
         self._publish()
         return reply
 
@@ -153,10 +168,27 @@ class ServiceWorker(QObject):
         """A request queued by `ServiceHost.submit`; answered by `replied`."""
         self.replied.emit(request_id, self.execute(request))
 
+    @Slot(int, object)
     def _answer(self, connection_id: int, request: Request) -> None:
         """A request from the socket (on this thread, so no queueing)."""
         assert self._server is not None
         self._server.reply(connection_id, self.execute(request))
+
+    @Slot(int)
+    def _welcome(self, connection_id: int) -> None:
+        """A new subscriber: its first event is the current overview."""
+        assert self._server is not None
+        if self._overview is not None:  # else the first publish brings it
+            event = OverviewChangedEvent(overview=self._overview)
+            self._server.send_event(connection_id, event)
+
+    def _announce(self, change: Change) -> None:
+        self.changed.emit(change)
+        self._broadcast(ChangedEvent(change=change))
+
+    def _broadcast(self, event: Event) -> None:
+        if self._server is not None:
+            self._server.broadcast(event)
 
     def _open(self) -> None:
         settings = self._settings
@@ -171,11 +203,11 @@ class ServiceWorker(QObject):
                 )
             )
         except WallpaperError as err:
-            self._fail(str(err))
+            self._fail(err)
             return
         except Exception as err:  # pylint: disable=broad-exception-caught
             log.exception("Starting the service failed")
-            self._fail(f"Unexpected error: {err}")
+            self._fail(err)
             return
         self._error = None
         for warning in self._service.config.warnings():
@@ -186,9 +218,9 @@ class ServiceWorker(QObject):
             self._service.restore()
             self._restored = True
 
-    def _fail(self, error: str) -> None:
-        log.error("%s", error)
-        self._error = error
+    def _fail(self, error: Exception) -> None:
+        self._error = error_reply(error)
+        log.error("%s", self._error.error.message)
         self._close()
 
     def _close(self) -> None:
@@ -198,7 +230,7 @@ class ServiceWorker(QObject):
     def _publish(self) -> None:
         """Emit the overview if it changed (the tray redraws its menu)."""
         if self._service is None:
-            current = Overview(error=self._error)
+            current = Overview(error=self._error.error.message if self._error else None)
         else:
             try:
                 current = overview(self._service)
@@ -208,6 +240,7 @@ class ServiceWorker(QObject):
         if current != self._overview:
             self._overview = current
             self.overview_changed.emit(current)
+            self._broadcast(OverviewChangedEvent(overview=current))
 
 
 class ServiceHost(QObject):
@@ -215,7 +248,7 @@ class ServiceHost(QObject):
 
     ticked = Signal()
     changed = Signal(object)  # core.service.Change
-    overview_changed = Signal(object)  # commands.Overview
+    overview_changed = Signal(object)  # protocol.Overview
     failed = Signal(str)  # see ServiceWorker.failed
 
     # Queued into the worker thread.
@@ -257,6 +290,7 @@ class ServiceHost(QObject):
         self._callbacks[request_id] = callback
         self._submit.emit(request_id, request)
 
+    @Slot()
     def request_tick(self) -> None:
         """An extra tick soon (e.g. a monitor came back)."""
         self._tick.emit()

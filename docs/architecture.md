@@ -3,18 +3,28 @@
 ## Layers
 
 ```
-cli.py                        command line; playlist commands go to the app (started if needed)
-app/                          PySide6 app shell (Qt only here)
-  runtime.py     wires it up: lock, service thread, screens, tray
+cli.py                        command line; playlist commands go to the app (started if
+                              needed) and their text is formatted here from the reply data
+app/                          PySide6 (Qt only here); two processes
+  runtime.py     the app: lock, service thread, screens, tray
   worker.py      ServiceWorker (owns the service and the socket, on its own
                  QThread) + ServiceHost (the UI thread's proxy)
-  ipc.py         command socket (QLocalServer), pydantic messages, blocking client
+  ipc.py         sockets: line framing (LineServer, LineRequest, blocking send),
+                 the app's CommandServer (commands, subscriptions)
+  processes.py   command lines, starting detached, logging, Ctrl+C (both processes)
   instance.py    single instance: a QLockFile next to the state database
   screens.py     Qt screen signals -> one debounced extra tick
   tray.py        tray icon and menu, drawn from an Overview
   icon.py        the icon, drawn in code
-commands.py                   commands as data: Request -> Reply (+ the change made),
-                              run by the app; Overview (what the tray shows). Qt-free
+  ui/            the UI process (`wallpaper ui`), on demand
+    process.py   run_ui: single instance, windows, quits with the app / last window
+    launcher.py  its own socket: "show this window" (UiServer, WindowOpener)
+    client.py    Client: all a window may use (commands, events); SocketClient
+    window.py    windows (for now a placeholder showing the live Overview)
+commands.py                   runs a Request on the service -> a reply model (+ the
+                              change made); overview(). Qt-free
+protocol.py                   the socket protocol as pydantic models: requests, one
+                              result per command, errors, events, Overview. Qt-free
         │
 core/                         pure Python, no Qt, no platform APIs
   model.py       Monitor, Rectangle, ImageMode, error types
@@ -50,12 +60,37 @@ Rules:
 - **Platform modules are guarded** with `assert sys.platform == "win32"`, so
   mypy skips them on other platforms and importing them elsewhere fails fast.
 - Qt is used only in `app/` (and by the CLI's socket client, `app/ipc.py`).
-  `commands.py` and `core` stay Qt-free and synchronous.
+  `protocol.py`, `commands.py` and `core` stay Qt-free and synchronous.
+- `app/__init__.py` loads `protocol.py` (all of pydantic) before any Qt
+  module: PySide6's import hook breaks pydantic's lazy imports if pydantic
+  was only partly loaded before Qt.
+- Qt for Python rules, checked by `tests/test_qt_rules.py`:
+  - Signals connect to bound methods, not lambdas or partials that hold
+    `self` (use `sender()`, or data on the sender such as
+    `QAction.setData`, for context). Qt keeps such a lambda alive, and the
+    object it holds can then be freed from inside the deletion of its own
+    child, which deletes that child twice (seen as a random access
+    violation in tests).
+  - Every method used as a slot has `@Slot(...)`, as Qt for Python
+    recommends. Only real slots run in the receiver's thread on a queued
+    connection; any other callable runs in the sender's thread.
+  - No method shadows an inherited Qt method (e.g. a slot called
+    `update` on a widget): PySide then connects it as a plain callable,
+    without thread affinity (PYSIDE-2990).
+  - `sender()` only for same-thread connections (invalid for a direct
+    call from another thread); disconnect only our own connections.
+  - The worker's `QThread.started` slot only sets up and returns, so the
+    thread's event loop runs the timer and socket; work never runs there.
 
 ## App shell
 
-Every thread, signal and connection, with the request / tick / shutdown
-flows: [app-wiring.md](app-wiring.md).
+Every process, thread, signal and connection, with the request / tick /
+window / shutdown flows: [app-wiring.md](app-wiring.md). The socket's
+messages: [protocol.md](protocol.md).
+
+Two processes: the always-running **app** (service thread, tray, command
+socket), which stays small, and the **UI process** with the windows, which
+runs only while a window is open (see below).
 
 One process rotates: `wallpaper tray` (with the tray icon) or `wallpaper
 run` (headless, in a terminal) start the same app. It holds a `QLockFile`
@@ -86,6 +121,16 @@ extra tick, so a returning monitor gets its image without waiting. Lock /
 unlock and sleep / resume are noticed by the tick itself (WTS flag, tick
 gap); no native notifications.
 
+Protocol: replies carry data only (`protocol.py`): one pydantic model per
+command, tagged on `command`, or `{"error": {"kind", "message"}}`. The CLI
+formats its text from that data; the tray and the windows use the same
+models (the tray in-process, through `ServiceHost`). `subscribe` keeps a
+connection open and streams one event per line (`changed`,
+`overview_changed`), written by the service thread where the socket lives;
+the first is the current overview. The protocol only adds things; clients
+ignore unknown fields. The JSON Schema (`docs/protocol.schema.json`) is
+generated from the models and checked by a test.
+
 CLI: playlist commands always run in the app, sent as one line of JSON
 (`ipc.py`, pydantic models) and run with `commands.execute()`. If no app
 answers, the CLI starts the tray app detached (the autostart command;
@@ -100,6 +145,22 @@ in a different process from the server (tests use child processes,
 
 Config errors don't stop the app: it shows the error in the tray and
 answers commands with it until *Reload config* succeeds.
+
+UI process (`wallpaper ui [layout|library]`, `app/ui/`): the windows run in
+a process of their own, started on demand and ended when its last window
+closes, so whatever they hold (later: thumbnails) is given back; the app
+never holds it. At most one runs: it listens on its own small socket
+(`UiServer`, "show this window") while holding `ui.lock`. The tray's *Open
+layout / Open library* ask that socket without blocking (`WindowOpener`)
+and start `wallpaper ui <window>` detached if nothing answers; a starting
+UI process asks it too and exits if another one answered. The UI process is
+a client of the app's socket like the CLI: it subscribes (starting the app
+first if none runs, as the CLI does) and quits when the subscription ends,
+i.e. when the app quits. Windows depend only on `Client` (`run` a command
+with a reply callback; `overview_changed`, `changed`, `failed`), never on
+the service or `ServiceWorker`; reading state for the later windows (SQLite
+read-only, the .txt files) is planned in Phase 5. The UI process logs to
+`ui.log` next to the app's log.
 
 ## Playlist service
 

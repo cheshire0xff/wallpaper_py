@@ -37,9 +37,19 @@ def instance_lock() -> Path:
     return data_dir() / "app.lock"
 
 
+def ui_lock() -> Path:
+    """Held by the UI process (the windows): at most one runs."""
+    return data_dir() / "ui.lock"
+
+
 def log_file() -> Path:
     """The app's log (the tray app has no terminal)."""
     return user_log_path(APP_NAME, appauthor=False) / "wallpaper.log"
+
+
+def ui_log_file() -> Path:
+    """The UI process's log, next to the app's (each rotates its own file)."""
+    return log_file().with_name("ui.log")
 
 
 def cache_dir() -> Path:

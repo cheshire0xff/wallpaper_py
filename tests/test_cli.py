@@ -6,9 +6,19 @@ import pytest
 from PIL import Image
 
 from wallpaper_py import cli
-from wallpaper_py.commands import Reply, Request, execute, open_service
+from wallpaper_py.app.ui.launcher import WINDOWS
+from wallpaper_py.commands import execute, open_service
 from wallpaper_py.core import paths
 from wallpaper_py.core.backend import Backend
+from wallpaper_py.core.service import Change
+from wallpaper_py.protocol import (
+    ErrorReply,
+    MarkResult,
+    RemoveResult,
+    Reply,
+    Request,
+    StatusResult,
+)
 
 from .fakes import FakeBackend, FakePresence, make_images, make_monitor
 
@@ -207,3 +217,38 @@ def test_playlist_command_explains_when_the_app_does_not_start(
     assert capsys.readouterr().err == (
         f"error: could not start wallpaper_py; see {paths.log_file()}\n"
     )
+
+
+def test_reply_texts() -> None:
+    image, file = Path("/p/a.jpg"), Path("/d/favourites.txt")
+
+    def unfav(changed: bool) -> MarkResult:
+        return MarkResult(
+            command="unfav", playlist="w", image=image, list_file=file, changed=changed
+        )
+
+    assert cli.format_reply(unfav(True)) == cli.Text(0, f"Removed {image} from {file}")
+    assert cli.format_reply(unfav(False)) == cli.Text(0, "a.jpg is not a favourite")
+    removed = RemoveResult(playlist="w", image=image, list_file=file, change=None)
+    assert cli.format_reply(removed).out.splitlines() == [
+        f"Listed {image} in {file} (not deleted)",
+        "w: changes once a monitor is attached",
+    ]
+    missed = Change("w", image, "next", ("A",), ("B",))
+    removed = RemoveResult(playlist="w", image=image, list_file=file, change=missed)
+    assert cli.format_reply(removed).out.splitlines()[1] == "w: a.jpg on A (later on B)"
+    error = ErrorReply.make("not_attached", "None of w's monitors is attached")
+    assert cli.format_reply(error) == cli.Text(
+        1, err="error: None of w's monitors is attached"
+    )
+    status = StatusResult(playlists=(), paused="idle", warnings=("x", "y"))
+    assert cli.format_reply(status) == cli.Text(
+        0, "Rotation paused: idle", "Warning: x\nWarning: y"
+    )
+
+
+def test_ui_windows_match_the_launcher() -> None:
+    assert cli.WINDOWS == WINDOWS
+    args = cli.build_parser().parse_args(["ui"])
+    assert args.window == "layout"
+    assert cli.build_parser().parse_args(["ui", "library"]).window == "library"

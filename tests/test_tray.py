@@ -1,5 +1,6 @@
 """The tray menu drawn from an Overview, and what its items do."""
 
+from collections.abc import Callable
 from contextlib import nullcontext
 from pathlib import Path
 
@@ -8,21 +9,41 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMenu
 
 from wallpaper_py.app.icon import IconState, app_icon
-from wallpaper_py.app.tray import Tray, fill_menu, icon_state, tooltip
+from wallpaper_py.app.tray import Tray, activate, fill_menu, icon_state, tooltip
+from wallpaper_py.app.ui.launcher import WindowKind
 from wallpaper_py.app.worker import ServiceHost, ServiceSettings
-from wallpaper_py.commands import MonitorView, Overview, PlaylistView, Request
+from wallpaper_py.protocol import (
+    ErrorReply,
+    MonitorView,
+    Overview,
+    PlaylistView,
+    Reply,
+    Request,
+)
 
 from .fakes import FakeAutostart, FakeBackend, FakePresence
 
+
+def monitor(name: str, attached: bool | None) -> MonitorView:
+    return MonitorView(selector=name, name=name, attached=attached)
+
+
 WALLS = PlaylistView(
-    "walls",
-    (MonitorView("AW3225QF", True), MonitorView("PLX2783H", False)),
+    name="walls",
+    monitors=(monitor("AW3225QF", True), monitor("PLX2783H", False)),
     current=Path("D:/pictures/a & b.jpg"),
     favourite=True,
 )
 STRIP = PlaylistView(
-    "strip", (MonitorView("ZeroMOD", None),), current=None, favourite=False
+    name="strip",
+    monitors=(monitor("ZeroMOD", None),),
+    current=None,
+    favourite=False,
 )
+
+
+def queued(command: str, target: str) -> Request:
+    return Request.model_validate({"command": command, "target": target})
 
 
 class Actions:
@@ -38,20 +59,30 @@ class Actions:
     def open_image(self, image: Path) -> None:
         self.calls.append(image)
 
+    def open_window(self, window: WindowKind) -> None:
+        self.calls.append(("window", window))
+
     def reload(self) -> None:
         self.calls.append("reload")
 
     def open_config_folder(self) -> None:
         self.calls.append("folder")
 
-    def autostart_enabled(self) -> bool:
-        return self.autostart
+    def triggered(self, action: QAction) -> None:
+        """Connected to QMenu.triggered, as in Tray."""
+        activate(action, self)
 
     def set_autostart(self, enabled: bool) -> None:
         self.calls.append(("autostart", enabled))
 
     def quit(self) -> None:
         self.calls.append("quit")
+
+
+def fill(menu: QMenu, overview: Overview | None, actions: Actions) -> QAction:
+    """The menu as the tray builds it, its items going to `actions`."""
+    menu.triggered.connect(actions.triggered)
+    return fill_menu(menu, overview, actions.autostart)
 
 
 def items(menu: QMenu) -> list[QAction]:
@@ -71,7 +102,7 @@ def fixture_menu() -> QMenu:
 
 
 def test_flat_sections(menu: QMenu) -> None:
-    fill_menu(menu, Overview((WALLS, STRIP), paused="idle"), Actions())
+    fill(menu, Overview(playlists=(WALLS, STRIP), paused="idle"), Actions())
     assert [(a.text(), a.isEnabled()) for a in items(menu)] == [
         ("walls · AW3225QF + PLX2783H (off)", False),
         ("a && b.jpg", True),
@@ -86,6 +117,8 @@ def test_flat_sections(menu: QMenu) -> None:
         ("Favourite", False),
         ("Remove (list and skip)", False),
         ("Paused: idle", False),
+        ("Open layout", True),
+        ("Open library", True),
         ("Reload config", True),
         ("Open config folder", True),
         ("Start at login", True),
@@ -97,7 +130,7 @@ def test_flat_sections(menu: QMenu) -> None:
 
 def test_items_queue_commands(menu: QMenu) -> None:
     actions = Actions()
-    fill_menu(menu, Overview((WALLS, STRIP)), actions)
+    fill(menu, Overview(playlists=(WALLS, STRIP)), actions)
     for text in (
         "a && b.jpg",
         "Next",
@@ -108,51 +141,67 @@ def test_items_queue_commands(menu: QMenu) -> None:
         find(menu, text).trigger()
     assert actions.calls == [
         WALLS.current,
-        Request("next", "walls"),
-        Request("prev", "walls"),
-        Request("unfav", "walls"),  # already a favourite: the toggle unmarks
-        Request("remove", "walls"),
+        queued("next", "walls"),
+        queued("prev", "walls"),
+        queued("unfav", "walls"),  # already a favourite: the toggle unmarks
+        queued("remove", "walls"),
     ]
 
 
 def test_favourite_marks_when_not_marked(menu: QMenu) -> None:
     actions = Actions()
-    plain = PlaylistView(WALLS.name, WALLS.monitors, WALLS.current, favourite=False)
-    fill_menu(menu, Overview((plain,)), actions)
+    plain = WALLS.model_copy(update={"favourite": False})
+    fill(menu, Overview(playlists=(plain,)), actions)
     favourite = find(menu, "Favourite")
     assert not favourite.isChecked()
     favourite.trigger()
-    assert actions.calls == [Request("fav", "walls")]
+    assert actions.calls == [queued("fav", "walls")]
 
 
 def test_app_items(menu: QMenu) -> None:
     actions = Actions()
     actions.autostart = True
-    autostart = fill_menu(menu, Overview(), actions)
+    autostart = fill(menu, Overview(), actions)
     assert autostart.isChecked()
-    for text in ("Reload config", "Open config folder", "Start at login", "Quit"):
+    for text in (
+        "Open layout",
+        "Open library",
+        "Reload config",
+        "Open config folder",
+        "Start at login",
+        "Quit",
+    ):
         find(menu, text).trigger()
-    assert actions.calls == ["reload", "folder", ("autostart", False), "quit"]
+    assert actions.calls == [
+        ("window", "layout"),
+        ("window", "library"),
+        "reload",
+        "folder",
+        ("autostart", False),
+        "quit",
+    ]
 
 
 def test_starting_and_error_states(menu: QMenu) -> None:
-    fill_menu(menu, None, Actions())
+    fill(menu, None, Actions())
     assert items(menu)[0].text() == "Starting..."
-    fill_menu(menu, Overview(error="No config file at C:/x/config.toml"), Actions())
+    fill(menu, Overview(error="No config file at C:/x/config.toml"), Actions())
     assert items(menu)[0].text() == "Error: No config file at C:/x/config.toml"
     assert not items(menu)[0].isEnabled()
 
 
 def test_long_names_are_elided_in_the_middle(menu: QMenu) -> None:
-    long = PlaylistView("p", (), Path("x" * 100 + ".png"), False)
-    fill_menu(menu, Overview((long,)), Actions())
+    long = PlaylistView(
+        name="p", monitors=(), current=Path("x" * 100 + ".png"), favourite=False
+    )
+    fill(menu, Overview(playlists=(long,)), Actions())
     text = items(menu)[1].text()
     assert len(text) == 60 and "…" in text and text.endswith(".png")
 
 
 def test_tooltip_and_icon_state() -> None:
     assert tooltip(None) == "wallpaper_py\nStarting..."
-    assert tooltip(Overview((WALLS, STRIP), paused="idle")) == (
+    assert tooltip(Overview(playlists=(WALLS, STRIP), paused="idle")) == (
         "wallpaper_py\nwalls: a & b.jpg\nstrip: -\nPaused: idle"
     )
     assert icon_state(Overview(error="x")) is IconState.ERROR
@@ -168,15 +217,44 @@ def test_tray_follows_the_overview(tmp_path: Path) -> None:
     )
     autostart = FakeAutostart()
     quits: list[bool] = []
-    tray = Tray(host, autostart, ["py", "tray"], tmp_path, lambda: quits.append(True))
+    windows: list[WindowKind] = []
+    tray = Tray(
+        host,
+        autostart,
+        ["py", "tray"],
+        tmp_path,
+        lambda: quits.append(True),
+        open_window=windows.append,
+    )
     assert items(tray.menu)[0].text() == "Starting..."
 
-    host.overview_changed.emit(Overview((WALLS,)))
+    host.overview_changed.emit(Overview(playlists=(WALLS,)))
     assert items(tray.menu)[0].text() == "walls · AW3225QF + PLX2783H (off)"
 
     find(tray.menu, "Start at login").trigger()
     assert autostart.command == ["py", "tray"]
     find(tray.menu, "Start at login").trigger()
     assert autostart.command is None
+    find(tray.menu, "Open library").trigger()
+    assert windows == ["library"]
     find(tray.menu, "Quit").trigger()
     assert quits == [True]
+
+
+def test_tray_notifies_failed_commands(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    host = ServiceHost(
+        ServiceSettings(tmp_path, lambda: FakeBackend([]), FakePresence, nullcontext)
+    )
+    error = ErrorReply.make("not_attached", "None attached")
+
+    def submit(_: Request, callback: Callable[[Reply], None]) -> None:
+        callback(error)  # as the service thread would answer
+
+    monkeypatch.setattr(host, "submit", submit)
+    tray = Tray(host, FakeAutostart(), [], tmp_path, lambda: None, open_window=print)
+    notes: list[str] = []
+    monkeypatch.setattr(tray, "notify", notes.append)
+    tray.run(queued("next", "walls"))
+    assert notes == ["None attached"]

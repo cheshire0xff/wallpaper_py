@@ -9,7 +9,8 @@ libraries (10k+ images). See [todo.md](todo.md) for the feature list,
 [docs/architecture.md](docs/architecture.md) for the design.
 
 **Status:** the core, the Windows backend, the playlist service and the tray
-app exist. The layout and library windows are next.
+app exist, plus the UI process the windows will run in (for now one
+placeholder window). The layout and library windows are next.
 
 ## Install
 
@@ -47,6 +48,7 @@ wallpaper [-c CONFIG] tray                   # the app, in the tray (what starts
 wallpaper [-c CONFIG] run [--poll SECONDS]   # the app, headless in this terminal (Ctrl+C stops)
 wallpaper status                             # playlists, monitors, current, upcoming
 wallpaper next|prev|fav|unfav|remove [TARGET]  # TARGET: playlist or monitor name
+wallpaper ui [layout|library]                # open a window (see below)
 ```
 
 Playlists are defined in a TOML file; start from
@@ -78,14 +80,24 @@ say so and point to the log file. `list` and `set` work without the app.
 
 The tray menu has a section per playlist (its monitors by name, the current
 image, which opens on click, *Next*, *Previous*, a *Favourite* toggle,
-*Remove*), then *Reload config* (after editing it), *Open config folder*,
-*Start at login* and *Quit*. Left-click opens the same menu. The icon turns
+*Remove*), then *Open layout*, *Open library*, *Reload config* (after
+editing it), *Open config folder*, *Start at login* and *Quit*. Left-click opens the same menu. The icon turns
 grey while rotation is paused and shows a red badge if the config can't be
 loaded. Start at login uses the per-user Run key on Windows and
 `~/.config/autostart` on Linux; it starts `pythonw -m wallpaper_py tray`
 from the current environment, so no console window opens. The tray app logs
 to `wallpaper.log` in the per-user log directory (on Windows
 `%LOCALAPPDATA%\wallpaper_py\Logs`).
+
+The windows run in a separate process (`wallpaper ui`), started when one
+is opened and gone when the last one closes, so they cost nothing while
+closed. Opening a window while that process runs just brings the window up;
+it starts the app if needed and closes when the app quits. For now it shows
+a placeholder with the live state. It logs to `ui.log` next to
+`wallpaper.log`.
+
+Other programs can drive the app over the same socket: see
+[docs/protocol.md](docs/protocol.md).
 
 `python -m wallpaper_py ...` works too.
 

@@ -14,10 +14,23 @@ from pytestqt.qtbot import QtBot
 
 from wallpaper_py.app import ipc
 from wallpaper_py.app.worker import ServiceHost, ServiceSettings
-from wallpaper_py.commands import Overview, Reply, Request
 from wallpaper_py.core.service import Change
+from wallpaper_py.protocol import (
+    ChangedEvent,
+    Envelope,
+    ErrorReply,
+    MarkResult,
+    NextResult,
+    Overview,
+    OverviewChangedEvent,
+    PrevResult,
+    Reply,
+    Request,
+    Subscribe,
+)
 
 from .fakes import FakeBackend, FakePresence, make_monitor, write_config
+from .hosts import connect, make_host, read_lines
 
 
 @pytest.fixture(name="backend")
@@ -62,16 +75,7 @@ def fixture_host(
         hold()
         return backend
 
-    host = ServiceHost(
-        ServiceSettings(
-            config_path=config,
-            backend_factory=backend_factory,
-            presence_factory=FakePresence,
-            thread_scope=nullcontext,
-            tick_period=60.0,  # only the first tick and explicit ones
-            server_name=name,
-        )
-    )
+    host = make_host(config, backend_factory, name)
     yield host
     assert host.shutdown(5_000)
 
@@ -90,27 +94,27 @@ def submit(qtbot: QtBot, host: ServiceHost, request: Request) -> Reply:
     return replies[0]
 
 
-def ask(qtbot: QtBot, name: str, config: Path, request: Request) -> QLocalSocket:
-    """
-    Send a request over the socket without waiting for the reply. Event
-    driven (no waitFor*), so it can run on this thread, next to the server.
-    """
-    socket = QLocalSocket()
-    with qtbot.waitSignal(socket.connected):
-        socket.connectToServer(name)
-    socket.write(ipc.encode_request(ipc.Envelope(request=request, config=config)))
-    return socket
+def ask(
+    qtbot: QtBot, name: str, config: Path, request: Request | Subscribe
+) -> QLocalSocket:
+    """Send a request over the socket without waiting for the reply."""
+    return connect(qtbot, name, ipc.encode(Envelope(request=request, config=config)))
 
 
 def answer(qtbot: QtBot, socket: QLocalSocket) -> Reply:
-    data = bytearray()
+    return ipc.decode_reply(read_lines(qtbot, socket, 1)[0])
 
-    def complete() -> bool:
-        data.extend(socket.readAll().data())
-        return b"\n" in data
 
-    qtbot.waitUntil(complete)
-    return ipc.decode_reply(bytes(data).split(b"\n", 1)[0])
+def shown(reply: Reply) -> str:
+    """The image a next / prev reply shows."""
+    assert isinstance(reply, NextResult | PrevResult), reply
+    assert reply.change is not None
+    return reply.change.image.name
+
+
+def error(reply: Reply) -> str:
+    assert isinstance(reply, ErrorReply), reply
+    return reply.error.message
 
 
 def send(qtbot: QtBot, name: str, config: Path, request: Request) -> Reply:
@@ -132,14 +136,10 @@ def test_commands_are_answered_in_order(qtbot: QtBot, host: ServiceHost) -> None
     start(qtbot, host)
     replies: list[Reply] = []
     for command in ("next", "next", "prev", "fav"):
-        host.submit(Request(command), replies.append)
+        host.submit(Request.model_validate({"command": command}), replies.append)
     qtbot.waitUntil(lambda: len(replies) == 4)
-    assert [r.out for r in replies[:3]] == [
-        "walls: b.jpg on Main",
-        "walls: c.jpg on Main",
-        "walls: b.jpg on Main",
-    ]
-    assert replies[3].out.startswith("Added ")
+    assert [shown(r) for r in replies[:3]] == ["b.jpg", "c.jpg", "b.jpg"]
+    assert isinstance(replies[3], MarkResult) and replies[3].changed
     qtbot.waitUntil(
         lambda: host.overview is not None and host.overview.playlists[0].favourite
     )
@@ -148,7 +148,7 @@ def test_commands_are_answered_in_order(qtbot: QtBot, host: ServiceHost) -> None
 def test_tray_commands_announce_changes(qtbot: QtBot, host: ServiceHost) -> None:
     start(qtbot, host)
     with qtbot.waitSignal(host.changed) as blocker:
-        host.submit(Request("next"), lambda _: None)
+        host.submit(Request(command="next"), lambda _: None)
     change: Change = blocker.args[0]
     assert (change.image.name, change.reason) == ("b.jpg", "next")
 
@@ -160,8 +160,8 @@ def test_socket_commands_run_on_the_service_thread(
     threads: set[int] = set()
     backend.before_monitors = lambda _: threads.add(threading.get_ident())
     with qtbot.waitSignal(host.changed) as blocker:
-        reply = send(qtbot, name, config, Request("next"))
-    assert reply.out == "walls: b.jpg on Main"
+        reply = send(qtbot, name, config, Request(command="next"))
+    assert shown(reply) == "b.jpg"
     assert blocker.args[0].image.name == "b.jpg"  # announced like a tick's
     assert threads and threading.get_ident() not in threads
 
@@ -170,24 +170,26 @@ def test_socket_refuses_another_config(
     qtbot: QtBot, host: ServiceHost, name: str, tmp_path: Path
 ) -> None:
     start(qtbot, host)
-    reply = send(qtbot, name, tmp_path / "other.toml", Request("status"))
-    assert reply.code == 1 and "The running app uses" in reply.err
+    reply = send(qtbot, name, tmp_path / "other.toml", Request(command="status"))
+    assert "The running app uses" in error(reply)
 
 
 def test_socket_answers_during_and_after_reloads(
     qtbot: QtBot, host: ServiceHost, name: str, config: Path, hold: Hold
 ) -> None:
     start(qtbot, host)
-    assert send(qtbot, name, config, Request("status")).code == 0
+    assert not isinstance(
+        send(qtbot, name, config, Request(command="status")), ErrorReply
+    )
 
     # A request while the reload is still opening the service: answered
     # once it is done.
     hold.active = True
     host.reload()
     qtbot.waitUntil(hold.entered.is_set)
-    pending = ask(qtbot, name, config, Request("next"))
+    pending = ask(qtbot, name, config, Request(command="next"))
     hold.release.set()
-    assert answer(qtbot, pending).out == "walls: b.jpg on Main"
+    assert shown(answer(qtbot, pending)) == "b.jpg"
     hold.active = False
 
     # A broken config: the socket answers with the error.
@@ -195,13 +197,36 @@ def test_socket_answers_during_and_after_reloads(
     config.unlink()
     with qtbot.waitSignal(host.overview_changed):
         host.reload()
-    reply = send(qtbot, name, config, Request("next"))
-    assert reply.code == 1 and "No config file" in reply.err
+    reply = send(qtbot, name, config, Request(command="next"))
+    assert isinstance(reply, ErrorReply) and reply.error.kind == "config_error"
+    assert "No config file" in reply.error.message
 
     config.write_text(text, encoding="utf-8")
     with qtbot.waitSignal(host.overview_changed):
         host.reload()
-    assert send(qtbot, name, config, Request("next")).out == "walls: c.jpg on Main"
+    assert shown(send(qtbot, name, config, Request(command="next"))) == "c.jpg"
+
+
+def test_subscribers_follow_events(
+    qtbot: QtBot, host: ServiceHost, name: str, config: Path
+) -> None:
+    overview = start(qtbot, host)
+    subscriber = ask(qtbot, name, config, Subscribe())
+    # First the current overview, then events as they happen.
+    [welcome] = read_lines(qtbot, subscriber, 1)
+    assert ipc.decode_event(welcome) == OverviewChangedEvent(overview=overview)
+
+    assert shown(send(qtbot, name, config, Request(command="next"))) == "b.jpg"
+    changed, refreshed = (ipc.decode_event(l) for l in read_lines(qtbot, subscriber, 2))
+    assert isinstance(changed, ChangedEvent)
+    assert (changed.change.image.name, changed.change.reason) == ("b.jpg", "next")
+    assert isinstance(refreshed, OverviewChangedEvent)
+    current = refreshed.overview.playlists[0].current
+    assert current is not None and current.name == "b.jpg"
+
+    # The app stopping ends the subscription.
+    with qtbot.waitSignal(subscriber.disconnected):
+        assert host.shutdown(5_000)
 
 
 def test_extra_tick_on_request(qtbot: QtBot, host: ServiceHost) -> None:
@@ -217,14 +242,13 @@ def test_config_error_then_reload(
     config.unlink()
     overview = start(qtbot, host)
     assert overview.error is not None and "No config file" in overview.error
-    reply = submit(qtbot, host, Request("next"))
-    assert reply.code == 1 and "No config file" in reply.err
+    assert "No config file" in error(submit(qtbot, host, Request(command="next")))
 
     config.write_text(text, encoding="utf-8")
     with qtbot.waitSignal(host.overview_changed) as blocker:
         host.reload()
     assert blocker.args[0].error is None
-    assert submit(qtbot, host, Request("next")).code == 0
+    assert shown(submit(qtbot, host, Request(command="next"))) == "b.jpg"
 
 
 def test_unexpected_tick_errors_are_survived(
@@ -239,7 +263,7 @@ def test_unexpected_tick_errors_are_survived(
     with qtbot.waitSignal(host.ticked):
         host.request_tick()
     backend.before_monitors = None
-    assert submit(qtbot, host, Request("next")).code == 0
+    assert shown(submit(qtbot, host, Request(command="next"))) == "b.jpg"
 
 
 def test_shutdown_before_start_is_harmless(config: Path) -> None:

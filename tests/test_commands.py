@@ -1,22 +1,34 @@
-"""Commands as data (shared by the CLI and the app) and the tray's overview."""
+"""Commands run on the service: data in, data out; and the overview."""
 
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Literal
 
 import pytest
 
-from wallpaper_py.commands import (
+from wallpaper_py.commands import error_reply, execute, open_service, overview
+from wallpaper_py.core import paths
+from wallpaper_py.core.config import Order
+from wallpaper_py.core.service import (
+    Change,
+    ChangeReason,
+    NoImagesError,
+    PlaylistService,
+)
+from wallpaper_py.protocol import (
     Command,
+    ErrorReply,
+    MarkResult,
     MonitorView,
+    NextResult,
     Overview,
     PlaylistView,
+    PrevResult,
+    RemoveResult,
     Reply,
     Request,
-    execute,
-    open_service,
-    overview,
+    StatusResult,
 )
-from wallpaper_py.core.service import PlaylistService
 
 from .fakes import FakeBackend, FakePresence, make_images, make_monitor
 
@@ -58,32 +70,63 @@ def fixture_service(tmp_path: Path, backend: FakeBackend) -> Iterator[PlaylistSe
 
 
 def run(service: PlaylistService, command: Command, target: str | None = None) -> Reply:
-    return execute(service, Request(command, target)).reply
+    return execute(service, Request(command=command, target=target)).reply
+
+
+def walls_change(tmp_path: Path, name: str, reason: ChangeReason = "next") -> Change:
+    # Side is detached already: only members detaching mid-change are "missed".
+    return Change("walls", tmp_path / "walls" / name, reason, ("Main",))
 
 
 def test_unknown_command_is_rejected() -> None:
     with pytest.raises(ValueError):
-        Request("delete")  # type: ignore[arg-type]
+        Request(command="delete")  # type: ignore[arg-type]
 
 
-def test_commands(service: PlaylistService) -> None:
-    assert run(service, "next", "walls") == Reply(0, out="walls: a.jpg on Main")
-    assert run(service, "next", "main").out == "walls: b.jpg on Main"
-    assert run(service, "prev", "walls").out == "walls: a.jpg on Main"
-    assert run(service, "fav", "walls").out.startswith("Added ")
-    assert run(service, "fav", "walls").out == "a.jpg is already a favourite"
-    assert run(service, "unfav", "walls").out.startswith("Removed ")
-    assert run(service, "unfav", "walls").out == "a.jpg is not a favourite"
-    remove = run(service, "remove", "walls").out.splitlines()
-    assert "(not deleted)" in remove[0] and remove[1] == "walls: b.jpg on Main"
+def test_commands_reply_with_data(service: PlaylistService, tmp_path: Path) -> None:
+    favourites = paths.data_dir() / "favourites.txt"
+    a, b = tmp_path / "walls" / "a.jpg", tmp_path / "walls" / "b.jpg"
+
+    def mark(
+        command: Literal["fav", "unfav"], image: Path, changed: bool
+    ) -> MarkResult:
+        return MarkResult(
+            command=command,
+            playlist="walls",
+            image=image,
+            list_file=favourites,
+            changed=changed,
+        )
+
+    assert run(service, "next", "walls") == NextResult(
+        playlist="walls", change=walls_change(tmp_path, "a.jpg")
+    )
+    assert run(service, "next", "main") == NextResult(  # by monitor
+        playlist="walls", change=walls_change(tmp_path, "b.jpg")
+    )
+    assert run(service, "prev", "walls") == PrevResult(
+        playlist="walls", change=walls_change(tmp_path, "a.jpg", "previous")
+    )
+    assert run(service, "prev", "walls") == PrevResult(playlist="walls", change=None)
+    assert run(service, "fav", "walls") == mark("fav", a, True)
+    assert run(service, "fav", "walls") == mark("fav", a, False)
+    assert run(service, "unfav", "walls") == mark("unfav", a, True)
+    assert run(service, "unfav", "walls") == mark("unfav", a, False)
+    assert run(service, "remove", "walls") == RemoveResult(
+        playlist="walls",
+        image=a,
+        list_file=paths.data_dir() / "to-remove.txt",
+        change=walls_change(tmp_path, "b.jpg"),
+    )
+    assert b.is_file()  # listed, never deleted
 
 
 def test_commands_that_change_wallpapers_return_the_change(
     service: PlaylistService,
 ) -> None:
     def change(command: Command) -> tuple[str, str] | None:
-        outcome = execute(service, Request(command, "walls"))
-        assert outcome.reply.code == 0, outcome.reply.err
+        outcome = execute(service, Request(command=command, target="walls"))
+        assert not isinstance(outcome.reply, ErrorReply), outcome.reply
         if outcome.change is None:
             return None
         assert outcome.change.playlist == "walls"
@@ -95,36 +138,77 @@ def test_commands_that_change_wallpapers_return_the_change(
     assert change("prev") is None  # nothing earlier
     assert change("fav") is None and change("unfav") is None
     assert change("remove") == ("b.jpg", "next")
-    assert execute(service, Request("status")).change is None
+    assert execute(service, Request(command="status")).change is None
 
 
-def test_errors_become_a_reply(service: PlaylistService) -> None:
-    outcome = execute(service, Request("next"))  # two playlists: name one
+@pytest.mark.parametrize(
+    "command, target, kind, message",
+    [
+        ("next", None, "unknown_target", "Name a playlist or monitor: walls, strip"),
+        ("next", "nowhere", "unknown_target", "No monitor matches 'nowhere'"),
+        ("next", "strip", "not_attached", "None of strip's monitors is attached"),
+        ("fav", "walls", "nothing_shown", "walls has not shown an image yet"),
+    ],
+)
+def test_errors_are_structured(
+    service: PlaylistService, command: Command, target: str, kind: str, message: str
+) -> None:
+    outcome = execute(service, Request(command=command, target=target))
     assert outcome.change is None
     reply = outcome.reply
-    assert reply.code == 1 and reply.err.startswith("error: Name a playlist")
-    assert run(service, "next", "strip").err.startswith("error: None of strip's")
+    assert isinstance(reply, ErrorReply)
+    assert reply.error.kind == kind and reply.error.message.startswith(message)
 
 
-def test_status(service: PlaylistService) -> None:
-    reply = run(service, "status")
-    assert reply.code == 0
-    assert "Main (attached), Side (detached)" in reply.out
-    assert "Strip (not found)" in reply.out
-    assert reply.out.endswith("Rotation active")
+def test_no_images_and_unexpected_errors() -> None:
+    assert error_reply(NoImagesError("x")).error.kind == "no_images"
+    unexpected = error_reply(KeyError("boom"))
+    assert unexpected.error.kind == "internal"
+    assert unexpected.error.message == "Unexpected error: 'boom'"
+
+
+def test_status(service: PlaylistService, tmp_path: Path) -> None:
+    run(service, "next", "walls")
+    status = run(service, "status")
+    assert isinstance(status, StatusResult)
+    assert status.paused is None and status.warnings == ()
+    walls, strip = status.playlists
+    assert (walls.name, walls.order, walls.interval, walls.mode) == (
+        "walls",
+        Order.SORTED,
+        600.0,
+        None,
+    )
+    assert walls.directory == tmp_path / "walls"
+    assert walls.monitors == (
+        MonitorView(selector="Main", name="Main", attached=True),
+        MonitorView(selector="Side", name="Side", attached=False),
+    )
+    assert walls.current == tmp_path / "walls" / "a.jpg" and not walls.favourite
+    assert walls.next_in_seconds == 600.0
+    assert [p.name for p in walls.upcoming] == ["b.jpg", "a.jpg"]
+    assert strip.monitors == (
+        MonitorView(selector="Strip", name="Strip", attached=None),
+    )
 
 
 def test_overview(service: PlaylistService, tmp_path: Path) -> None:
     assert overview(service) == Overview(
         playlists=(
             PlaylistView(
-                "walls",
-                (MonitorView("Main", True), MonitorView("Side", False)),
+                name="walls",
+                monitors=(
+                    MonitorView(selector="Main", name="Main", attached=True),
+                    MonitorView(selector="Side", name="Side", attached=False),
+                ),
                 current=None,
                 favourite=False,
             ),
             PlaylistView(
-                "strip", (MonitorView("Strip", None),), current=None, favourite=False
+                name="strip",
+                monitors=(MonitorView(selector="Strip", name="Strip", attached=None),),
+                current=None,
+                favourite=False,
             ),
         )
     )
