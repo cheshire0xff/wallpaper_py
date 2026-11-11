@@ -53,6 +53,9 @@ Rules:
 
 ## App shell
 
+Every thread, signal and connection, with the request / tick / shutdown
+flows: [app-wiring.md](app-wiring.md).
+
 One process rotates: `wallpaper tray` (with the tray icon) or `wallpaper
 run` (headless, in a terminal) start the same app. It holds a `QLockFile`
 next to the state database (the socket alone can't enforce this: on
