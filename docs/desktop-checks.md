@@ -145,7 +145,9 @@ thumbnails off the UI thread) is tested with fakes (`tests/test_layout.py`,
    image, with no outline; under each: its name, resolution (e.g.
    3840×2160) and playlist. A monitor in no playlist says
    "no playlist". Resize the window: the drawing rescales, nothing is cut
-   off, and the cards rearrange into fewer or more columns.
+   off, and the cards rearrange into fewer or more columns. Hover a card:
+   its monitors get an accent outline; hover a monitor: its playlist's card
+   gets an accent edge; move away: both go.
 2. Each playlist card: the thumbnail (letterboxed, on the dark backdrop),
    name, monitors (a link icon for the mirrored group), the image's file
    name, then "dimensions · file size · order, interval · next in …";

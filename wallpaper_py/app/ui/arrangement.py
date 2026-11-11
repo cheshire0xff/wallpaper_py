@@ -9,9 +9,11 @@ the arrangement, in a row to its right, at their last known size (else
 1920×1080), dimmed and marked "off".
 
 `MonitorsView` paints it: each monitor with the current image of its
-playlist, without an outline (one would read as a selection), and under
-each its name, resolution and playlist ("no playlist" for one no playlist
-drives).
+playlist, and under each its name, resolution and playlist ("no playlist"
+for one no playlist drives). No outlines, except on hover: pointing at a
+monitor (`hovered`) or at a playlist's card highlights that playlist's
+monitors in the accent (`set_highlight`), so the accent only ever means
+"what you point at".
 """
 
 from __future__ import annotations
@@ -20,13 +22,15 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import QRectF, Qt
+from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, Signal, Slot
 from PySide6.QtGui import (
     QColor,
     QFont,
+    QMouseEvent,
     QPainter,
     QPainterPath,
     QPaintEvent,
+    QPen,
     QPixmap,
     QResizeEvent,
 )
@@ -42,6 +46,7 @@ LABEL_HEIGHT = 40  # two lines under each monitor
 MIN_HEIGHT = 220
 MAX_HEIGHT = 400
 INSET = 3  # px between neighbouring monitors, so they read as separate
+HIGHLIGHT_WIDTH = 2  # px, the hover outline
 
 
 @dataclass(frozen=True)
@@ -162,9 +167,14 @@ def caption(monitor: DesktopMonitor, playlist: str | None) -> tuple[str, str]:
 class MonitorsView(QWidget):
     """The arrangement, painted; redrawn on resize and on each overview."""
 
+    hovered = Signal(object)  # the playlist under the pointer, or None
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._overview = Overview()
+        self._highlight: str | None = None  # playlist outlined in the accent
+        self._hovered: str | None = None
+        self.setMouseTracking(True)
         self._images: dict[Path, QPixmap] = {}
         self._last_sizes: dict[str, tuple[int, int]] = {}
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -194,6 +204,40 @@ class MonitorsView(QWidget):
         self.setAccessibleDescription("; ".join(lines))
         self.setToolTip("\n".join(lines))
         self.update()
+
+    @Slot(object)
+    def set_highlight(self, playlist: str | None) -> None:
+        """Outline this playlist's monitors in the accent (None: no outline)."""
+        if playlist != self._highlight:
+            self._highlight = playlist
+            self.update()
+
+    def highlight(self) -> str | None:
+        return self._highlight
+
+    def playlist_at(self, point: QPointF) -> str | None:
+        """The playlist driving the monitor drawn at `point`, if any."""
+        by_monitor = playlists_by_monitor(self._overview)
+        for item in self.placed():
+            box = item.box
+            if QRectF(box.x, box.y, box.width, box.height).contains(point):
+                return by_monitor.get(item.monitor.id)
+        return None
+
+    def mouseMoveEvent(
+        self, event: QMouseEvent
+    ) -> None:  # pylint: disable=invalid-name
+        super().mouseMoveEvent(event)
+        self._set_hovered(self.playlist_at(event.position()))
+
+    def leaveEvent(self, event: QEvent) -> None:  # pylint: disable=invalid-name
+        super().leaveEvent(event)
+        self._set_hovered(None)
+
+    def _set_hovered(self, playlist: str | None) -> None:
+        if playlist != self._hovered:
+            self._hovered = playlist
+            self.hovered.emit(playlist)
 
     def set_image(self, path: Path, pixmap: QPixmap | None) -> None:
         if pixmap is None:
@@ -228,10 +272,17 @@ class MonitorsView(QWidget):
             for member in playlist.monitors
             if member.id is not None and playlist.current is not None
         }
+        outline = _on_backdrop(theme.accent(self.palette()))
         for item in placed:
             image = images.get(item.monitor.id)
+            lit = self._highlight is not None and (
+                by_monitor.get(item.monitor.id) == self._highlight
+            )
             self._paint_monitor(
-                painter, item, self._images.get(image) if image is not None else None
+                painter,
+                item,
+                self._images.get(image) if image is not None else None,
+                outline if lit else None,
             )
         boxes = [p.box for p in placed]
         for item in placed:
@@ -239,8 +290,13 @@ class MonitorsView(QWidget):
         painter.end()
 
     @staticmethod
-    def _paint_monitor(painter: QPainter, item: Placed, pixmap: QPixmap | None) -> None:
-        """No outline (it would read as a selection): the fill marks the edge."""
+    def _paint_monitor(
+        painter: QPainter,
+        item: Placed,
+        pixmap: QPixmap | None,
+        outline: QColor | None,
+    ) -> None:
+        """The fill marks the edge; an outline only when highlighted (hover)."""
         box = item.box
         rect = QRectF(box.x, box.y, box.width, box.height).adjusted(
             INSET, INSET, -INSET, -INSET
@@ -258,6 +314,12 @@ class MonitorsView(QWidget):
             painter.setOpacity(1.0)
             painter.setPen(theme.BACKDROP_TEXT)
             painter.drawText(rect, int(Qt.AlignmentFlag.AlignCenter), "off")
+        if outline is not None:
+            painter.setOpacity(1.0)
+            painter.setPen(QPen(outline, HIGHLIGHT_WIDTH))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            half = HIGHLIGHT_WIDTH / 2
+            painter.drawRect(rect.adjusted(half, half, -half, -half))
         painter.restore()
 
     def _paint_caption(
@@ -304,6 +366,16 @@ class MonitorsView(QWidget):
             metrics.elidedText(detail, Qt.TextElideMode.ElideRight, int(rect.width())),
         )
         painter.restore()
+
+
+def _on_backdrop(accent: QColor) -> QColor:
+    """The accent, lightened if it is too dark to see on the dark backdrop."""
+    color = QColor(accent)
+    for _ in range(8):
+        if color.lightnessF() >= 0.55:
+            break
+        color = color.lighter(125)
+    return color
 
 
 def _translucent_backdrop() -> QColor:

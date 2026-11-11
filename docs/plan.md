@@ -198,6 +198,9 @@ Look (decided, from a mockup the user approved; it holds for every window):
     outlines (an accent outline read as a selection, so mirrored groups
     aren't marked in the drawing; the card shows them). Under each: name
     (bold), resolution (`3840×2160`, no spaces) and playlist.
+  - Hover: pointing at a playlist's card outlines its monitors in the
+    accent, and pointing at a monitor gives its playlist's card an accent
+    edge. The accent then only ever means "what you point at".
   - *Playlists*: a grid of cards. Each card: a 16:9 thumbnail
     (letterboxed on the backdrop); the playlist name, its monitors (a link
     icon for a mirrored group) and a *Held* / *Manual* chip; the image's
@@ -358,9 +361,9 @@ Layout window, implemented (decisions made while building it):
 - **Arrangement**: one scale for the whole desktop, aspect kept, centred,
   with room for two caption lines under the bottom row. A detached monitor
   has no position, so it is drawn to the right of the others, at its last
-  size seen this session (else 1920×1080), dimmed, "off". No outlines at
-  all (decided after review: an accent outline on mirrored members read as
-  a selection). A caption that would overlap a
+  size seen this session (else 1920×1080), dimmed, "off". No outlines,
+  except on hover (decided after review: a permanent accent outline on
+  mirrored members read as a selection). A caption that would overlap a
   monitor below goes inside it on a dark band. Unlisted members ("not
   found") aren't drawn; the card names them.
 - **Cards**: thumbnail fit (letterboxed) at 16:9; the monitor drawing
@@ -440,3 +443,10 @@ Linux Qt dependencies (promised early on, not done yet):
 
 Nice-to-haves from [todo.md](../todo.md): thumbnail fade-in, sound on
 wallpaper change, image overlay. Packaging/installer.
+
+Sound on wallpaper change: per playlist, `sound = true` in its config table
+(off by default; a toggle in the settings panel). Played by the app (it
+runs anyway; the UI process may not), on any change the playlist makes:
+scheduled, next / prev / pick. One short bundled sound, through Qt
+Multimedia (`QSoundEffect`); a custom sound file per playlist only if
+missed.

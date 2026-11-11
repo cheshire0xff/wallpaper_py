@@ -142,6 +142,7 @@ service, which also ends every subscription.
 | `UiServer.show_requested` | `Windows.show` (creates the window or raises it) |
 | `SocketClient.overview_changed`, `SocketClient.failed` | `LayoutWindow.show_overview`, `LayoutWindow.show_error` |
 | `SocketClient.overview_changed`, `SocketClient.changed`, `SocketClient.failed` | the library placeholder (`PlaceholderWindow.show_overview`, `PlaceholderWindow.show_change`, `PlaceholderWindow.show_error`) |
+| `PlaylistCard.hovered`, `MonitorsView.hovered` (the pointer: a playlist, or None) | `LayoutWindow._hover` -> `MonitorsView.set_highlight`, `PlaylistCard.set_highlighted` |
 | `PlaylistCard.requested` (a button: playlist, command) | `LayoutWindow._send` -> `Client.run` (reply: `LayoutWindow.replied`) |
 | the layout window's countdown `QTimer` (every second, only while a playlist counts down) | `LayoutWindow.refresh_schedule` |
 | `ThumbnailLoader.loaded` (an image is ready) | `LayoutWindow._thumbnail_loaded` (the cards and `MonitorsView` that still show it) |

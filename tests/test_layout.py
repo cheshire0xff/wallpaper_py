@@ -9,8 +9,9 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QSize
+from PySide6.QtCore import QPoint, QSize
 from PySide6.QtGui import QImage
+from PySide6.QtTest import QTest
 from pytestqt.qtbot import QtBot
 
 from wallpaper_py.app.ui.arrangement import (
@@ -375,6 +376,35 @@ def test_status_is_asked_once_at_a_time(
     client.answer_status(OVERVIEW)  # then once more, for the newer overview
     assert len([r for r, _ in client.calls if r.command == "status"]) == 1
     assert window.cards["konachan"].details.text()
+
+
+def test_hover_highlights_a_playlist_in_the_drawing_and_its_card(
+    qtbot: QtBot, window: LayoutWindow, client: FakeClient
+) -> None:
+    client.publish(OVERVIEW)
+    view = window.monitors_view
+    konachan, fantasy = window.cards["konachan"], window.cards["fantasy"]
+    assert view.highlight() is None and not konachan.highlighted()
+    # Pointing at a card outlines its monitors.
+    konachan.hovered.emit("konachan")
+    assert view.highlight() == "konachan"
+    assert konachan.highlighted() and not fantasy.highlighted()
+    view.grab()  # paints the outline without error
+    konachan.hovered.emit(None)
+    assert view.highlight() is None and not konachan.highlighted()
+    # Pointing at a monitor highlights its card; one in no playlist, nothing.
+    boxes = {p.monitor.id: p.box for p in view.placed()}
+
+    def centre(monitor_id: str) -> QPoint:
+        box = boxes[monitor_id]
+        return QPoint(round(box.x + box.width / 2), round(box.y + box.height / 2))
+
+    QTest.mouseMove(view, centre("plx"))
+    qtbot.waitUntil(konachan.highlighted)
+    assert view.highlight() == "konachan" and not fantasy.highlighted()
+    QTest.mouseMove(view, centre("tv"))
+    qtbot.waitUntil(lambda: view.highlight() is None)
+    assert not konachan.highlighted()
 
 
 def test_buttons_send_commands(window: LayoutWindow, client: FakeClient) -> None:

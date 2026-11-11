@@ -24,10 +24,12 @@ from typing import cast
 from PySide6.QtCore import QEvent, QSize, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import (
     QCloseEvent,
+    QEnterEvent,
     QFont,
     QPainter,
     QPaintEvent,
     QPalette,
+    QPen,
     QResizeEvent,
 )
 from PySide6.QtWidgets import (
@@ -192,10 +194,12 @@ class PlaylistCard(QFrame):
     # pylint: disable=too-many-instance-attributes
 
     requested = Signal(str, str)  # playlist, command
+    hovered = Signal(object)  # this playlist when the pointer enters, None on leave
 
     def __init__(self, view: PlaylistView, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._view = view
+        self._highlighted = False
         self._details: PlaylistDetails | None = None
         self._thumbnail: Thumbnail | None = None
         self._left: float | None = None
@@ -368,13 +372,34 @@ class PlaylistCard(QFrame):
 
     # -- painting ----------------------------------------------------------------
 
+    def set_highlighted(self, highlighted: bool) -> None:
+        """An accent edge while this playlist is pointed at (here or a monitor)."""
+        if highlighted != self._highlighted:
+            self._highlighted = highlighted
+            self.update()
+
+    def highlighted(self) -> bool:
+        return self._highlighted
+
+    def enterEvent(self, event: QEnterEvent) -> None:  # pylint: disable=invalid-name
+        super().enterEvent(event)
+        self.hovered.emit(self._view.name)
+
+    def leaveEvent(self, event: QEvent) -> None:  # pylint: disable=invalid-name
+        super().leaveEvent(event)
+        self.hovered.emit(None)
+
     def paintEvent(self, event: QPaintEvent) -> None:  # pylint: disable=invalid-name
         del event
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(self.palette().color(QPalette.ColorRole.Mid))
+        if self._highlighted:
+            painter.setPen(QPen(theme.accent(self.palette()), 2))
+            rect = self.rect().toRectF().adjusted(1, 1, -1, -1)
+        else:
+            painter.setPen(self.palette().color(QPalette.ColorRole.Mid))
+            rect = self.rect().toRectF().adjusted(0.5, 0.5, -0.5, -0.5)
         painter.setBrush(self.palette().color(QPalette.ColorRole.Base))
-        rect = self.rect().toRectF().adjusted(0.5, 0.5, -0.5, -0.5)
         painter.drawRoundedRect(rect, theme.RADIUS, theme.RADIUS)
         painter.end()
 
@@ -466,6 +491,7 @@ class LayoutWindow(Window):
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
         self.monitors_view = MonitorsView(self)
+        self.monitors_view.hovered.connect(self._hover)
         self.empty = QLabel("No playlists in the config yet.", self)
         self.empty.setForegroundRole(QPalette.ColorRole.PlaceholderText)
         self._grid_widget = QWidget(self)
@@ -567,6 +593,7 @@ class LayoutWindow(Window):
             if card is None:
                 new = PlaylistCard(view, self._grid_widget)
                 new.requested.connect(self._send)
+                new.hovered.connect(self._hover)
                 self.cards[view.name] = new
             else:
                 card.show_view(view)
@@ -595,6 +622,13 @@ class LayoutWindow(Window):
 
     def columns(self) -> int:
         return self._columns
+
+    @Slot(object)
+    def _hover(self, playlist: str | None) -> None:
+        """A card or a monitor is pointed at: highlight its playlist in both."""
+        self.monitors_view.set_highlight(playlist)
+        for name, card in self.cards.items():
+            card.set_highlighted(name == playlist)
 
     @Slot(str, str)
     def _send(self, playlist: str, command: str) -> None:
