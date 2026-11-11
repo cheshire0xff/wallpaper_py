@@ -16,6 +16,11 @@ from .model import ImageLoadError, ImageMode
 
 BACKGROUND = (0, 0, 0)
 
+# Renders are saved as BMP: lossless like PNG, but with no compression to
+# compute (a 4K render saves in ~15 ms instead of ~150 ms). The cost is disk:
+# ~25 MB per 4K render, two slots per monitor (see core.setter).
+RENDER_SUFFIX = ".bmp"
+
 
 Box = tuple[float, float, float, float]
 
@@ -72,8 +77,8 @@ def render(img: Image.Image, size: tuple[int, int], mode: ImageMode) -> Image.Im
 def render_file(
     source: Path, size: tuple[int, int], mode: ImageMode, destination: Path
 ) -> Path:
-    """Render `source` to exactly `size` and save it as PNG at `destination`."""
+    """Render `source` to exactly `size` and save it as BMP at `destination`."""
     result = render(load(source, size), size, mode)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    result.save(destination, "PNG", compress_level=1)
+    result.save(destination, "BMP")
     return destination

@@ -75,18 +75,18 @@ def test_stretch_keeps_everything() -> None:
 
 
 @pytest.mark.parametrize("source_mode", ["RGB", "RGBA", "P", "L"])
-def test_render_file_writes_exact_size_png(tmp_path: Path, source_mode: str) -> None:
+def test_render_file_writes_exact_size_bmp(tmp_path: Path, source_mode: str) -> None:
     source = tmp_path / "source.png"
     stripes().convert(source_mode).save(source)
-    out = render_file(source, (64, 48), ImageMode.FILL, tmp_path / "out" / "r.png")
+    out = render_file(source, (64, 48), ImageMode.FILL, tmp_path / "out" / "r.bmp")
     with Image.open(out) as img:
-        assert (img.format, img.size, img.mode) == ("PNG", (64, 48), "RGB")
+        assert (img.format, img.size, img.mode) == ("BMP", (64, 48), "RGB")
 
 
 def test_large_jpeg_is_rendered_at_target_size(tmp_path: Path) -> None:
     source = tmp_path / "big.jpg"
     stripes(3000, 1000).save(source, quality=90)
-    out = render_file(source, (300, 100), ImageMode.FILL, tmp_path / "r.png")
+    out = render_file(source, (300, 100), ImageMode.FILL, tmp_path / "r.bmp")
     with Image.open(out) as img:
         assert img.size == (300, 100)
         assert close_to(img.getpixel((150, 50)), GREEN, tol=20)
