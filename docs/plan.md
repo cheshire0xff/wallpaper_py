@@ -259,10 +259,18 @@ Foundation, implemented (decisions made while building it):
   Phase 3's socket server too), and pydantic must be fully loaded before
   PySide6 (`app/__init__.py`).
 
-Open: "assign playlists and groups" from this window means the app edits
-config.toml. If we do it, edit with a comment-preserving TOML library
-(tomlkit) so hand edits survive; otherwise this window only shows the
-assignment.
+Order for the rest of the phase, one session each:
+
+1. **Pick, hold and manual mode**: core, protocol (`pick`, `hold`,
+   `resume`), CLI, tray *Hold* toggle. No new windows.
+2. **Layout window**: shows the assignment (monitors to scale, current
+   wallpaper per playlist, toggles, next / prev); replaces the
+   placeholder.
+3. **Settings panel** (decided: wanted): assign monitors to playlists and
+   groups, and edit a playlist's directory, order, interval and mode. The
+   app edits config.toml with a comment-preserving TOML library (tomlkit),
+   so hand edits and comments survive, then reloads it. The file stays the
+   source of truth; hand editing keeps working.
 
 ## Phase 5: library window
 
