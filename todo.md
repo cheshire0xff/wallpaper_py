@@ -41,6 +41,14 @@ the wallpapers.
 1. Reset the shuffle cycle (start over, everything unseen again), with a
    confirmation.
 1. Settings / about: data and config paths, version with git hash.
+   More, like the phone app's info dialog (nice to have):
+   - Data locations, each with *Open folder* / *Copy path*: the config file,
+     the state database, favourites.txt and to-remove.txt, the logs (app
+     and UI), the render and thumbnail caches (with their size on disk).
+   - Library stats per playlist: images in its directory, seen / unseen in
+     the current shuffle cycle, history length; favourites and to-remove
+     counted as "listed" vs "still exist" (a listed file may be gone).
+   - Totals across playlists, and the time the directory was last scanned.
 
 ## Nice to have
 

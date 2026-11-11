@@ -306,6 +306,12 @@ Order for the rest of the phase, one session each:
    app edits config.toml with a comment-preserving TOML library (tomlkit),
    so hand edits and comments survive, then reloads it. The file stays the
    source of truth; hand editing keeps working.
+   Nice to have, in the same window if cheap, else Phase 7: an *About /
+   info* page like the phone app's (see todo.md, "Settings / about"): data
+   locations with *Open folder* / *Copy path*, version with git hash, and
+   library stats per playlist. The stats come from a new `stats` command
+   (the service has the scan, the deck and the marks); not read from the
+   database directly, so its layout stays private to the service.
 
 Pick, hold and manual mode, implemented (decisions made while building it):
 
