@@ -11,11 +11,19 @@ core/                         pure Python, no Qt, no platform APIs
   selection.py   user-typed monitor selector -> Monitor (names/ids, never numbers)
   setter.py      put an image on a monitor safely (re-checks, renders if needed)
   imaging.py     fill / fit / stretch rendering to an exact size
-  paths.py       per-user data and cache directories (per OS, never shared)
+  paths.py       per-user config, data and cache locations (per OS, never shared)
+  config.py      the human-edited TOML: playlists, monitors, pausing
+  library.py     recursive image scan (natural order, cached), path keys
+  order.py       next image: sorted walk, or the persisted shuffle deck
+  store.py       SQLite: history, deck, per-playlist and per-monitor state
+  marks.py       favourites / to-remove .txt files (the only copy)
+  presence.py    Presence protocol: session locked? seconds idle?
+  service.py     PlaylistService: tick, next / previous, fav / remove, status
         │
 backends/                     one per platform, thin
   __init__.py    get_backend(): picks by platform / XDG_CURRENT_DESKTOP
-  windows/       IDesktopWallpaper (COM) + EDID names via QueryDisplayConfig
+  windows/       IDesktopWallpaper (COM) + EDID names via QueryDisplayConfig,
+                 lock / idle via user32 (presence.py)
   (kde/)         planned: plasmashell D-Bus + KScreen
 ```
 
@@ -27,8 +35,38 @@ Rules:
   `tests/fakes.py`.
 - **Platform modules are guarded** with `assert sys.platform == "win32"`, so
   mypy skips them on other platforms and importing them elsewhere fails fast.
-- Later phases add playlists, history and a scheduler in `core`, and the
-  PySide6 app in `app/`, which calls into `core`.
+- The PySide6 app (Phase 3+) goes in `app/` and calls into `core`; it
+  drives `PlaylistService.tick()` from a timer, as `wallpaper run` does now.
+
+## Playlist service
+
+State lives in two places, by design:
+
+- **SQLite** (`store.py`) holds app-internal state only: history with a
+  cursor per playlist, the shuffle deck, active seconds since the last
+  change, and which image each monitor was given. It is the single source
+  of truth, so a one-shot `wallpaper next` and a running `wallpaper run`
+  (two processes, WAL mode) agree without IPC.
+- **Favourites / to-remove** live only in their `.txt` files. Every change
+  re-reads the file, applies one add or remove and writes it atomically;
+  reads reload when the file's mtime/size changes. Entries for missing
+  images are hidden, never pruned automatically.
+
+A change is *peek, show, commit*: the next image is chosen without consuming
+it, set on every attached member, and only then written to history / the
+deck. If no member could be set (`MonitorNotAttachedError`), nothing is
+consumed and the change is retried on later ticks. Unreadable images are
+skipped (remembered for the process lifetime).
+
+Time is counted per playlist in *active* seconds, added on each tick: not
+while paused (locked / idle via `Presence`), not while no member is
+attached, and not across gaps longer than a minute (sleep). A manual change
+resets the count.
+
+A member that was detached (or vanished from the monitor list) has its
+"applied" record dropped, so on return it is given the group's current
+image. `wallpaper run` drops all of them at start, so after a reboot every
+monitor gets its playlist's current image back.
 
 ## Monitor identity
 

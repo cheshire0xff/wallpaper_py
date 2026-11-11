@@ -9,8 +9,8 @@ thin. See [architecture.md](architecture.md) for the layers.
 |---|---|---|
 | 0 | Spikes: monitor identity on Windows, 20k-image grid, KDE probe | done (KDE probe pending, needs Arch) |
 | 1 | Core model, safe setter, Windows backend, CLI `list`/`set`, tooling, CI | done |
-| 2 | Playlists, mirrored groups, scheduler, history, favourites, to-remove | next |
-| 3 | App shell: tray, single instance, IPC, autostart | |
+| 2 | Playlists, mirrored groups, scheduler, history, favourites, to-remove | done (awaiting a real-desktop trial) |
+| 3 | App shell: tray, single instance, IPC, autostart | next |
 | 4 | Layout window | |
 | 5 | Library window | |
 | 6 | KDE backend | |
@@ -34,11 +34,22 @@ fakes like Phase 1.
   A group advances while at least one member is attached; a returning
   monitor gets the group's current image.
 - **Next / previous** per target, walking history.
-- **State** in SQLite, per OS (no sharing between Windows and Arch):
-  history, deck position, favourites, to-remove.
-- **Favourites / to-remove** also written to `.txt` files, one full path
-  per line, kept in sync. To-remove only lists and hides the image from
-  rotation; deleting stays with your library script.
+- **State** in SQLite, per OS (no sharing between Windows and Arch), only
+  app-internal state: history, shuffle deck, per-target state.
+- **Favourites / to-remove** live *only* in their `.txt` files (one full
+  path per line), not in SQLite. Decision:
+  - every change re-reads the file, applies that one add/remove, and
+    writes it atomically (temp file + `os.replace`);
+  - the app reloads the file when it changes externally (the library
+    script or a hand edit may clear it);
+  - images whose files no longer exist are hidden in the UI but never
+    removed from the file automatically; clearing is explicit (edit the
+    file, or a later clear command / button);
+  - locations are configurable in the TOML config, defaulting to the data
+    dir.
+
+  To-remove only lists and hides the image from rotation; deleting stays
+  with your library script.
 - Robust to the library changing: new files join, missing files are skipped.
 - **Config**: a human-edited TOML file defining playlists and targets.
 - **Interval** counts from the last change; a manual next/prev resets it.

@@ -12,7 +12,7 @@ from pathlib import Path
 
 from PIL import Image, ImageOps
 
-from .model import ImageMode
+from .model import ImageLoadError, ImageMode
 
 BACKGROUND = (0, 0, 0)
 
@@ -21,12 +21,20 @@ Box = tuple[float, float, float, float]
 
 
 def load(source: Path, size: tuple[int, int]) -> Image.Image:
-    """Decode `source` as RGB, upright, and close the file before returning."""
-    with Image.open(source) as img:
-        # JPEG only: decode at the smallest DCT scale that is still >= size.
-        img.draft("RGB", size)
-        oriented = ImageOps.exif_transpose(img) or img
-        return oriented.convert("RGB")  # always a copy, detached from the file
+    """
+    Decode `source` as RGB, upright, and close the file before returning.
+
+    Raises:
+        ImageLoadError: missing, unreadable, truncated or not an image.
+    """
+    try:
+        with Image.open(source) as img:
+            # JPEG only: decode at the smallest DCT scale that is still >= size.
+            img.draft("RGB", size)
+            oriented = ImageOps.exif_transpose(img) or img
+            return oriented.convert("RGB")  # always a copy, detached from the file
+    except (OSError, SyntaxError, ValueError, Image.DecompressionBombError) as err:
+        raise ImageLoadError(f"Cannot load {source}: {err}") from err
 
 
 def fill_box(src: tuple[int, int], dst: tuple[int, int]) -> Box:

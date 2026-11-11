@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+
+# Seconds since the epoch (time.time); injected so tests control time.
+Clock = Callable[[], float]
 
 
 @dataclass(frozen=True)
@@ -70,3 +74,7 @@ class UnsupportedModeError(WallpaperError):
 
 class UnsupportedPlatformError(WallpaperError):
     """No backend exists for the current desktop environment."""
+
+
+class ImageLoadError(WallpaperError):
+    """The image file is missing, unreadable or not an image."""

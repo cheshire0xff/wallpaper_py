@@ -7,7 +7,7 @@ from wallpaper_py import cli
 from wallpaper_py.core import paths
 from wallpaper_py.core.backend import Backend
 
-from .fakes import FakeBackend, make_monitor
+from .fakes import FakeBackend, FakePresence, make_images, make_monitor
 
 
 @pytest.fixture(name="backend")
@@ -93,3 +93,94 @@ def test_bad_arguments_exit_with_usage_error(
     with pytest.raises(SystemExit) as exc:
         run(backend, *[a.format(image=image) for a in argv])
     assert exc.value.code == 2
+
+
+class TestPlaylistCommands:
+    @pytest.fixture(name="config")
+    def fixture_config(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+        monkeypatch.setattr(paths, "state_db", lambda: tmp_path / "state.sqlite3")
+        monkeypatch.setattr(paths, "data_dir", lambda: tmp_path / "data")
+        make_images(tmp_path / "walls", "a.jpg", "b.jpg", "c.jpg")
+        config = tmp_path / "config.toml"
+        config.write_text(
+            "[playlists.walls]\n"
+            "directory = 'walls'\n"
+            'monitors = ["Main"]\n'
+            'order = "sorted"\n'
+            'interval = "10m"\n',
+            encoding="utf-8",
+        )
+        return config
+
+    def run(self, backend: FakeBackend, config: Path, *argv: str) -> int:
+        return cli.main(
+            ["--config", str(config), *argv],
+            backend_factory=lambda: backend,
+            presence_factory=FakePresence,
+        )
+
+    def test_run_shows_the_first_image(
+        self, backend: FakeBackend, config: Path
+    ) -> None:
+        assert self.run(backend, config, "run", "--ticks", "1") == 0
+        assert [c.image.name for c in backend.set_calls] == ["a.jpg"]
+
+    def test_next_prev_fav_remove(
+        self,
+        backend: FakeBackend,
+        config: Path,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        assert self.run(backend, config, "next") == 0
+        assert self.run(backend, config, "next", "main") == 0  # by monitor
+        assert self.run(backend, config, "prev", "walls") == 0
+        assert self.run(backend, config, "prev") == 0
+        assert self.run(backend, config, "fav") == 0
+        assert self.run(backend, config, "remove") == 0
+        out = capsys.readouterr().out.splitlines()
+        assert out[:4] == [
+            "walls: a.jpg on Main",
+            "walls: b.jpg on Main",
+            "walls: a.jpg on Main",
+            "walls: no earlier image",
+        ]
+        assert "favourites.txt" in out[4]
+        assert "(not deleted)" in out[5] and out[6] == "walls: b.jpg on Main"
+        listed = (tmp_path / "data" / "to-remove.txt").read_text(encoding="utf-8")
+        assert listed == f"{tmp_path / 'walls' / 'a.jpg'}\n"
+
+    def test_status(
+        self, backend: FakeBackend, config: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        self.run(backend, config, "next")
+        assert self.run(backend, config, "status") == 0
+        out = capsys.readouterr().out
+        assert "walls  (sorted, every 10m, as is)" in out
+        assert "Main (attached)" in out
+        assert "upcoming:  b.jpg, c.jpg, a.jpg" in out
+        assert "Rotation active" in out
+
+    def test_missing_config_is_explained(
+        self,
+        backend: FakeBackend,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        assert self.run(backend, tmp_path / "none.toml", "next") == 1
+        assert "No config file" in capsys.readouterr().err
+
+    def test_next_on_detached_monitor_fails_cleanly(
+        self, config: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        backend = FakeBackend([make_monitor("Main", attached=False)])
+        assert self.run(backend, config, "next", "walls") == 1
+        assert "attached" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("seconds", "text"),
+    [(0, "0s"), (59.6, "1m"), (90, "1m30s"), (3600, "1h"), (5430, "1h30m30s")],
+)
+def test_format_duration(seconds: float, text: str) -> None:
+    assert cli.format_duration(seconds) == text

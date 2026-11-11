@@ -1,0 +1,34 @@
+# wallpaper_py playlists. Copy to the path shown by `wallpaper --help`
+# (on Windows: %LOCALAPPDATA%\wallpaper_py\config.toml) and edit.
+#
+# Durations: "45s", "30m", "1h30m", "1d".
+# Paths: use 'single quotes' on Windows, so backslashes are taken literally.
+# Relative paths are relative to this file.
+
+# Pause rotation while the session is locked, or after this long without
+# keyboard / mouse input (false: never), so no image goes by unseen.
+pause_when_locked = true
+pause_when_idle = "5m"
+
+# Favourites and to-remove lists: plain text, one full path per line. You can
+# edit them by hand; to-remove is only a list (and hides images from
+# rotation), files are never deleted. Default: next to the state database.
+# favourites_file = 'D:\pictures\favourites.txt'
+# to_remove_file = 'D:\pictures\to-remove.txt'
+
+# One table per playlist. `monitors` takes exact names or full ids from
+# `wallpaper list --all`. More than one monitor: a mirrored group, which
+# shows the same image on every member. A monitor can be in one playlist.
+[playlists.konachan]
+directory = 'D:\pictures\KONACHAN'   # scanned recursively
+monitors = ["AW3225QF", "PLX2783H"]
+order = "shuffle"                    # every image once before any repeats
+interval = "30m"                     # active time since the last change
+mode = "fill"                        # fill / fit / stretch; omit: as is
+
+[playlists.fantasy]
+directory = 'D:\pictures\Fantasy'
+monitors = ["ZeroMOD"]
+order = "sorted"                     # natural order: 2 before 10
+interval = "10m"
+mode = "fill"

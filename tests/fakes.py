@@ -75,6 +75,15 @@ class FakeBackend:
     def detach(self, name: str) -> None:
         self.update(name, rect=None)
 
+    def unlist(self, name: str) -> Monitor:
+        """Drop a monitor from the list (Windows does this for a while)."""
+        monitor = next(m for m in self._monitors if m.name == name)
+        self._monitors.remove(monitor)
+        return monitor
+
+    def relist(self, monitor: Monitor) -> None:
+        self._monitors.append(monitor)
+
     def set_wallpaper(
         self, monitor_id: str, image: Path, mode: ImageMode | None = None
     ) -> None:
@@ -92,3 +101,39 @@ class FakeBackend:
 
     def global_mode(self) -> ImageMode | None:
         return self._global_mode
+
+
+class FakeClock:
+    """Manual clock: `advance()` moves time on."""
+
+    def __init__(self, start: float = 1_700_000_000.0) -> None:
+        self.now = start
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+class FakePresence:
+    def __init__(self) -> None:
+        self.locked: bool | None = False
+        self.idle: float | None = 0.0
+
+    def session_locked(self) -> bool | None:
+        return self.locked
+
+    def idle_seconds(self) -> float | None:
+        return self.idle
+
+
+def make_images(directory: Path, *names: str) -> list[Path]:
+    """Empty files with image names: enough when nothing is rendered."""
+    paths = []
+    for name in names:
+        path = directory / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+        paths.append(path)
+    return paths

@@ -56,3 +56,24 @@ def _ambiguous(selector: str, matches: Sequence[Monitor]) -> MonitorSelectionErr
     return MonitorSelectionError(
         f"{selector!r} matches several monitors: {listed}. Use the full id."
     )
+
+
+def find_exact(monitors: Sequence[Monitor], selector: str) -> Monitor | None:
+    """
+    The monitor whose full id or name equals `selector` (case-insensitive),
+    or None if there is none right now (e.g. switched off and not listed).
+
+    For selectors stored in the config: no partial matching, because a part
+    of a name could match a *different* monitor while the intended one is
+    missing.
+    """
+    wanted = selector.strip().lower()
+    for matches in (
+        [m for m in monitors if m.id.lower() == wanted],
+        [m for m in monitors if m.name.lower() == wanted],
+    ):
+        if len(matches) > 1:
+            raise _ambiguous(selector, matches)
+        if matches:
+            return matches[0]
+    return None
