@@ -164,8 +164,11 @@ Manual mode, hold and pick (decided; kept deliberately simple):
 Structured command API (so other programs can build their own UI on the
 socket, and our windows use the same models):
 
-- Every reply gets a `data` field next to `code` / `out` / `err`: a
-  pydantic model per command, as a tagged union on `command`.
+- Replies carry **data only**: a pydantic model per command, as a tagged
+  union on `command`, or a structured error. No text on the wire (no
+  `out` / `err`): the CLI formats its output from the data, so formatting
+  lives in one place. Nothing outside uses the protocol yet, so this simply
+  replaces the current text replies.
   - `status`: paused, and per playlist: name, order, interval, mode,
     directory, monitors (name, attached), current, favourite,
     next_in_seconds, upcoming.
@@ -176,10 +179,9 @@ socket, and our windows use the same models):
   - `hold` / `resume`: playlist, held.
 - Errors are structured too: `{"error": {"kind", "message"}}` with kinds
   like `not_attached`, `unknown_playlist`, `no_images`, `config_error`.
-- The CLI prints its text from `data` (no more text-only replies); the
-  tray and windows consume the same models in-process.
-- Additive, so it stays protocol v1; rule from now on: v1 only ever adds
-  commands and fields, clients must ignore unknown fields.
+- The tray and windows consume the same models in-process.
+- From then on the protocol only ever adds commands and fields (clients
+  must ignore unknown fields); a breaking change bumps the version.
 - Publish the JSON Schema of requests and results (pydantic generates
   it), plus a short protocol doc in docs/.
 - Later, only if another UI actually gets written: a `subscribe` request
