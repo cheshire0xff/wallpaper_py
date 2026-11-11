@@ -146,9 +146,33 @@ Implemented (decisions made while building it):
 Not done yet: the trial on the real desktop (autostart entry, tray on
 Windows 11, monitor switch-off with the app running).
 
-## Phase 4: layout window
+## Phase 4: UI process and layout window
 
-Monitors drawn to scale in their real arrangement, each showing a thumbnail
+Separate UI process (decided: the GUI is used rarely, so it must cost
+nothing while closed):
+
+- The always-running app = service thread + tray + command socket, as
+  now; it stays small.
+- The windows (layout, library, settings) run in **their own process**,
+  `wallpaper ui [layout|library]`, started on demand and exiting when its
+  last window closes, which gives all its memory back.
+- Starting: the tray's "Open layout / Open library" (or the CLI) first
+  asks a running UI process to show that window (its own small socket,
+  same pattern as the CLI auto-start); if none answers, it starts one.
+  One UI process at most.
+- The UI process is a client of the app's socket like any other: commands
+  with replies, plus `subscribe` for events. If the app isn't running, the
+  UI starts it (same auto-start as the CLI); if the app quits, the UI
+  closes too (its subscription ends).
+- Windows depend only on a narrow client interface (send a command and
+  get the reply; receive events), never on the service or `ServiceWorker`.
+
+Order inside the phase: first the foundation (data-only replies,
+`subscribe`, the `wallpaper ui` process with single instance and an empty
+window, tray entries), then the layout window and manual mode / hold /
+pick on top.
+
+Layout window: monitors drawn to scale in their real arrangement, each showing a thumbnail
 of its current wallpaper. Assign playlists and groups, and run next/prev/fav
 from here. Per playlist, a "current wallpaper" card (todo.md, Library
 window): thumbnail, name, size, dimensions, fav / remove toggles.
@@ -193,15 +217,19 @@ socket, and our windows use the same models):
   - `hold` / `resume`: playlist, held.
 - Errors are structured too: `{"error": {"kind", "message"}}` with kinds
   like `not_attached`, `unknown_playlist`, `no_images`, `config_error`.
-- The tray and windows consume the same models in-process.
+- The tray consumes the same models in-process; the UI process gets
+  them over the socket.
 - From then on the protocol only ever adds commands and fields (clients
   must ignore unknown fields); a breaking change bumps the version.
 - Publish the JSON Schema of requests and results (pydantic generates
   it), plus a short protocol doc in docs/.
-- Later, only if another UI actually gets written: a `subscribe` request
-  that keeps the connection open and streams events (changes, status), and
-  paging for history / library lists. Thumbnails stay off the socket;
-  clients read the image files by path.
+- `subscribe` (needed now, by the UI process): the connection stays open
+  and the app streams one JSON line per event (`changed`,
+  `overview_changed`, later `marks_changed` / `history_changed`). Events
+  originate on the service thread, where the socket lives.
+- Not needed: paging for history / library lists (the UI reads SQLite
+  directly, see Phase 5). Thumbnails stay off the socket; clients read the
+  image files by path.
 
 Open: "assign playlists and groups" from this window means the app edits
 config.toml. If we do it, edit with a comment-preserving TOML library
@@ -220,24 +248,31 @@ time on Windows (taken from the symlink itself for links, i.e. when it was
 added to the library; not mtime, which copies keep), and mtime on Linux
 (no portable creation time in Python).
 
-Reading and updating state (the windows are clients of the service, like
-the tray and the socket):
+Reading and updating state (the windows run in the UI process, a client
+of the app's socket; see Phase 4):
 
-- All writes go through `ServiceWorker.execute` (fav / remove / pick /
-  hold ...): the service stays the only writer.
+- All writes are socket commands (fav / remove / pick / hold ...), which
+  the app runs through `ServiceWorker.execute`: the service stays the only
+  writer.
 - Windows may read directly, without a round trip: a read-only SQLite
   connection (history, deck / upcoming; WAL allows it) and the
   favourites / to-remove .txt files.
-- They re-read when the service thread emits fine-grained events, not only
-  the `Overview`: `marks_changed` (favourites / to-remove, including
-  external edits of the .txt files, noticed on a tick by their mtime /
-  size), `history_changed(playlist)`, and `changed` (a wallpaper changed,
-  from a tick *or* a command). Add these to docs/app-wiring.md.
+- They re-read on events received through `subscribe`, not only the
+  `Overview`: `marks_changed` (favourites / to-remove, including external
+  edits of the .txt files, noticed on a tick by their mtime / size),
+  `history_changed(playlist)`, and `changed` (a wallpaper changed, from a
+  tick *or* a command). Add these to docs/app-wiring.md.
 
 Tabs: Library, Favourites, Removed, History, Upcoming. Grids that scale to
 20k images (`QListView` icon mode with a virtual model; thumbnails decoded in
-worker threads with a LIFO queue, Pillow draft mode, an LRU memory budget, a
+worker threads with a LIFO queue, Pillow draft mode, an LRU memory budget
+(built in, generous: ~1.5 GB, no setting; plus a "Free memory" button), a
 disk cache, at tile size x DPR). Background pre-generation of the disk cache.
+
+Memory: the thumbnails live in the UI process, so closing the last window
+ends that process and gives everything back; the always-running app never
+holds thumbnails. The disk cache stays, so reopening is still fast. The
+budget and "Free memory" cover long sessions with the window open.
 
 ## Phase 6: KDE backend
 
