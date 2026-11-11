@@ -178,6 +178,34 @@ of its current wallpaper. Assign playlists and groups, and run next/prev/fav
 from here. Per playlist, a "current wallpaper" card (todo.md, Library
 window): thumbnail, name, size, dimensions, fav / remove toggles.
 
+Look (decided, from a mockup the user approved; it holds for every window):
+
+- **Follow the system**: Qt's native style on each OS (Windows 11 style,
+  Breeze on KDE), the system's light / dark mode and accent, all read from
+  the `QPalette`. No hard-coded colours, except:
+- **A dark neutral backdrop behind images** (`#161616`, in light mode
+  too): the monitor drawing, thumbnails, later the library grid and the
+  enlarged view. Wallpapers look washed out on white.
+- **Icons**: a small bundled set of Lucide SVGs (ISC licence, kept with
+  them), tinted with the palette's text colour when loaded, so they work in
+  light and dark. Not `QIcon.fromTheme`: Windows has no theme icons, and
+  mixing sources looks inconsistent.
+- **`app/ui/theme.py`**: spacing (8 px steps), corner radii (8 cards,
+  4 small), the backdrop colour, the icon loader, and the shared widgets
+  (an icon button; the image thumbnail on the backdrop). Not a framework.
+- Layout window, top to bottom:
+  - *Monitors*: the arrangement to scale on the backdrop. Members of a
+    mirrored group share an accent outline. Under each: name (bold),
+    resolution and playlist.
+  - *Playlists*: a grid of cards. Each card: a 16:9 thumbnail
+    (letterboxed on the backdrop); the playlist name, its monitors (a link
+    icon for a mirrored group) and a *Held* / *Manual* chip; the image's
+    file name; "dimensions · file size · order, interval · next in …"
+    (or "… left once resumed" / "manual"); then icon buttons previous,
+    next | favourite, remove, hold, each with a tooltip and an accessible
+    name. A toggle that is on is filled with the accent.
+- The title bar is the OS's own.
+
 Manual mode, hold and pick (decided; kept deliberately simple):
 
 - **A playlist is the unit; a mirrored group always mirrors.** No
