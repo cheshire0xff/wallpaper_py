@@ -116,9 +116,29 @@ def check_protocol(version: int, receiver: str) -> int:
 
 
 class MonitorView(Message):
+    """A playlist's member, as the config names it."""
+
     selector: str  # as written in the config
     name: str  # the monitor's name if listed, else the selector
     attached: bool | None  # None: not listed right now
+    id: str | None = None  # the listed monitor's id (see `Overview.monitors`)
+
+
+class Geometry(Message):
+    """A monitor's area in desktop pixels; x and y may be negative."""
+
+    x: int
+    y: int
+    width: int
+    height: int
+
+
+class DesktopMonitor(Message):
+    """A monitor the desktop lists, whether a playlist drives it or not."""
+
+    id: str
+    name: str
+    geometry: Geometry | None  # None: detached (known but switched off)
 
 
 class PlaylistView(Message):
@@ -139,6 +159,7 @@ class Overview(Message):
     """The small snapshot the tray and the windows draw from."""
 
     playlists: tuple[PlaylistView, ...] = ()
+    monitors: tuple[DesktopMonitor, ...] = ()  # every listed monitor
     paused: str | None = None  # why rotation is paused, if it is
     error: str | None = None  # the service could not start (e.g. bad config)
 

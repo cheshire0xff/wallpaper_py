@@ -19,6 +19,7 @@ from wallpaper_py.app import ipc
 from wallpaper_py.app.instance import InstanceLock
 from wallpaper_py.app.runtime import AppOptions, Platform, run_app
 from wallpaper_py.app.ui.client import Client, ReplyCallback
+from wallpaper_py.app.ui.layout import LayoutWindow
 from wallpaper_py.app.ui.process import UiOptions, Windows, run_ui
 from wallpaper_py.app.ui.window import PlaceholderWindow, describe_overview
 from wallpaper_py.app.worker import ServiceHost
@@ -129,10 +130,12 @@ def test_ui_shows_the_live_overview_until_its_window_closes(
 
     def close_when_live() -> None:
         for widget in QApplication.topLevelWidgets():
-            if isinstance(widget, PlaceholderWindow) and widget.isVisible():
-                text = widget.overview_label.text()
-                if text.startswith("walls"):
-                    seen.append(text)
+            if isinstance(widget, LayoutWindow) and widget.isVisible():
+                card = widget.cards.get("walls")
+                # The overview, then the schedule from `status` (both over
+                # the app's socket); the images are empty files.
+                if card is not None and "sorted" in card.details.text():
+                    seen.append(f"{card.file.text()} | {card.details.text()}")
                     widget.close()  # the last window: the UI process ends
                     return
         poll.start()
@@ -151,7 +154,9 @@ def test_ui_shows_the_live_overview_until_its_window_closes(
     finally:
         poll.stop()
         safety.stop()
-    assert seen == ["walls · Main\n    a.jpg\nRotating"]
+    assert len(seen) == 1
+    assert seen[0].startswith("a.jpg | can't read: ")
+    assert seen[0].endswith(" · sorted, 10 min · next in 10 min")
     assert InstanceLock(paths.ui_lock()).acquire()  # released
 
 

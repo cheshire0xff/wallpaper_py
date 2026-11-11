@@ -80,6 +80,36 @@
       "title": "ChangedEvent",
       "type": "object"
     },
+    "DesktopMonitor": {
+      "description": "A monitor the desktop lists, whether a playlist drives it or not.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "geometry": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Geometry"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "geometry"
+      ],
+      "title": "DesktopMonitor",
+      "type": "object"
+    },
     "Envelope": {
       "additionalProperties": false,
       "description": "A request on the wire.",
@@ -191,6 +221,35 @@
         }
       }
     },
+    "Geometry": {
+      "description": "A monitor's area in desktop pixels; x and y may be negative.",
+      "properties": {
+        "x": {
+          "title": "X",
+          "type": "integer"
+        },
+        "y": {
+          "title": "Y",
+          "type": "integer"
+        },
+        "width": {
+          "title": "Width",
+          "type": "integer"
+        },
+        "height": {
+          "title": "Height",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height"
+      ],
+      "title": "Geometry",
+      "type": "object"
+    },
     "HoldResult": {
       "properties": {
         "command": {
@@ -269,6 +328,7 @@
       "type": "object"
     },
     "MonitorView": {
+      "description": "A playlist's member, as the config names it.",
       "properties": {
         "selector": {
           "title": "Selector",
@@ -288,6 +348,18 @@
             }
           ],
           "title": "Attached"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Id"
         }
       },
       "required": [
@@ -338,6 +410,14 @@
             "$ref": "#/$defs/PlaylistView"
           },
           "title": "Playlists",
+          "type": "array"
+        },
+        "monitors": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/DesktopMonitor"
+          },
+          "title": "Monitors",
           "type": "array"
         },
         "paused": {

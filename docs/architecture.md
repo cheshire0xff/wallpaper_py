@@ -20,7 +20,13 @@ app/                          PySide6 (Qt only here); two processes
     process.py   run_ui: single instance, windows, quits with the app / last window
     launcher.py  its own socket: "show this window" (UiServer, WindowOpener)
     client.py    Client: all a window may use (commands, events); SocketClient
-    window.py    windows (for now a placeholder showing the live Overview)
+    window.py    Window (the base), and the placeholder still used for the library
+    layout.py    the layout window: monitors, then a card per playlist
+    arrangement.py  the monitors drawn to scale (arrange(): pure geometry)
+    thumbnails.py   ThumbnailLoader: image details and thumbnails, off the UI thread
+    theme.py     the shared look: spacing, radii, backdrop, tinted icons,
+                 IconButton, ImageView
+    icons/       bundled Lucide SVGs (ISC licence alongside), package data
 commands.py                   runs a Request on the service -> a reply model (+ the
                               change made); overview(). Qt-free
 protocol.py                   the socket protocol as pydantic models: requests, one
@@ -163,6 +169,17 @@ with a reply callback; `overview_changed`, `changed`, `failed`), never on
 the service or `ServiceWorker`; reading state for the later windows (SQLite
 read-only, the .txt files) is planned in Phase 5. The UI process logs to
 `ui.log` next to the app's log.
+
+The layout window redraws from `overview_changed` (which carries each
+monitor's id, name and geometry, attached or not) and asks `status` once
+per new overview for the schedule, counting the time left down itself in
+between; it never polls. Toggles show the overview's state, never the
+click. Images are read from the files, not the socket: `ThumbnailLoader`
+reads the header (dimensions) and decodes at a reduced size on a thread
+pool of its own, caches by path and drops results for images no longer
+shown. The look follows the system (native style, palette colours, light /
+dark) except the dark backdrop behind images; icons are Lucide SVGs tinted
+from the palette and re-tinted when it changes (`theme.py`).
 
 ## Playlist service
 

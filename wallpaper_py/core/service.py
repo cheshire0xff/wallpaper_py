@@ -378,8 +378,16 @@ class PlaylistService:
         except MonitorNotAttachedError:
             return image, None
 
-    def status(self, upcoming: int = 3) -> list[PlaylistStatus]:
-        monitors = self._backend.monitors()
+    def monitors(self) -> list[Monitor]:
+        """Every monitor the backend lists, detached ones included."""
+        return self._backend.monitors()
+
+    def status(
+        self, upcoming: int = 3, monitors: Sequence[Monitor] | None = None
+    ) -> list[PlaylistStatus]:
+        """`monitors`: a fresh `monitors()` the caller already has, if any."""
+        if monitors is None:
+            monitors = self._backend.monitors()
         removed = self.to_remove.keys()
         result: list[PlaylistStatus] = []
         for playlist in self.config.playlists:

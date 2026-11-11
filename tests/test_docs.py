@@ -10,9 +10,12 @@ from wallpaper_py.app.ipc import CommandServer
 from wallpaper_py.app.screens import ScreenWatcher
 from wallpaper_py.app.tray import Tray
 from wallpaper_py.app.ui import launcher
+from wallpaper_py.app.ui.arrangement import MonitorsView
 from wallpaper_py.app.ui.client import Client, SocketClient
+from wallpaper_py.app.ui.layout import LayoutWindow, PlaylistCard
 from wallpaper_py.app.ui.launcher import UiServer, WindowOpener
 from wallpaper_py.app.ui.process import Windows
+from wallpaper_py.app.ui.thumbnails import ThumbnailLoader
 from wallpaper_py.app.ui.window import PlaceholderWindow
 from wallpaper_py.app.worker import ServiceHost, ServiceWorker
 from wallpaper_py.core import paths
@@ -26,11 +29,15 @@ OWNERS: dict[str, type | ModuleType] = {
     "cli": cli,
     "Client": Client,
     "CommandServer": CommandServer,
+    "LayoutWindow": LayoutWindow,
+    "MonitorsView": MonitorsView,
     "PlaceholderWindow": PlaceholderWindow,
+    "PlaylistCard": PlaylistCard,
     "ScreenWatcher": ScreenWatcher,
     "ServiceHost": ServiceHost,
     "ServiceWorker": ServiceWorker,
     "SocketClient": SocketClient,
+    "ThumbnailLoader": ThumbnailLoader,
     "Tray": Tray,
     "UiServer": UiServer,
     "WindowOpener": WindowOpener,

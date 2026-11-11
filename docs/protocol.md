@@ -76,9 +76,11 @@ by itself, but `next`, `prev` and `pick` still work; a manual one
 (`interval = "manual"` in the config) never rotates, so `hold` / `resume`
 on it are an error (`failed`).
 
-A monitor is `{"selector", "name", "attached"}`: the selector as written in
-the config, the monitor's name (the selector if it isn't listed), and
-whether it is attached (`null`: not listed right now).
+A playlist's monitor is `{"selector", "name", "attached", "id"}`: the
+selector as written in the config, the monitor's name (the selector if it
+isn't listed), whether it is attached (`null`: not listed right now), and
+the listed monitor's `id` (`null` if not listed), which matches an entry of
+the overview's `monitors` (below).
 
 ```json
 {"command": "next", "playlist": "konachan", "change": {"playlist": "konachan", "image": "D:\\pictures\\KONACHAN\\123.jpg", "reason": "next", "shown_on": ["AW3225QF", "PLX2783H"], "missed": []}}
@@ -119,13 +121,21 @@ error line instead, then the connection closes.
 
 | Event | Fields | When |
 |---|---|---|
-| `overview_changed` | `overview`: `playlists` (each: `name`, `monitors`, `current`, `favourite`, `held`, `manual`), `paused`, `error` (the app is up but its service isn't: e.g. a broken config) | on subscribing, then whenever it changes (also after `hold` / `resume`) |
+| `overview_changed` | `overview`: `playlists` (each: `name`, `monitors`, `current`, `favourite`, `held`, `manual`), `monitors` (every monitor the desktop lists, also those in no playlist: `id`, `name`, `geometry`), `paused`, `error` (the app is up but its service isn't: e.g. a broken config) | on subscribing, then whenever it changes (also after `hold` / `resume`, and when a monitor is switched off or moves) |
 | `changed` | `change` | a wallpaper changed, by a tick or a command |
 
 ```json
-{"event": "overview_changed", "overview": {"playlists": [{"name": "fantasy", "monitors": [{"selector": "ZeroMOD", "name": "ZeroMOD", "attached": false}], "current": "D:\\pictures\\Fantasy\\7.png", "favourite": false, "held": false, "manual": true}], "paused": null, "error": null}}
+{"event": "overview_changed", "overview": {"playlists": [{"name": "fantasy", "monitors": [{"selector": "ZeroMOD", "name": "ZeroMOD", "attached": false, "id": "\\\\?\\DISPLAY#AUS27B1#..."}], "current": "D:\\pictures\\Fantasy\\7.png", "favourite": false, "held": false, "manual": true}], "monitors": [{"id": "\\\\?\\DISPLAY#DELA246#...", "name": "AW3225QF", "geometry": {"x": 0, "y": 0, "width": 3840, "height": 2160}}, {"id": "\\\\?\\DISPLAY#AUS27B1#...", "name": "ZeroMOD", "geometry": null}], "paused": null, "error": null}}
 {"event": "changed", "change": {"playlist": "konachan", "image": "D:\\pictures\\KONACHAN\\123.jpg", "reason": "next", "shown_on": ["AW3225QF", "PLX2783H"], "missed": []}}
 ```
+
+A monitor in the overview's `monitors` has a `geometry` in desktop pixels
+(`x`, `y`, `width`, `height`; `x` and `y` are negative for a monitor left
+of or above the main one) or `null` while it is detached. Address monitors
+by `id`, never by their order or position: both change when a monitor is
+switched off. The overview is kept small on purpose (it goes to every
+subscriber on every change), so it has no schedule (order, interval, time
+left, which changes with every tick): ask `status` for that.
 
 Read the events promptly: the app drops a subscriber that falls more than
 4 MB behind. Send commands on separate connections.

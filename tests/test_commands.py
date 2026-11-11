@@ -18,8 +18,10 @@ from wallpaper_py.core.service import (
 )
 from wallpaper_py.protocol import (
     Command,
+    DesktopMonitor,
     Envelope,
     ErrorReply,
+    Geometry,
     HoldResult,
     MarkResult,
     MonitorView,
@@ -54,15 +56,14 @@ interval = "10m"
 """
 
 
+MAIN = make_monitor("Main")
+SIDE = make_monitor("Side", attached=False)
+LEFT = make_monitor("Left", x=-2560, size=(2560, 1440))  # in no playlist
+
+
 @pytest.fixture(name="backend")
 def fixture_backend() -> FakeBackend:
-    return FakeBackend(
-        [
-            make_monitor("Main"),
-            make_monitor("Side", attached=False),
-            # "Strip" is not listed at all
-        ]
-    )
+    return FakeBackend([MAIN, SIDE, LEFT])  # "Strip" is not listed at all
 
 
 @pytest.fixture(name="service")
@@ -258,8 +259,8 @@ def test_status(service: PlaylistService, tmp_path: Path) -> None:
     )
     assert walls.directory == tmp_path / "walls"
     assert walls.monitors == (
-        MonitorView(selector="Main", name="Main", attached=True),
-        MonitorView(selector="Side", name="Side", attached=False),
+        MonitorView(selector="Main", name="Main", attached=True, id=MAIN.id),
+        MonitorView(selector="Side", name="Side", attached=False, id=SIDE.id),
     )
     assert walls.current == tmp_path / "walls" / "a.jpg" and not walls.favourite
     assert walls.next_in_seconds == 600.0
@@ -275,8 +276,12 @@ def test_overview(service: PlaylistService, tmp_path: Path) -> None:
             PlaylistView(
                 name="walls",
                 monitors=(
-                    MonitorView(selector="Main", name="Main", attached=True),
-                    MonitorView(selector="Side", name="Side", attached=False),
+                    MonitorView(
+                        selector="Main", name="Main", attached=True, id=MAIN.id
+                    ),
+                    MonitorView(
+                        selector="Side", name="Side", attached=False, id=SIDE.id
+                    ),
                 ),
                 current=None,
                 favourite=False,
@@ -287,7 +292,22 @@ def test_overview(service: PlaylistService, tmp_path: Path) -> None:
                 current=None,
                 favourite=False,
             ),
-        )
+        ),
+        # Every listed monitor, in a playlist or not ("Left"), with its
+        # geometry (None: detached); "Strip" isn't listed, so isn't here.
+        monitors=(
+            DesktopMonitor(
+                id=MAIN.id,
+                name="Main",
+                geometry=Geometry(x=0, y=0, width=1920, height=1080),
+            ),
+            DesktopMonitor(id=SIDE.id, name="Side", geometry=None),
+            DesktopMonitor(
+                id=LEFT.id,
+                name="Left",
+                geometry=Geometry(x=-2560, y=0, width=2560, height=1440),
+            ),
+        ),
     )
     run(service, "next", "walls")
     run(service, "fav", "walls")

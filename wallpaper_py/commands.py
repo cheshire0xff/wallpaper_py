@@ -21,7 +21,12 @@ from typing import Literal, NamedTuple
 from .core import paths
 from .core.backend import Backend
 from .core.config import ConfigError, PlaylistConfig, load_config
-from .core.model import ImageLoadError, MonitorNotAttachedError, WallpaperError
+from .core.model import (
+    ImageLoadError,
+    Monitor,
+    MonitorNotAttachedError,
+    WallpaperError,
+)
 from .core.presence import Presence
 from .core.selection import MonitorSelectionError
 from .core.service import (
@@ -37,7 +42,9 @@ from .protocol import (
     TARGET_COMMANDS,
     Command,
     CommandRequest,
+    DesktopMonitor,
     ErrorKind,
+    Geometry,
     ErrorReply,
     HoldResult,
     MarkResult,
@@ -198,10 +205,23 @@ assert set(_TARGET_HANDLERS) == set(TARGET_COMMANDS)
 
 
 def overview(service: PlaylistService) -> Overview:
+    monitors = service.monitors()
+    statuses = service.status(upcoming=0, monitors=monitors)
     return Overview(
-        playlists=tuple(_view(service, s) for s in service.status(upcoming=0)),
+        playlists=tuple(_view(service, s) for s in statuses),
+        monitors=tuple(_desktop_monitor(m) for m in monitors),
         paused=service.pause_reason(),
     )
+
+
+def _desktop_monitor(monitor: Monitor) -> DesktopMonitor:
+    rect = monitor.rect
+    geometry = (
+        None
+        if rect is None
+        else Geometry(x=rect.x1, y=rect.y1, width=rect.width, height=rect.height)
+    )
+    return DesktopMonitor(id=monitor.id, name=monitor.name, geometry=geometry)
 
 
 def _view(service: PlaylistService, status: PlaylistStatus) -> PlaylistView:
@@ -210,6 +230,7 @@ def _view(service: PlaylistService, status: PlaylistStatus) -> PlaylistView:
             selector=m.selector,
             name=m.monitor.name if m.monitor else m.selector,
             attached=m.monitor.attached if m.monitor else None,
+            id=m.monitor.id if m.monitor else None,
         )
         for m in status.members
     )

@@ -23,6 +23,7 @@ Status: **ok** (with the date, when known) all steps seen working;
 | [7. Start at login](#7-start-at-login) | todo | todo | todo |
 | [8. Windows (UI process)](#8-windows-ui-process) | ok 2026-11-11 | todo | todo |
 | [9. Pick, hold and manual](#9-pick-hold-and-manual) | ok 2026-11-11, except waiting past an interval (steps 3, 6) | todo | todo |
+| [10. Layout window](#10-layout-window) | ok 2026-11-11, except *Remove* (step 3) and steps 4, 5, 7, 8 | todo | todo |
 
 ## 1. Monitors and `set`
 
@@ -98,7 +99,8 @@ monitor.
 5. With no UI process, tray *Open layout*: one starts and its window comes
    to the front.
 6. With a window open, tray *Quit*: the window closes too.
-7. With a window open, `wallpaper next`: its "Last change" line updates.
+7. With a window open, `wallpaper next`: the window updates (the layout
+   window's card shows the new image; see section 10).
 
 ## 9. Pick, hold and manual
 
@@ -129,3 +131,45 @@ on the right monitors, the real tray menu, and a real quit and restart.
    says *(manual)*, there is no *Hold* item, and it never changes by itself
    (leave it well past its old interval, also across an app restart).
    `wallpaper hold <it>` says why it can't be held; `next` and `pick` work.
+
+## 10. Layout window
+
+`wallpaper ui layout` (or tray *Open layout*). What the tests can't see:
+the real arrangement, real images, the system's theme. The logic (scaling,
+card text, which command each button sends, toggles following the app,
+thumbnails off the UI thread) is tested with fakes (`tests/test_layout.py`,
+`test_thumbnails.py`, `test_theme.py`).
+
+1. *Monitors* matches the real arrangement: the PLX2783H left of the
+   AW3225QF (it sits at -1920,0), sizes to scale, each showing its current
+   image. The mirrored pair share the accent outline; under each: its
+   name, resolution and playlist. A monitor in no playlist says
+   "no playlist". Resize the window: the drawing rescales, nothing is cut
+   off, and the cards rearrange into fewer or more columns.
+2. Each playlist card: the thumbnail (letterboxed, on the dark backdrop),
+   name, monitors (a link icon for the mirrored group), the image's file
+   name, then "dimensions · file size · order, interval · next in …";
+   dimensions and size match the file (e.g. in Explorer's properties). The
+   time left counts down, and the card shows the new image when it
+   changes.
+3. Each button, with its tooltip: *Previous* and *Next* change the
+   wallpaper on the real monitors; *Favourite* fills the star with the
+   accent (and favourites.txt has the image), a second click clears it;
+   *Remove* lists the image in to-remove.txt and moves on; *Hold* fills the
+   pin, shows the *Held* chip and "… left once resumed", and a second
+   click resumes. Toggling in the tray shows in the window too.
+4. The manual playlist (ZeroMOD): a *Manual* chip, no hold button, "manual"
+   instead of the time left.
+5. An error shows in the card, not as a dialog: e.g. *Next* on a playlist
+   whose monitors are all off.
+6. Switch the system between light and dark mode (Settings > Personalisation
+   > Colours) with the window open: the window and its icons follow;
+   the monitor drawing and thumbnails stay on the dark backdrop.
+7. Thumbnails never stall the window: with a playlist of large images
+   (4K PNGs), press *Next* repeatedly and move / resize the window
+   meanwhile; it stays responsive, and each card ends on its current image.
+8. Switch a monitor off (e.g. OLED refresh) with the window open: within a
+   few seconds it is drawn dimmed, dashed, marked "off", to the right of
+   the others, at its usual size; the others are drawn where Windows now
+   puts them (it may move them). Switched on, it returns to its real
+   position.

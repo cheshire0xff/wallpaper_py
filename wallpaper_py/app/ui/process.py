@@ -34,11 +34,19 @@ from .launcher import (
     show_in_running_ui,
     ui_server_name,
 )
+from .layout import LayoutWindow
 from .window import PlaceholderWindow, Window
 
 log = logging.getLogger(__name__)
 
 WindowFactory = Callable[[WindowKind, Client], Window]
+
+
+def make_window(kind: WindowKind, client: Client) -> Window:
+    """The window of a kind (the library window is still a placeholder)."""
+    if kind == "layout":
+        return LayoutWindow(client)
+    return PlaceholderWindow(kind, client)
 
 
 @dataclass(frozen=True)
@@ -57,9 +65,7 @@ class Windows(QObject):
 
     all_closed = Signal()
 
-    def __init__(
-        self, client: Client, factory: WindowFactory = PlaceholderWindow
-    ) -> None:
+    def __init__(self, client: Client, factory: WindowFactory = make_window) -> None:
         super().__init__()
         self._client = client
         self._factory = factory

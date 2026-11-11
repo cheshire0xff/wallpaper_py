@@ -31,6 +31,10 @@ wallpaper = "wallpaper_py.cli:main"
 [tool.setuptools.packages.find]
 include = ["wallpaper_py*"]
 
+[tool.setuptools.package-data]
+# The bundled Lucide icons and their licence (loaded with importlib.resources).
+"wallpaper_py.app.ui" = ["icons/*.svg", "icons/LICENSE"]
+
 [tool.mypy]
 strict = true
 

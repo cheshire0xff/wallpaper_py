@@ -19,7 +19,8 @@ the receiving thread's event loop, so the sender never waits.
 |---|---|
 | **app**, UI thread (main thread, Qt event loop) | `QApplication`, `Tray`, `WindowOpener`, `ScreenWatcher`, and `ServiceHost`, the thin proxy to the service thread |
 | **app**, service thread (`QThread` "playlist-service") | `ServiceWorker` and everything it creates on that thread: the `CommandServer` (socket), the tick `QTimer`, COM (`backends.thread_scope`), the backend, the SQLite `Store`, the `PlaylistService` |
-| **UI process** (`wallpaper ui`, on demand; one thread) | `QApplication`, `UiServer` (its own socket), `SocketClient` (the app's socket), `Windows` and the windows (`PlaceholderWindow` for now) |
+| **UI process** (`wallpaper ui`, on demand), UI thread | `QApplication`, `UiServer` (its own socket), `SocketClient` (the app's socket), `Windows` and the windows: `LayoutWindow` (with its `PlaylistCard`s, `MonitorsView` and `ThumbnailLoader`), `PlaceholderWindow` for the library |
+| **UI process**, thumbnail threads (the `ThumbnailLoader`'s own `QThreadPool`, 2 threads) | nothing that lives there: each job reads one image file into a `QImage` and emits it back |
 | **CLI** (a separate process) | `ipc.send`: blocking client, no event loop |
 
 Only the service thread ever touches the `PlaylistService`, so the core needs
@@ -47,7 +48,8 @@ flowchart LR
     subgraph UIP["UI process"]
         uiserver["UiServer<br/>its own socket"]
         client["SocketClient"]
-        windows["Windows<br/>PlaceholderWindow"]
+        windows["Windows<br/>LayoutWindow"]
+        thumbs["ThumbnailLoader<br/>thread pool"]
     end
     subgraph UI["app: UI thread"]
         tray["Tray"]
@@ -68,6 +70,8 @@ flowchart LR
     uiserver -->|"show_requested"| windows
     client -->|"overview_changed, changed"| windows
     windows -->|"run"| client
+    windows -->|"want"| thumbs
+    thumbs -.->|"loaded"| windows
     server -->|"received, subscribed"| worker
     worker -->|"reply, broadcast"| server
     tray -->|"open_window"| opener
@@ -136,9 +140,17 @@ service, which also ends every subscription.
 | Signal | Slot |
 |---|---|
 | `UiServer.show_requested` | `Windows.show` (creates the window or raises it) |
-| `SocketClient.overview_changed`, `SocketClient.changed`, `SocketClient.failed` | the windows (`PlaceholderWindow.show_overview`, `PlaceholderWindow.show_change`, `PlaceholderWindow.show_error`) |
+| `SocketClient.overview_changed`, `SocketClient.failed` | `LayoutWindow.show_overview`, `LayoutWindow.show_error` |
+| `SocketClient.overview_changed`, `SocketClient.changed`, `SocketClient.failed` | the library placeholder (`PlaceholderWindow.show_overview`, `PlaceholderWindow.show_change`, `PlaceholderWindow.show_error`) |
+| `PlaylistCard.requested` (a button: playlist, command) | `LayoutWindow._send` -> `Client.run` (reply: `LayoutWindow.replied`) |
+| the layout window's countdown `QTimer` (every second, only while a playlist counts down) | `LayoutWindow.refresh_schedule` |
+| `ThumbnailLoader.loaded` (an image is ready) | `LayoutWindow._thumbnail_loaded` (the cards and `MonitorsView` that still show it) |
 | `Windows.all_closed` (the last window closed) | `QApplication.quit` |
 | `SocketClient.ended` (the app quit) | `QApplication.quit` |
+
+Thumbnail threads -> UI thread (queued): each job emits `_Relay.done`,
+which `ThumbnailLoader._done` receives on the UI thread; it makes the
+`QPixmap` there, caches it, and emits `ThumbnailLoader.loaded`.
 
 `Client.run` sends each command on a connection of its own (an
 `ipc.LineRequest`); the reply comes back to the callback on this thread.
@@ -164,7 +176,7 @@ sequenceDiagram
     W->>S: CommandServer.broadcast(overview_changed), to subscribers
     W->>S: CommandServer.reply(connection_id, reply)
     S->>CLI: one JSON line (data, e.g. NextResult), then close
-    Note over CLI: ipc.send returns; cli.format_reply makes the text
+    Note over CLI: ipc.send returns, then cli.format_reply makes the text
 ```
 
 One id, one hop: `connection_id` tells `CommandServer` which socket gets
@@ -258,6 +270,46 @@ Two starting at once: the UI lock (`paths.ui_lock`) keeps one, the other
 asks it for up to 5 s. If the app isn't running, `SocketClient` starts it
 like the CLI does (`processes.autostart_command`, retried for 10 s) and
 shows an error in the window if it doesn't come up.
+
+The layout window, from an overview to a click (all on the UI process's UI
+thread except the thumbnail jobs):
+
+```mermaid
+sequenceDiagram
+    participant C as SocketClient
+    participant L as LayoutWindow
+    participant T as ThumbnailLoader<br/>(pool threads)
+    participant P as PlaylistCard
+
+    C->>L: overview_changed: LayoutWindow.show_overview
+    L->>P: PlaylistCard.show_view (text, chips, toggles: the overview's state)
+    L->>T: ThumbnailLoader.want(current images)
+    L->>C: Client.run(status): the schedule, one request at a time
+    T--)L: ThumbnailLoader.loaded(path): set on the cards still showing it
+    C->>L: the StatusResult: order, interval, time left
+    Note over L: the countdown QTimer redraws the time left every second
+    P->>L: PlaylistCard.requested(playlist, "fav")
+    L->>C: Client.run(fav), reply to LayoutWindow.replied
+    C->>L: the reply: an error shows in the card
+    C->>L: overview_changed: the star is now on
+```
+
+- It never polls: it redraws on `overview_changed`, and asks `status` once
+  per new overview (the overview carries no schedule: the time left
+  changes with every tick). Between overviews it counts the time left down
+  itself, and only while the app does (not paused, held, manual or without
+  an attached monitor).
+- A toggle shows the overview's state: a click only sends the command
+  (`fav` or `unfav`, `hold` or `resume`, chosen from the current state),
+  and the next overview turns it on or off.
+- Thumbnails and image details (dimensions from the header, file size)
+  come from the files, on the `ThumbnailLoader`'s own pool: a job decodes
+  at a reduced size into a `QImage`; `ThumbnailLoader.want` takes jobs for
+  images no longer shown off the queue, and drops a result that arrives
+  for one anyway. Results are cached by path.
+- A reply that arrives after the window closed is ignored (the callback
+  holds the window weakly); closing the window waits for running jobs
+  (`ThumbnailLoader.close`).
 
 Shutdown of the app (tray *Quit* or Ctrl+C): `app.quit()` ends the UI event
 loop -> `ServiceHost.shutdown` emits `_stop` (queued) and waits for the

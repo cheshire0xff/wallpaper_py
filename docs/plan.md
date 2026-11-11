@@ -11,7 +11,7 @@ thin. See [architecture.md](architecture.md) for the layers.
 | 1 | Core model, safe setter, Windows backend, CLI `list`/`set`, tooling, CI | done |
 | 2 | Playlists, mirrored groups, scheduler, history, favourites, to-remove | done (awaiting a real-desktop trial) |
 | 3 | App shell: tray, single instance, IPC, autostart | done (awaiting a real-desktop trial) |
-| 4 | UI process and layout window | in progress: foundation and pick / hold / manual done (awaiting review) |
+| 4 | UI process and layout window | in progress: foundation, pick / hold / manual and the layout window done (awaiting review); settings panel next |
 | 5 | Library window | |
 | 6 | KDE backend | |
 | 7 | Polish | |
@@ -295,7 +295,8 @@ Order for the rest of the phase, one session each:
    review and the desktop checks, section 9).
 2. **Layout window**: shows the assignment (monitors to scale, current
    wallpaper per playlist, toggles, next / prev); replaces the
-   placeholder.
+   placeholder. **Done** (awaiting review and the desktop checks,
+   section 10).
 3. **Settings panel** (decided: wanted): assign monitors to playlists and
    groups, and edit a playlist's directory, order, interval and mode. The
    app edits config.toml with a comment-preserving TOML library (tomlkit),
@@ -341,6 +342,43 @@ Pick, hold and manual mode, implemented (decisions made while building it):
   `ResumeResult` (`held`, `changed`). `PlaylistView` gained `held` and
   `manual`; the tray header shows *(held)* / *(manual)*, also in the
   tooltip.
+
+Layout window, implemented (decisions made while building it):
+
+- **Overview**: gained `monitors` (every listed monitor: `id`, `name`,
+  `geometry` x / y / width / height in desktop pixels, null when detached),
+  and each playlist member gained `id`, so the window links them without
+  names or positions. Still small: no schedule in it, since the time left
+  changes every tick and the overview goes to every subscriber. The window
+  asks `status` once per new overview (one request at a time) and counts
+  the time left down locally while the app does (not paused, held, manual
+  or without an attached monitor). `commands.overview` queries the backend
+  once for both (`PlaylistService.status(monitors=...)`).
+- **Arrangement**: one scale for the whole desktop, aspect kept, centred,
+  with room for two caption lines under the bottom row. A detached monitor
+  has no position, so it is drawn to the right of the others, at its last
+  size seen this session (else 1920 x 1080), dimmed, dashed, "off". Members
+  of a mirrored group get the accent outline (all groups share the one
+  accent; the caption names the playlist). A caption that would overlap a
+  monitor below goes inside it on a dark band. Unlisted members ("not
+  found") aren't drawn; the card names them.
+- **Cards**: thumbnail fit (letterboxed) at 16:9; the monitor drawing
+  fills (crops) like the default fill mode. Hold uses Lucide `pin`,
+  previous / next `skip-back` / `skip-forward`, remove `trash-2`. A toggle
+  that is on gets an accent-filled background and the icon in the
+  palette's highlighted-text colour; its tooltip and accessible name say
+  what a click does ("Remove from favourites", "Resume"). The click sends
+  `fav` / `unfav` or `hold` / `resume` from the overview's state. Remove
+  has no confirmation, like the tray. Notes that aren't errors ("Nothing
+  earlier in the history", removed with no monitor on) show in the card
+  too. Favourite and remove are disabled until something is shown.
+- **Thumbnails**: one decode per image at 480 x 270 logical px (x DPR)
+  serves both the card and the monitor drawing; `QImageReader` with
+  `setScaledSize` and auto-transform (EXIF orientation), 2 threads of the
+  window's own pool, an LRU of 64 by path (it lives only as long as the
+  window). Unreadable images show "can't read: …" in the details.
+- No Qt sizing overrides (`sizeHint`, `heightForWidth`): they would shadow
+  Qt methods (rule 3); widgets size themselves in `resizeEvent`.
 
 ## Phase 5: library window
 
