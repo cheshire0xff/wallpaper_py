@@ -3,6 +3,8 @@ The whole app in-process (fake backend), with the CLI as a separate process
 like in real use: single instance, commands through the socket.
 """
 
+import logging
+import signal
 import subprocess
 import sys
 from contextlib import nullcontext
@@ -97,3 +99,15 @@ def test_autostart_command_starts_the_tray_without_a_console(tmp_path: Path) -> 
     assert Path(command[0]) == python
     other = autostart_command(tmp_path / "other.toml")
     assert other[-3:] == ["--config", str((tmp_path / "other.toml").resolve()), "tray"]
+
+
+def test_ctrl_c_stops_cleanly(
+    tmp_path: Path, platform: Platform, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO)
+    QTimer.singleShot(200, lambda: signal.raise_signal(signal.SIGINT))
+    assert run_app(AppOptions(write_config(tmp_path), tray=False), platform) == 0
+    messages = [r.getMessage() for r in caplog.records]
+    assert "Ctrl+C: stopping (press it again to exit at once)" in messages
+    assert messages[-1] == "Stopped"
+    assert InstanceLock(paths.instance_lock()).acquire()  # released

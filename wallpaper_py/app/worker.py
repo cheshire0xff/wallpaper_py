@@ -16,6 +16,7 @@ in the order sent.
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 from contextlib import AbstractContextManager, ExitStack
 from dataclasses import dataclass
@@ -233,7 +234,13 @@ class ServiceHost(QObject):
         if not self._thread.isRunning():
             return True
         self._stop.emit()
-        return bool(self._thread.wait(timeout_ms))
+        # Short waits: between them Python can run a Ctrl+C handler, which
+        # it can't while blocked in one long wait.
+        deadline = time.monotonic() + timeout_ms / 1000
+        while not self._thread.wait(100):
+            if time.monotonic() >= deadline:
+                return False
+        return True
 
     @Slot(int, object)
     def _on_replied(self, request_id: int, reply: Reply) -> None:

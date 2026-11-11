@@ -152,6 +152,7 @@ def _run_locked(app: QCoreApplication, options: AppOptions, platform: Platform) 
             if tray is not None:
                 tray.hide()
             server.close()
+            log.info("Stopping the playlist service")
             stopped = host.shutdown(SHUTDOWN_TIMEOUT_MS)
     if not stopped:
         # Destroying a running QThread aborts the process anyway; say why.
@@ -190,13 +191,27 @@ def _countdown(ticks: int, done: Callable[[], None]) -> Callable[[], None]:
 @contextmanager
 def _quit_on_interrupt(app: QCoreApplication) -> Iterator[None]:
     """
-    Ctrl+C quits cleanly. Python only runs signal handlers between
-    bytecodes, so a timer wakes the interpreter while Qt's loop waits.
+    Ctrl+C quits cleanly; a second Ctrl+C exits at once (e.g. if stopping
+    hangs). Python only runs signal handlers between bytecodes, so a timer
+    wakes the interpreter while Qt's loop waits.
     """
     if threading.current_thread() is not threading.main_thread():
         yield
         return
-    previous = signal.signal(signal.SIGINT, lambda *_: app.quit())
+    presses = 0
+
+    def interrupted(*_: object) -> None:
+        nonlocal presses
+        presses += 1
+        if presses == 1:
+            log.info("Ctrl+C: stopping (press it again to exit at once)")
+            app.quit()
+            return
+        log.warning("Ctrl+C again: exiting without waiting")
+        logging.shutdown()
+        os._exit(130)
+
+    previous = signal.signal(signal.SIGINT, interrupted)
     wake = QTimer()
     wake.timeout.connect(lambda: None)
     wake.start(250)
