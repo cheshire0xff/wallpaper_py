@@ -15,6 +15,8 @@ from wallpaper_py.app.ui.client import Client, SocketClient
 from wallpaper_py.app.ui.layout import LayoutWindow, PlaylistCard
 from wallpaper_py.app.ui.launcher import UiServer, WindowOpener
 from wallpaper_py.app.ui.process import Windows
+from wallpaper_py.app.ui.settings import SettingsWindow
+from wallpaper_py.app.ui.settings_form import PlaylistEditor
 from wallpaper_py.app.ui.thumbnails import ThumbnailLoader
 from wallpaper_py.app.ui.window import PlaceholderWindow
 from wallpaper_py.app.worker import ServiceHost, ServiceWorker
@@ -33,9 +35,11 @@ OWNERS: dict[str, type | ModuleType] = {
     "MonitorsView": MonitorsView,
     "PlaceholderWindow": PlaceholderWindow,
     "PlaylistCard": PlaylistCard,
+    "PlaylistEditor": PlaylistEditor,
     "ScreenWatcher": ScreenWatcher,
     "ServiceHost": ServiceHost,
     "ServiceWorker": ServiceWorker,
+    "SettingsWindow": SettingsWindow,
     "SocketClient": SocketClient,
     "ThumbnailLoader": ThumbnailLoader,
     "Tray": Tray,

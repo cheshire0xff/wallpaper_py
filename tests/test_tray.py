@@ -13,10 +13,13 @@ from wallpaper_py.app.tray import Tray, activate, fill_menu, icon_state, tooltip
 from wallpaper_py.app.ui.launcher import WindowKind
 from wallpaper_py.app.worker import ServiceHost, ServiceSettings
 from wallpaper_py.protocol import (
+    CommandRequest,
     ErrorReply,
     MonitorView,
     Overview,
     PlaylistView,
+    ReloadRequest,
+    ReloadResult,
     Reply,
     Request,
 )
@@ -122,6 +125,7 @@ def test_flat_sections(menu: QMenu) -> None:
         ("Paused: idle", False),
         ("Open layout", True),
         ("Open library", True),
+        ("Settings…", True),
         ("Reload config", True),
         ("Open config folder", True),
         ("Start at login", True),
@@ -282,3 +286,36 @@ def test_tray_notifies_failed_commands(
     monkeypatch.setattr(tray, "notify", notes.append)
     tray.run(queued("next", "walls"))
     assert notes == ["None attached"]
+
+
+def test_reload_config_notifies_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    host = ServiceHost(
+        ServiceSettings(tmp_path, lambda: FakeBackend([]), FakePresence, nullcontext)
+    )
+    pending: list[tuple[CommandRequest, Callable[[Reply], None]]] = []
+    monkeypatch.setattr(host, "submit", lambda r, c: pending.append((r, c)))
+    tray = Tray(host, FakeAutostart(), [], tmp_path, lambda: None, open_window=print)
+    notes: list[str] = []
+    monkeypatch.setattr(tray, "notify", notes.append)
+
+    find(tray.menu, "Reload config").trigger()
+    assert len(pending) == 1
+    request, reply = pending[0]
+    assert request == ReloadRequest()  # the `reload` command, as from the CLI
+    # The new overview comes first (the reload publishes it), then the reply:
+    # one notification, from the reply, even for an error seen before.
+    host.overview_changed.emit(Overview(error="bad config"))
+    reply(ErrorReply.make("config_error", "bad config"))
+    assert notes == ["bad config"]
+
+    find(tray.menu, "Reload config").trigger()
+    pending[-1][1](ReloadResult(warnings=("w1", "w2")))
+    assert notes == ["bad config", "w1\nw2"]
+    find(tray.menu, "Reload config").trigger()
+    pending[-1][1](ReloadResult())
+    assert len(notes) == 2  # fine: nothing to say
+
+    host.overview_changed.emit(Overview(error="another"))  # not from a reload
+    assert notes[-1] == "another"

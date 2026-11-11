@@ -20,6 +20,7 @@ from wallpaper_py.app.instance import InstanceLock
 from wallpaper_py.app.runtime import AppOptions, Platform, run_app
 from wallpaper_py.app.ui.client import Client, ReplyCallback
 from wallpaper_py.app.ui.layout import LayoutWindow
+from wallpaper_py.app.ui.settings import SettingsWindow
 from wallpaper_py.app.ui.process import UiOptions, Windows, run_ui
 from wallpaper_py.app.ui.window import PlaceholderWindow, describe_overview
 from wallpaper_py.app.worker import ServiceHost
@@ -102,6 +103,8 @@ def test_one_window_per_kind_until_the_last_closes(qtbot: QtBot) -> None:
     layout = windows.show("layout")
     assert windows.show("layout") is layout  # shown again, not a second one
     library = windows.show("library")
+    assert isinstance(windows.show("settings"), SettingsWindow)
+    windows.show("settings").close()  # nothing changed: it just closes
     assert windows.kinds() == ["layout", "library"]
     with qtbot.assertNotEmitted(windows.all_closed):
         layout.close()

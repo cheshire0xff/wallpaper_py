@@ -78,7 +78,7 @@ class SocketClient(Client):
     def __init__(
         self,
         name: str,
-        config_path: Path,
+        config_path: Path | None,  # None: whatever config the app runs
         start_app: Callable[[], None] | None,
         *,
         start_timeout_s: float = START_TIMEOUT_S,

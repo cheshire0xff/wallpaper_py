@@ -29,6 +29,8 @@ from wallpaper_py.protocol import (
     PickRequest,
     PickResult,
     PrevResult,
+    ReloadRequest,
+    ReloadResult,
     Reply,
     Request,
     Subscribe,
@@ -318,3 +320,47 @@ def test_pick_over_the_socket(
     assert isinstance(reply, PickResult) and reply.change.image == image
     assert blocker.args[0].reason == "picked"
     assert shown(send(qtbot, name, config, Request(command="prev"))) == "a.jpg"
+
+
+def test_reload_answers_with_its_result(
+    qtbot: QtBot, host: ServiceHost, name: str, config: Path
+) -> None:
+    overview = start(qtbot, host)
+    assert overview.config == config  # the overview says which file the app runs
+    assert send(qtbot, name, config, ReloadRequest()) == ReloadResult()
+
+    # Valid but probably a mistake: the reply carries the warning.
+    text = config.read_text(encoding="utf-8")
+    config.write_text(
+        text.replace("pause_when_idle = false", 'pause_when_idle = "20m"'),
+        encoding="utf-8",
+    )
+    reply = send(qtbot, name, config, ReloadRequest())
+    assert isinstance(reply, ReloadResult)
+    assert [w.split(" (")[0] for w in reply.warnings] == ["[playlists.walls] interval"]
+
+    # Broken: the error, and the overview says so (with the file still named).
+    config.write_text("[playlists.walls\n", encoding="utf-8")
+    with qtbot.waitSignal(host.overview_changed) as blocker:
+        reply = send(qtbot, name, config, ReloadRequest())
+    assert isinstance(reply, ErrorReply) and reply.error.kind == "config_error"
+    assert blocker.args[0].error == reply.error.message
+    assert blocker.args[0].config == config
+
+    # The tray's Reload config takes the same path.
+    config.write_text(text, encoding="utf-8")
+    assert submit(qtbot, host, ReloadRequest()) == ReloadResult()
+    replies: list[Reply] = []
+    host.reload(replies.append)
+    qtbot.waitUntil(lambda: bool(replies))
+    assert replies == [ReloadResult()]
+
+
+def test_a_request_without_a_config_means_the_apps(
+    qtbot: QtBot, host: ServiceHost, name: str
+) -> None:
+    start(qtbot, host)
+    envelope = Envelope(request=Request(command="next"))
+    assert envelope.config is None
+    socket = connect(qtbot, name, ipc.encode(envelope))
+    assert shown(answer(qtbot, socket)) == "b.jpg"

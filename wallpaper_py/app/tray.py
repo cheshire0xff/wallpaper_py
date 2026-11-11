@@ -17,7 +17,8 @@ actions.
     Paused: idle              (only while paused)
     Open layout               (in the UI process, started if needed)
     Open library
-    Reload config
+    Settings…
+    Reload config             (the `reload` command; errors and warnings notify)
     Open config folder
     [ ] Start at login
     Quit
@@ -52,6 +53,7 @@ from ..protocol import (
     MonitorView,
     Overview,
     PlaylistView,
+    ReloadResult,
     Reply,
     Request,
 )
@@ -99,7 +101,7 @@ def activate(action: QAction, actions: MenuActions) -> None:
             actions.run(item)
         case Path():
             actions.open_image(item)
-        case "layout" | "library":
+        case "layout" | "library" | "settings":
             actions.open_window(item)
         case AppItem.RELOAD:
             actions.reload()
@@ -137,6 +139,7 @@ def fill_menu(menu: QMenu, overview: Overview | None, autostart: bool) -> QActio
             menu.addAction(f"Paused: {overview.paused}").setEnabled(False)
     _add(menu, "Open layout", "layout")
     _add(menu, "Open library", "library")
+    _add(menu, "Settings…", "settings")
     _add(menu, "Reload config", AppItem.RELOAD)
     _add(menu, "Open config folder", AppItem.CONFIG_FOLDER)
     start_at_login = _add(menu, "Start at login", AppItem.AUTOSTART)
@@ -250,6 +253,7 @@ class Tray(QObject):
         self._icons: dict[IconState, QIcon] = {}
         self._overview: Overview | None = None
         self._error_shown: str | None = None
+        self._reloading = False  # the reload's reply tells what happened
         self._stale = False
 
         self.menu = QMenu()
@@ -275,7 +279,11 @@ class Tray(QObject):
     def show_overview(self, overview: Overview) -> None:
         self._overview = overview
         self._update_icon()
-        if overview.error and overview.error != self._error_shown:
+        if (
+            overview.error
+            and overview.error != self._error_shown
+            and not self._reloading
+        ):
             self.notify(overview.error)
         self._error_shown = overview.error
         if self.menu.isVisible():
@@ -295,7 +303,8 @@ class Tray(QObject):
         self._open_window(window)
 
     def reload(self) -> None:
-        self._host.reload()
+        self._reloading = True
+        self._host.reload(self._reloaded)
 
     def open_config_folder(self) -> None:
         self._config_folder.mkdir(parents=True, exist_ok=True)
@@ -355,6 +364,14 @@ class Tray(QObject):
     def _replied(self, reply: Reply) -> None:
         if isinstance(reply, ErrorReply):
             self.notify(reply.error.message)
+
+    def _reloaded(self, reply: Reply) -> None:
+        """Reload config: the error (even if it is the old one), or warnings."""
+        self._reloading = False
+        if isinstance(reply, ErrorReply):
+            self.notify(reply.error.message)
+        elif isinstance(reply, ReloadResult) and reply.warnings:
+            self.notify("\n".join(reply.warnings))
 
     @Slot(str)
     def notify(self, message: str) -> None:

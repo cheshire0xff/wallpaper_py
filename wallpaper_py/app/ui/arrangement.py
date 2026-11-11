@@ -13,7 +13,8 @@ playlist, and under each its name, resolution and playlist ("no playlist"
 for one no playlist drives). No outlines, except on hover: pointing at a
 monitor (`hovered`) or at a playlist's card highlights that playlist's
 monitors in the accent (`set_highlight`), so the accent only ever means
-"what you point at".
+"what you point at". Made clickable (`set_clickable`, the settings window),
+a click on a monitor emits `clicked` with its id.
 """
 
 from __future__ import annotations
@@ -168,12 +169,15 @@ class MonitorsView(QWidget):
     """The arrangement, painted; redrawn on resize and on each overview."""
 
     hovered = Signal(object)  # the playlist under the pointer, or None
+    clicked = Signal(str)  # a monitor's id (only while clickable)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._overview = Overview()
         self._highlight: str | None = None  # playlist outlined in the accent
         self._hovered: str | None = None
+        self._clickable = False
+        self._pressed: str | None = None  # monitor id under a press
         self.setMouseTracking(True)
         self._images: dict[Path, QPixmap] = {}
         self._last_sizes: dict[str, tuple[int, int]] = {}
@@ -215,20 +219,54 @@ class MonitorsView(QWidget):
     def highlight(self) -> str | None:
         return self._highlight
 
-    def playlist_at(self, point: QPointF) -> str | None:
-        """The playlist driving the monitor drawn at `point`, if any."""
-        by_monitor = playlists_by_monitor(self._overview)
+    def set_clickable(self, clickable: bool) -> None:
+        self._clickable = clickable
+
+    def monitor_at(self, point: QPointF) -> DesktopMonitor | None:
+        """The monitor drawn at `point`, if any."""
         for item in self.placed():
             box = item.box
             if QRectF(box.x, box.y, box.width, box.height).contains(point):
-                return by_monitor.get(item.monitor.id)
+                return item.monitor
         return None
+
+    def playlist_at(self, point: QPointF) -> str | None:
+        """The playlist driving the monitor drawn at `point`, if any."""
+        monitor = self.monitor_at(point)
+        if monitor is None:
+            return None
+        return playlists_by_monitor(self._overview).get(monitor.id)
 
     def mouseMoveEvent(
         self, event: QMouseEvent
     ) -> None:  # pylint: disable=invalid-name
         super().mouseMoveEvent(event)
         self._set_hovered(self.playlist_at(event.position()))
+        if self._clickable:
+            over = self.monitor_at(event.position()) is not None
+            shape = (
+                Qt.CursorShape.PointingHandCursor
+                if over
+                else Qt.CursorShape.ArrowCursor
+            )
+            self.setCursor(shape)
+
+    def mousePressEvent(
+        self, event: QMouseEvent
+    ) -> None:  # pylint: disable=invalid-name
+        super().mousePressEvent(event)
+        monitor = self.monitor_at(event.position())
+        left = event.button() == Qt.MouseButton.LeftButton
+        self._pressed = monitor.id if monitor is not None and left else None
+
+    def mouseReleaseEvent(
+        self, event: QMouseEvent
+    ) -> None:  # pylint: disable=invalid-name
+        super().mouseReleaseEvent(event)
+        monitor = self.monitor_at(event.position())
+        pressed, self._pressed = self._pressed, None
+        if self._clickable and monitor is not None and monitor.id == pressed:
+            self.clicked.emit(monitor.id)
 
     def leaveEvent(self, event: QEvent) -> None:  # pylint: disable=invalid-name
         super().leaveEvent(event)

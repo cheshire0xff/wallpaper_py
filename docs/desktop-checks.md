@@ -24,6 +24,7 @@ Status: **ok** (with the date, when known) all steps seen working;
 | [8. Windows (UI process)](#8-windows-ui-process) | ok 2026-11-11 | todo | todo |
 | [9. Pick, hold and manual](#9-pick-hold-and-manual) | ok 2026-11-11, except waiting past an interval (steps 3, 6) | todo | todo |
 | [10. Layout window](#10-layout-window) | ok 2026-11-11, except *Remove* (step 3) and steps 4, 5, 7 | todo | todo |
+| [11. Settings window](#11-settings-window) | steps 1, 2, 4 ok 2026-11-12 (step 1 also on a copy of the real config); 3, 5-9 todo | todo | todo |
 
 ## 1. Monitors and `set`
 
@@ -175,3 +176,53 @@ thumbnails off the UI thread) is tested with fakes (`tests/test_layout.py`,
    the others, at its usual size; the others are drawn where Windows now
    puts them (it may move them). Switched on, it returns to its real
    position.
+
+## 11. Settings window
+
+`wallpaper ui settings` (or tray *Settings…*). The logic is tested with
+fakes and a temporary config (`tests/test_config_edit.py`: the file round
+trip, each kind of edit, validation, selectors, conflicts;
+`tests/test_settings.py`: the window's Save / Revert / close flow, the
+monitor menus, the About page, and one save that the app really reloads).
+These steps confirm it on your own config and desktop. Back up
+config.toml first (copy it next to itself).
+
+1. **Round trip keeps your comments.** Open the window, change nothing,
+   close it: config.toml is byte for byte the same (compare with the
+   backup, e.g. `fc /b config.toml config.backup.toml`). Then change one
+   interval and Save: a diff against the backup shows that one line
+   changed, its comment still in the same column; every other comment and
+   blank line as it was. Revert it the same way (or by hand).
+2. **Assigning a monitor to another playlist.** Click the PLX2783H in the
+   drawing and choose *fantasy*: the caption under it and both playlists'
+   *Monitors* lines change; Save. The tray's sections and the layout
+   window (if open) show the PLX2783H under fantasy within a few seconds,
+   and it gets fantasy's current image; the AW3225QF keeps konachan's. The
+   file's `monitors` lines are the only ones changed. Move it back.
+3. **A conflicting hand edit is detected.** With an unsaved change in the
+   window, edit config.toml in an editor (add a comment) and save it
+   there. Then Save in the window: it says the file changed on disk and
+   writes nothing (your comment is still there); *Load the file again*
+   shows the file as it is now.
+4. **Closing with unsaved changes asks** Save / Discard / Cancel: *Cancel*
+   keeps the window open with the change; *Discard* closes without writing;
+   *Save* writes, then closes. With nothing changed, it closes without
+   asking.
+5. Validation shows next to the field, not as a dialog, and *Save* says why
+   it is off (hover it, or the line beside it): an interval like `30`, a
+   folder that doesn't exist, a name with a space, a playlist with no
+   monitor.
+6. Switch the ZeroMOD off (OLED refresh) with the window open: it is drawn
+   dimmed and stays in fantasy. If Windows stops listing it, fantasy's
+   *Monitors* line says "ZeroMOD (not connected)" and saving other changes
+   keeps it in the file.
+7. *About*: the version shows the git commit; each *Open folder* opens
+   Explorer at the right place (the nearest existing folder for ones not
+   created yet, e.g. the thumbnail cache); *Copy path* puts the path on the
+   clipboard.
+8. `wallpaper reload` after a hand edit: "Config reloaded" (plus any
+   warnings); with a broken file, the error, and the tray's *Reload config*
+   notifies the same error once.
+9. With the app started on a custom config (`wallpaper -c other.toml
+   tray`), plain `wallpaper next` and `wallpaper ui settings` (no `-c`)
+   reach it, and the settings window edits other.toml.

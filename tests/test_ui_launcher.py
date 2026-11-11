@@ -18,6 +18,8 @@ from wallpaper_py.app.ui.launcher import (
     ui_server_name,
 )
 
+from wallpaper_py.protocol import Overview
+
 from .clients import run_python
 
 # argv: server name, window, config. Prints SHOWN, NONE or ERROR <message>.
@@ -123,7 +125,7 @@ def test_malformed_requests_get_an_error(
     # pylint: disable=unused-argument
     answers: list[bytes] = []
     owner = QObject()
-    line = b'{"v": 2, "window": "settings", "config": "c"}\n'
+    line = b'{"v": 2, "window": "kitchen", "config": "c"}\n'
     ipc.LineRequest(
         name, line, answers.append, lambda *_: pytest.fail("failed"), parent=owner
     )
@@ -168,3 +170,29 @@ def test_blocking_show_from_a_starting_ui(
 def test_show_request_round_trip(config: Path) -> None:
     request = ShowRequest(window="library", config=config)
     assert ShowRequest.model_validate_json(ipc.encode(request)) == request
+
+
+def test_without_a_config_any_will_do_until_the_app_says(
+    qtbot: QtBot, name: str, tmp_path: Path
+) -> None:
+    server = UiServer(name, None)  # `wallpaper ui` without --config
+    server.listen()
+    owner = QObject()
+
+    def ask(config: Path | None) -> str | None:
+        answers: list[bytes] = []
+        line = ipc.encode(ShowRequest(window="settings", config=config))
+        ipc.LineRequest(
+            name, line, answers.append, lambda *_: pytest.fail("failed"), parent=owner
+        )
+        qtbot.waitUntil(lambda: bool(answers))
+        return ShowReply.model_validate_json(answers[0]).error
+
+    try:
+        assert ask(None) is None and ask(tmp_path / "a.toml") is None
+        server.follow(Overview(config=tmp_path / "app.toml"))  # the app's config
+        assert ask(None) is None and ask(tmp_path / "app.toml") is None
+        error = ask(tmp_path / "a.toml")
+        assert error is not None and error.startswith("The open windows use")
+    finally:
+        server.close()

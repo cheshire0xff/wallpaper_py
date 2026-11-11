@@ -19,7 +19,7 @@ the receiving thread's event loop, so the sender never waits.
 |---|---|
 | **app**, UI thread (main thread, Qt event loop) | `QApplication`, `Tray`, `WindowOpener`, `ScreenWatcher`, and `ServiceHost`, the thin proxy to the service thread |
 | **app**, service thread (`QThread` "playlist-service") | `ServiceWorker` and everything it creates on that thread: the `CommandServer` (socket), the tick `QTimer`, COM (`backends.thread_scope`), the backend, the SQLite `Store`, the `PlaylistService` |
-| **UI process** (`wallpaper ui`, on demand), UI thread | `QApplication`, `UiServer` (its own socket), `SocketClient` (the app's socket), `Windows` and the windows: `LayoutWindow` (with its `PlaylistCard`s, `MonitorsView` and `ThumbnailLoader`), `PlaceholderWindow` for the library |
+| **UI process** (`wallpaper ui`, on demand), UI thread | `QApplication`, `UiServer` (its own socket), `SocketClient` (the app's socket), `Windows` and the windows: `LayoutWindow` (with its `PlaylistCard`s, `MonitorsView` and `ThumbnailLoader`), `SettingsWindow` (with its `PlaylistEditor`s, a `MonitorsView` and the `AboutPage`), `PlaceholderWindow` for the library |
 | **UI process**, thumbnail threads (the `ThumbnailLoader`'s own `QThreadPool`, 2 threads) | nothing that lives there: each job reads one image file into a `QImage` and emits it back |
 | **CLI** (a separate process) | `ipc.send`: blocking client, no event loop |
 
@@ -48,7 +48,7 @@ flowchart LR
     subgraph UIP["UI process"]
         uiserver["UiServer<br/>its own socket"]
         client["SocketClient"]
-        windows["Windows<br/>LayoutWindow"]
+        windows["Windows<br/>LayoutWindow, SettingsWindow"]
         thumbs["ThumbnailLoader<br/>thread pool"]
     end
     subgraph UI["app: UI thread"]
@@ -69,15 +69,16 @@ flowchart LR
     opener ==>|"show window / ok"| uiserver
     uiserver -->|"show_requested"| windows
     client -->|"overview_changed, changed"| windows
-    windows -->|"run"| client
+    windows -->|"run (also reload)"| client
+    windows -->|"settings: edit config.toml"| file[("config.toml")]
     windows -->|"want"| thumbs
     thumbs -.->|"loaded"| windows
     server -->|"received, subscribed"| worker
     worker -->|"reply, broadcast"| server
     tray -->|"open_window"| opener
-    tray -->|"run: submit"| host
+    tray -->|"run, reload: submit"| host
     screens -->|"settled: request_tick"| host
-    host -.->|"_submit, _tick, _reload, _stop"| worker
+    host -.->|"_submit, _tick, _stop"| worker
     timer -->|"timeout"| worker
     worker -->|"calls"| service
     worker -.->|"replied, overview_changed, changed, ticked, failed"| host
@@ -94,9 +95,8 @@ UI thread -> service thread (all queued; `ServiceHost` is the UI's only door in)
 | Signal | Slot | Carries |
 |---|---|---|
 | `QThread.started` | `ServiceWorker.start` | - |
-| `ServiceHost._submit` | `ServiceWorker.submit` (calls `ServiceWorker.execute`) | request id, `Request` |
+| `ServiceHost._submit` | `ServiceWorker.submit` (calls `ServiceWorker.execute`) | request id, `Request` (or `ReloadRequest`: `ServiceHost.reload` submits one) |
 | `ServiceHost._tick` | `ServiceWorker.tick` | - (an extra tick) |
-| `ServiceHost._reload` | `ServiceWorker.reload` | - |
 | `ServiceHost._stop` | `ServiceWorker.stop` | - |
 
 Service thread -> UI thread (all queued):
@@ -126,13 +126,18 @@ Inside the UI thread (direct):
 | `ScreenWatcher.settled` | `ServiceHost.request_tick` |
 | `ServiceHost.overview_changed` | `Tray.show_overview` (redraws the menu) |
 | tray menu items (playlist commands, including the *Hold* toggle) | `Tray.run` -> `ServiceHost.submit` (reply callback: `Tray._replied`) |
-| *Open layout* / *Open library* | `Tray.open_window` -> `WindowOpener.open` |
+| *Reload config* | `Tray.reload` -> `ServiceHost.reload`, the `reload` command (reply callback: `Tray._reloaded`: the error or the warnings, one notification) |
+| *Open layout* / *Open library* / *Settings…* | `Tray.open_window` -> `WindowOpener.open` |
 | `WindowOpener.failed` | `Tray.notify` |
 
 `ServiceWorker.start` creates the `CommandServer` once, before opening the
-service; `ServiceWorker.reload` only closes and reopens the service, so the
-socket keeps answering across reloads (with the config error while the
-config is broken). `ServiceWorker.stop` closes the socket before the
+service. `reload` is a command like the others (from the socket, the
+tray's *Reload config* or the settings window), run by
+`ServiceWorker.execute` itself rather than by `commands.execute`: it only
+closes and reopens the service, then ticks (which publishes the new
+overview) and replies with the warnings or the config error. The socket
+keeps answering across reloads (with the config error while the config is
+broken). `ServiceWorker.stop` closes the socket before the
 service, which also ends every subscription.
 
 ### UI process
@@ -140,12 +145,20 @@ service, which also ends every subscription.
 | Signal | Slot |
 |---|---|
 | `UiServer.show_requested` | `Windows.show` (creates the window or raises it) |
+| `SocketClient.overview_changed` | `UiServer.follow` (without --config, the windows use the app's config, which the overview names) |
 | `SocketClient.overview_changed`, `SocketClient.failed` | `LayoutWindow.show_overview`, `LayoutWindow.show_error` |
+| `SocketClient.overview_changed`, `SocketClient.failed` | `SettingsWindow.show_overview` (the first one names the file to edit; the monitors for the drawing), `SettingsWindow.show_error` |
 | `SocketClient.overview_changed`, `SocketClient.changed`, `SocketClient.failed` | the library placeholder (`PlaceholderWindow.show_overview`, `PlaceholderWindow.show_change`, `PlaceholderWindow.show_error`) |
 | `PlaylistCard.hovered`, `MonitorsView.hovered` (the pointer: a playlist, or None) | `LayoutWindow._hover` -> `MonitorsView.set_highlight`, `PlaylistCard.set_highlighted` |
 | `PlaylistCard.requested` (a button: playlist, command) | `LayoutWindow._send` -> `Client.run` (reply: `LayoutWindow.replied`) |
 | the layout window's countdown `QTimer` (every second, only while a playlist counts down) | `LayoutWindow.refresh_schedule` |
 | `ThumbnailLoader.loaded` (an image is ready) | `LayoutWindow._thumbnail_loaded` (the cards and `MonitorsView` that still show it) |
+| `PlaylistEditor.edited`, and the *General* tab's fields | `SettingsWindow._edited` -> `SettingsWindow._refresh` (problems, Save / Revert, the drawing) |
+| `MonitorsView.clicked` (a monitor's id; the settings window's drawing is clickable) | `SettingsWindow._monitor_clicked` -> `SettingsWindow.monitor_menu` (pops up) |
+| a playlist's *Monitors* menu `QMenu.aboutToShow` | `SettingsWindow._fill_monitors_menu` |
+| `QMenu.triggered` (either menu; the item's data says what) | `SettingsWindow._menu_triggered` -> `SettingsWindow.choose` |
+| `PlaylistEditor.delete_requested`, `PlaylistEditor.browse_requested` | `SettingsWindow._delete_playlist`, `SettingsWindow._browse_folder` |
+| *Save* / *Revert* / *Load the file again* | `SettingsWindow.save` (via `SettingsWindow._save_clicked`), `SettingsWindow.revert`, `SettingsWindow.load_file` |
 | `Windows.all_closed` (the last window closed) | `QApplication.quit` |
 | `SocketClient.ended` (the app quit) | `QApplication.quit` |
 
@@ -311,6 +324,37 @@ sequenceDiagram
 - A reply that arrives after the window closed is ignored (the callback
   holds the window weakly); closing the window waits for running jobs
   (`ThumbnailLoader.close`).
+
+Saving in the settings window (the UI process edits config.toml like an
+editor would; the app only reads it again):
+
+```mermaid
+sequenceDiagram
+    participant C as SocketClient
+    participant S as SettingsWindow
+    participant F as config.toml
+    participant W as ServiceWorker<br/>app, service thread
+
+    C->>S: overview_changed: SettingsWindow.show_overview (names the app's file)
+    S->>F: SettingsWindow.load_file: read it, as text
+    Note over S: edits: SettingsWindow._refresh validates every change,<br/>renders the new text and checks it with the core's parser
+    S->>F: SettingsWindow.save: still what was read? then write (temp + replace)
+    S->>C: Client.run(reload), reply to SettingsWindow.reloaded
+    C->>W: reload: ServiceWorker.execute closes and reopens the service
+    W->>C: overview_changed (every window redraws), then the ReloadResult
+    C->>S: the reply: "Saved; the app is using it", or the config error
+```
+
+- Only what changed is written (`core.config_edit.render`, tomlkit): no
+  change gives the identical file, an edit touches only its own lines, and
+  comments stay.
+- The file changed on disk since the window read it (a hand edit): nothing
+  is written; the window says so and offers *Load the file again*
+  (`SettingsWindow.load_file`).
+- The layout window, if open, follows the reload through its overview like
+  after any other change; the settings window doesn't talk to it.
+- Closing with unsaved changes asks Save / Discard / Cancel (in
+  `SettingsWindow.closeEvent`, before `Window.closed`).
 
 Shutdown of the app (tray *Quit* or Ctrl+C): `app.quit()` ends the UI event
 loop -> `ServiceHost.shutdown` emits `_stop` (queued) and waits for the

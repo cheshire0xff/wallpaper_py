@@ -94,6 +94,7 @@ _DURATION = re.compile(
 )
 _UNIT_SECONDS = {"d": 86400, "h": 3600, "m": 60, "s": 1}
 MANUAL = "manual"  # the interval of a playlist that never changes by itself
+MIN_INTERVAL_S = 10.0  # a shorter interval is refused
 
 _TOP_KEYS = {
     "playlists",
@@ -135,13 +136,29 @@ def load_config(path: Path, default_dir: Path) -> Config:
     favourites / to-remove files default to `default_dir`.
     """
     try:
-        with path.open("rb") as file:
-            raw = tomllib.load(file)
+        data = path.read_bytes()
     except FileNotFoundError as err:
         raise ConfigError(
             f"No config file at {path}. Create one; see docs/config.example.toml."
         ) from err
-    except (OSError, tomllib.TOMLDecodeError) as err:
+    except OSError as err:
+        raise ConfigError(f"Cannot read {path}: {err}") from err
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as err:
+        raise ConfigError(f"Cannot read {path}: {err}") from err
+    return loads_config(text, path, default_dir)
+
+
+def loads_config(text: str, path: Path, default_dir: Path) -> Config:
+    """
+    Validate config text as if it were the file at `path` (relative paths
+    in it are relative to the file's directory). The settings window checks
+    a new text with this before writing it.
+    """
+    try:
+        raw = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as err:
         raise ConfigError(f"Cannot read {path}: {err}") from err
     try:
         return parse_config(raw, base_dir=path.parent, default_dir=default_dir)
@@ -227,7 +244,7 @@ def _interval(value: Any, where: str) -> float | None:
     if value.strip().lower() == MANUAL:
         return None
     interval = parse_duration(value)
-    if interval < 10:
+    if interval < MIN_INTERVAL_S:
         raise ConfigError(f"{where} interval must be at least 10s, or 'manual'")
     return interval
 

@@ -59,3 +59,8 @@ def cache_dir() -> Path:
 def render_dir() -> Path:
     """Images rendered to exact monitor size (see core.setter)."""
     return cache_dir() / "rendered"
+
+
+def thumbnail_dir() -> Path:
+    """The library window's thumbnail disk cache (Phase 5; may not exist yet)."""
+    return cache_dir() / "thumbnails"

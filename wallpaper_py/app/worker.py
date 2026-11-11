@@ -9,13 +9,15 @@ this thread touches it.
 
 Everything reaches the service through `ServiceWorker.execute`, one at a
 time, between ticks: socket requests directly (the socket lives on this
-thread), the tray through `ServiceHost`. Nothing on this thread may block
-waiting for a client or spin a nested event loop. Events (a change, a new
+thread), the tray through `ServiceHost`. That includes `reload`, which
+closes the service and opens it again on the config file as it is now.
+Nothing on this thread may block waiting for a client or spin a nested
+event loop. Events (a change, a new
 overview) go to the UI thread as signals and to socket subscribers (the UI
 process) as lines, both from here.
 
 `ServiceHost` is the UI thread's handle. It reaches the worker only through
-queued signals (requests, extra ticks, reload, stop) and gets results back
+queued signals (requests, reload included; extra ticks; stop) and gets results back
 the same way (replies, the overview, changes); it never waits on the
 worker, except once at shutdown.
 """
@@ -43,6 +45,8 @@ from ..protocol import (
     Event,
     Overview,
     OverviewChangedEvent,
+    ReloadRequest,
+    ReloadResult,
     Reply,
 )
 from .ipc import CommandServer
@@ -120,12 +124,15 @@ class ServiceWorker(QObject):
         self._thread_scope.close()
         self.thread().quit()
 
-    @Slot()
-    def reload(self) -> None:
+    def _reload(self) -> Reply:
+        """The `reload` command: the service again, on the file as it is now."""
         log.info("Reloading the config")
         self._close()
         self._open()
-        self.tick()
+        self.tick()  # publishes the new overview before the reply goes out
+        if self._service is None:
+            return self._error or ErrorReply.make("failed", "The service did not start")
+        return ReloadResult(warnings=tuple(self._service.config.warnings()))
 
     @Slot()
     def tick(self) -> None:
@@ -146,6 +153,10 @@ class ServiceWorker(QObject):
     def execute(self, request: CommandRequest) -> Reply:
         """Run one command: the only way in for socket, tray and windows."""
         reply: Reply
+        if isinstance(request, ReloadRequest):
+            reply = self._reload()
+            log.info("reload: %r", reply)
+            return reply
         if self._service is None:
             reply = self._error or ErrorReply.make(
                 "failed", "The service is not running"
@@ -230,10 +241,16 @@ class ServiceWorker(QObject):
     def _publish(self) -> None:
         """Emit the overview if it changed (the tray redraws its menu)."""
         if self._service is None:
-            current = Overview(error=self._error.error.message if self._error else None)
+            current = Overview(
+                error=self._error.error.message if self._error else None,
+                config=self._settings.config_path,
+            )
         else:
             try:
                 current = overview(self._service)
+                current = current.model_copy(
+                    update={"config": self._settings.config_path}
+                )
             except Exception:  # pylint: disable=broad-exception-caught
                 log.exception("Reading the overview failed")
                 return
@@ -241,6 +258,10 @@ class ServiceWorker(QObject):
             self._overview = current
             self.overview_changed.emit(current)
             self._broadcast(OverviewChangedEvent(overview=current))
+
+
+def _ignore(reply: Reply) -> None:
+    del reply
 
 
 class ServiceHost(QObject):
@@ -254,7 +275,6 @@ class ServiceHost(QObject):
     # Queued into the worker thread.
     _submit = Signal(int, object)
     _tick = Signal()
-    _reload = Signal()
     _stop = Signal()
 
     def __init__(self, settings: ServiceSettings) -> None:
@@ -272,7 +292,6 @@ class ServiceHost(QObject):
         queued = Qt.ConnectionType.QueuedConnection
         self._submit.connect(self._worker.submit, queued)
         self._tick.connect(self._worker.tick, queued)
-        self._reload.connect(self._worker.reload, queued)
         self._stop.connect(self._worker.stop, queued)
         self._worker.replied.connect(self._on_replied, queued)
         self._worker.overview_changed.connect(self._on_overview, queued)
@@ -295,8 +314,9 @@ class ServiceHost(QObject):
         """An extra tick soon (e.g. a monitor came back)."""
         self._tick.emit()
 
-    def reload(self) -> None:
-        self._reload.emit()
+    def reload(self, callback: ReplyCallback | None = None) -> None:
+        """Read the config again: the `reload` command, like the socket's."""
+        self.submit(ReloadRequest(), callback or _ignore)
 
     def shutdown(self, timeout_ms: int = 10_000) -> bool:
         """

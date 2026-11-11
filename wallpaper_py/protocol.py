@@ -3,7 +3,8 @@ The app's socket protocol as pydantic models: what goes over the wire, and
 nothing else (no logic, no Qt). See docs/protocol.md.
 
 - In: an `Envelope` holding a `Request` (a playlist command), a
-  `PickRequest` (`pick`, which also carries an image) or `Subscribe`.
+  `PickRequest` (`pick`, which also carries an image), a `ReloadRequest`
+  (read the config file again) or `Subscribe`.
 - Out: a `Reply`, which is data only: one result model per command, tagged
   on `command`, or an `ErrorReply`. The CLI formats its text from these;
   the tray and the UI process show them.
@@ -35,8 +36,8 @@ PROTOCOL = 2
 Command = Literal["status", "next", "prev", "fav", "unfav", "remove", "hold", "resume"]
 # Of those, the ones that act on a target (playlist or monitor): all but status.
 TARGET_COMMANDS: tuple[Command, ...] = get_args(Command)[1:]
-# Every command: also `pick`, which has a request model of its own.
-AnyCommand = Literal[Command, "pick"]
+# Every command: also `pick` and `reload`, which have request models of their own.
+AnyCommand = Literal[Command, "pick", "reload"]
 COMMANDS: tuple[AnyCommand, ...] = get_args(AnyCommand)
 
 
@@ -77,8 +78,16 @@ class PickRequest(Strict):
         return image
 
 
-# Every request that runs a command (what `commands.execute` takes).
-CommandRequest = Request | PickRequest
+class ReloadRequest(Strict):
+    """Read the config file again (after it was edited)."""
+
+    command: Literal["reload"] = "reload"
+
+
+# The requests the playlist service runs (what `commands.execute` takes).
+ServiceRequest = Request | PickRequest
+# Every request answered with one reply; the app runs `reload` itself.
+CommandRequest = Request | PickRequest | ReloadRequest
 
 
 class Subscribe(Strict):
@@ -92,9 +101,12 @@ class Envelope(Strict):
 
     v: int = PROTOCOL
     request: Annotated[
-        Request | PickRequest | Subscribe, Field(discriminator="command")
+        Request | PickRequest | ReloadRequest | Subscribe,
+        Field(discriminator="command"),
     ]
-    config: Path  # the config file the sender means; the app refuses others
+    # The config file the sender means: the app refuses another one. None:
+    # whatever config the app runs (the user didn't name one).
+    config: Path | None = None
 
     @field_validator("v")
     @classmethod
@@ -162,6 +174,7 @@ class Overview(Message):
     monitors: tuple[DesktopMonitor, ...] = ()  # every listed monitor
     paused: str | None = None  # why rotation is paused, if it is
     error: str | None = None  # the service could not start (e.g. bad config)
+    config: Path | None = None  # the config file the app runs
 
 
 class PlaylistDetails(PlaylistView):
@@ -218,6 +231,13 @@ class PickResult(Message):
     change: Change
 
 
+class ReloadResult(Message):
+    """The config was read again and the playlists restarted from it."""
+
+    command: Literal["reload"] = "reload"
+    warnings: tuple[str, ...] = ()  # valid config that is probably a mistake
+
+
 class HoldResult(Message):
     command: Literal["hold"] = "hold"
     playlist: str
@@ -240,7 +260,8 @@ Result = Annotated[
     | RemoveResult
     | PickResult
     | HoldResult
-    | ResumeResult,
+    | ResumeResult
+    | ReloadResult,
     Field(discriminator="command"),
 ]
 

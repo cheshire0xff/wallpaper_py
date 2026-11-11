@@ -766,6 +766,7 @@ dependencies = [
     { name = "platformdirs" },
     { name = "pydantic" },
     { name = "pyside6-essentials" },
+    { name = "tomlkit" },
 ]
 
 [package.dev-dependencies]
@@ -784,6 +785,7 @@ requires-dist = [
     { name = "platformdirs", specifier = ">=4" },
     { name = "pydantic", specifier = ">=2.14.3" },
     { name = "pyside6-essentials", specifier = ">=6.12.0" },
+    { name = "tomlkit", specifier = ">=0.15.2" },
 ]
 
 [package.metadata.requires-dev]

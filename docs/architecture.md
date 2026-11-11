@@ -22,6 +22,9 @@ app/                          PySide6 (Qt only here); two processes
     client.py    Client: all a window may use (commands, events); SocketClient
     window.py    Window (the base), and the placeholder still used for the library
     layout.py    the layout window: monitors, then a card per playlist
+    settings.py  the settings window: edits config.toml (playlists, monitors,
+                 general), then asks the app to reload; About page in about.py
+    settings_form.py  its form: PlaylistEditor, field problems, derived texts
     arrangement.py  the monitors drawn to scale (arrange(): pure geometry)
     thumbnails.py   ThumbnailLoader: image details and thumbnails, off the UI thread
     theme.py     the shared look: spacing, radii, backdrop, tinted icons,
@@ -40,6 +43,8 @@ core/                         pure Python, no Qt, no platform APIs
   imaging.py     fill / fit / stretch rendering to an exact size
   paths.py       per-user config, data and cache locations (per OS, never shared)
   config.py      the human-edited TOML: playlists, monitors, pausing
+  config_edit.py editing that file in place (tomlkit): only what changed is
+                 written, comments kept; validation, selectors, conflicts
   library.py     recursive image scan (natural order, cached), path keys
   order.py       next image: sorted walk, or the persisted shuffle deck
   store.py       SQLite: history, deck, per-playlist and per-monitor state
@@ -146,7 +151,8 @@ answers, the CLI starts the tray app detached (the autostart command;
 retries for up to 10 s; if it doesn't come up, it points to the log file.
 Two CLIs racing both start an app; the instance lock keeps one and both
 reach it. `list` and `set` don't need the app. A request naming a
-different config file than the app's is refused. The client blocks
+different config file than the app's is refused; a request without one
+(the user gave no --config) means whatever config the app runs. The client blocks
 without an event loop; PySide keeps the GIL while it waits, so it must run
 in a different process from the server (tests use child processes,
 `tests/clients.py`).
@@ -154,7 +160,7 @@ in a different process from the server (tests use child processes,
 Config errors don't stop the app: it shows the error in the tray and
 answers commands with it until *Reload config* succeeds.
 
-UI process (`wallpaper ui [layout|library]`, `app/ui/`): the windows run in
+UI process (`wallpaper ui [layout|library|settings]`, `app/ui/`): the windows run in
 a process of their own, started on demand and ended when its last window
 closes, so whatever they hold (later: thumbnails) is given back; the app
 never holds it. At most one runs: it listens on its own small socket
@@ -180,6 +186,16 @@ pool of its own, caches by path and drops results for images no longer
 shown. The look follows the system (native style, palette colours, light /
 dark) except the dark backdrop behind images; icons are Lucide SVGs tinted
 from the palette and re-tinted when it changes (`theme.py`).
+
+The settings window edits the config file the app runs (the overview
+names it), as an editor would: the file stays the source of truth and the
+app the only writer of state. `core/config_edit.py` writes back only what
+changed (tomlkit), so a file with no change stays byte for byte the same
+and hand-written comments survive; the new text must pass the core's own
+parser, and the write (atomic) is refused if the file changed on disk since
+it was read. Then the window sends `reload`, a command like the others:
+the app reopens its service on the file, publishes the new overview (every
+window follows it) and replies with the warnings or the error.
 
 ## Playlist service
 

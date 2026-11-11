@@ -512,16 +512,12 @@ class LayoutWindow(Window):
             self._set_banner("Connecting to wallpaper_py…")
 
     def _build(self) -> None:
-        content = QWidget(self)
-        layout = QVBoxLayout(content)
-        margin = theme.space(2)
-        layout.setContentsMargins(margin, margin, margin, margin)
-        layout.setSpacing(theme.space(1.5))
+        content, layout = theme.page(self)
         layout.addWidget(self.banner)
-        layout.addWidget(_heading("Monitors", content))
+        layout.addWidget(theme.heading("Monitors", content))
         layout.addWidget(self.monitors_view)
         layout.addSpacing(theme.space())
-        layout.addWidget(_heading("Playlists", content))
+        layout.addWidget(theme.heading("Playlists", content))
         layout.addWidget(self.empty)
         layout.addWidget(self._grid_widget)
         layout.addStretch(1)
@@ -720,13 +716,3 @@ class LayoutWindow(Window):
             self._closed = True
             self._countdown.stop()
             self.loader.close()
-
-
-def _heading(text: str, parent: QWidget) -> QLabel:
-    label = QLabel(text, parent)
-    font = QFont(label.font())
-    font.setBold(True)
-    font.setPointSizeF(font.pointSizeF() * 1.15)
-    label.setFont(font)
-    label.setAccessibleName(text)
-    return label

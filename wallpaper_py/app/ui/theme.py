@@ -12,6 +12,7 @@ the system's palette, plus a few constants and two widgets. Not a framework.
   again when its palette changes, i.e. when the system switches between
   light and dark.
 - `ImageView`: an image letterboxed on the backdrop.
+- `page`, `heading`: a window's scrolling content and its section headings.
 
 No style or stylesheet is set anywhere: the OS's own style draws the
 widgets (Windows 11 style, Breeze on KDE).
@@ -35,7 +36,8 @@ from PySide6.QtGui import (
     QResizeEvent,
 )
 from PySide6.QtSvg import QSvgRenderer
-from PySide6.QtWidgets import QLabel, QSizePolicy, QToolButton, QWidget
+from PySide6.QtGui import QFont
+from PySide6.QtWidgets import QLabel, QSizePolicy, QToolButton, QVBoxLayout, QWidget
 
 SPACING = 8  # px; everything is spaced in steps of this
 RADIUS = 8  # cards
@@ -61,6 +63,27 @@ ICON_NAMES = (
 
 def space(steps: float = 1) -> int:
     return round(SPACING * steps)
+
+
+def page(parent: QWidget, spacing: float = 1.5) -> tuple[QWidget, QVBoxLayout]:
+    """A window's content (e.g. inside a scroll area): margins, spacing."""
+    content = QWidget(parent)
+    layout = QVBoxLayout(content)
+    margin = space(2)
+    layout.setContentsMargins(margin, margin, margin, margin)
+    layout.setSpacing(space(spacing))
+    return content, layout
+
+
+def heading(text: str, parent: QWidget | None = None) -> QLabel:
+    """A section heading: bold, a little larger."""
+    label = QLabel(text, parent)
+    font = QFont(label.font())
+    font.setBold(True)
+    font.setPointSizeF(font.pointSizeF() * 1.15)
+    label.setFont(font)
+    label.setAccessibleName(text)
+    return label
 
 
 def icon_svg(name: str) -> bytes:

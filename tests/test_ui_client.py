@@ -51,7 +51,7 @@ def fixture_clients() -> Iterator[list[SocketClient]]:
 def make_client(
     clients: list[SocketClient],
     name: str,
-    config: Path,
+    config: Path | None,
     start_app: Callable[[], None] | None = None,
     start_timeout_s: float = 10.0,
 ) -> SocketClient:
@@ -176,3 +176,19 @@ def test_commands_without_an_app_are_unreachable(
     client = make_client(clients, name, config)
     reply = run(qtbot, client, Request(command="status"))
     assert reply == ErrorReply.make("unreachable", "wallpaper_py is not running")
+
+
+def test_without_a_config_it_follows_the_apps(
+    qtbot: QtBot,
+    host: ServiceHost,
+    clients: list[SocketClient],
+    name: str,
+    config: Path,
+) -> None:
+    started(qtbot, host)
+    client = make_client(clients, name, None)  # `wallpaper ui` without --config
+    with qtbot.waitSignal(client.overview_changed) as first:
+        client.start()
+    assert first.args[0].config == config  # the app's, a custom one
+    reply = run(qtbot, client, Request(command="next"))
+    assert isinstance(reply, NextResult)

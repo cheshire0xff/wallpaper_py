@@ -5,7 +5,8 @@ Started on demand (by the tray or the CLI) and gone when its last window
 closes, so the windows' memory (later: thumbnails) is given back. At most
 one runs: a start first asks a running one to show the window and exits.
 It is a client of the app's socket like the CLI, starting the app if none
-runs, and it quits when the app does (its subscription ends).
+runs, and it quits when the app does (its subscription ends). Without
+--config it shows whatever config the app runs (the overview says which).
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ from .launcher import (
     ui_server_name,
 )
 from .layout import LayoutWindow
+from .settings import SettingsWindow
 from .window import PlaceholderWindow, Window
 
 log = logging.getLogger(__name__)
@@ -46,12 +48,14 @@ def make_window(kind: WindowKind, client: Client) -> Window:
     """The window of a kind (the library window is still a placeholder)."""
     if kind == "layout":
         return LayoutWindow(client)
+    if kind == "settings":
+        return SettingsWindow(client)
     return PlaceholderWindow(kind, client)
 
 
 @dataclass(frozen=True)
 class UiOptions:
-    config_path: Path
+    config_path: Path | None  # --config, if given; None: the app's
     window: WindowKind = "layout"
     # How to start the app if it isn't running; injectable for tests.
     app_command: Callable[[Path], list[str]] = autostart_command
@@ -129,17 +133,19 @@ def _run_locked(app: QApplication, options: UiOptions, name: str) -> int:
     config_path = options.config_path
     server = UiServer(name, config_path)
     server.listen()
+    start_with = config_path or paths.config_file()  # if no app runs
     client = SocketClient(
         server_name(paths.data_dir()),
         config_path,
-        start_app=lambda: start_detached(options.app_command(config_path)),
+        start_app=lambda: start_detached(options.app_command(start_with)),
     )
     windows = Windows(client)
     server.show_requested.connect(windows.show)
+    client.overview_changed.connect(server.follow)
     windows.all_closed.connect(app.quit)
     client.ended.connect(app.quit)  # the app quit: so do its windows
 
-    log.info("UI started (config: %s)", config_path)
+    log.info("UI started (config: %s)", config_path or "the app's")
     with quit_on_interrupt(app):
         windows.show(options.window)
         client.start()

@@ -6,9 +6,11 @@ shares with the UI process's own small socket (app/ui/launcher.py).
 readable only by the current user. One line of JSON each way per
 connection (protocol.py, docs/protocol.md):
 
-    -> {"v": 2, "request": {"command": "next", "target": "konachan"},
-        "config": "/home/me/.config/wallpaper_py/config.toml"}
+    -> {"v": 2, "request": {"command": "next", "target": "konachan"}}
     <- {"command": "next", "playlist": "konachan", "change": {...}}
+
+(plus `"config": "/home/me/.config/wallpaper_py/config.toml"` when the
+user named a config: the app refuses another one than its own)
 
 except `subscribe`, which keeps the connection open: the app then writes
 one event per line until it quits.
@@ -444,7 +446,10 @@ class CommandServer(LineServer):
             log.warning("Command socket: %s", err)
             self.reply(connection_id, ErrorReply.make("protocol", err))
             return
-        if not same_file(envelope.config, self._config_path):
+        # No config named: the sender means whatever this app runs.
+        if envelope.config is not None and not same_file(
+            envelope.config, self._config_path
+        ):
             message = (
                 f"The running app uses {self._config_path}, not "
                 f"{envelope.config}; quit it to use another config"

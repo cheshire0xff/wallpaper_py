@@ -6,6 +6,10 @@ Monitor commands (`list`, `set`) work on their own. Playlist commands
 ticks: if it isn't running, it is started in the tray first. The app
 replies with data (protocol.py); the text printed here is made here. `run`
 and `tray` start the app, `ui` the windows (see wallpaper_py.app).
+
+Which config: `run` / `tray` (and an app started for a command) use
+--config, else the default file. A command sends --config only if it was
+given: without it, it means whatever config the running app uses.
 """
 
 from __future__ import annotations
@@ -41,6 +45,8 @@ from .protocol import (
     PickResult,
     PlaylistDetails,
     PrevResult,
+    ReloadRequest,
+    ReloadResult,
     RemoveResult,
     Reply,
     Request,
@@ -50,12 +56,13 @@ from .protocol import (
 
 # The windows `wallpaper ui` opens (app/ui/launcher.py WINDOWS; not
 # imported from there, which would load Qt for every command).
-WINDOWS = ("layout", "library")
+WINDOWS = ("layout", "library", "settings")
 
 BackendFactory = Callable[[], Backend]
 PresenceFactory = Callable[[], Presence]
 # Runs a request in the app (starting it if needed) and returns its reply.
-AppClient = Callable[[CommandRequest, Path], Reply]
+# The config: the one the user named, or None (whatever the app runs).
+AppClient = Callable[[CommandRequest, Path | None], Reply]
 # The command line that starts the app for a config file.
 AppCommand = Callable[[Path], list[str]]
 
@@ -67,14 +74,15 @@ RETRY_INTERVAL_S = 0.2
 
 def send_to_app(
     request: CommandRequest,
-    config_path: Path,
+    config_path: Path | None,
     app_command: AppCommand | None = None,
 ) -> Reply:
     """
     Run `request` in the app. If none is running, start it in the tray
-    (`app_command`, by default the autostart command) and retry until it
-    answers. Two CLIs may race to start it: the instance lock keeps one app,
-    and both reach it.
+    (`app_command`, by default the autostart command; on `config_path`, else
+    the default config) and retry until it answers. Two CLIs may race to
+    start it: the instance lock keeps one app, and both reach it.
+    `config_path` None: the app may run any config.
     """
     # pylint: disable=import-outside-toplevel
     from .app import ipc  # Qt is imported only for playlist commands
@@ -88,7 +96,9 @@ def send_to_app(
         log.info("The running app answered")
         return reply
     log.info("No app is running: starting one")
-    start_detached((app_command or autostart_command)(config_path))
+    start_detached(
+        (app_command or autostart_command)(config_path or paths.config_file())
+    )
     started = time.monotonic()
     while time.monotonic() < started + START_TIMEOUT_S:
         time.sleep(RETRY_INTERVAL_S)
@@ -103,9 +113,14 @@ def send_to_app(
 class Context:
     backend_factory: BackendFactory
     presence_factory: PresenceFactory
-    config_path: Path
+    config: Path | None  # --config, if given
     app_client: AppClient
     _backend: Backend | None = field(default=None, init=False)
+
+    @property
+    def config_path(self) -> Path:
+        """The config to start the app on: --config, else the default."""
+        return self.config or paths.config_file()
 
     @property
     def backend(self) -> Backend:
@@ -163,15 +178,17 @@ class Text(NamedTuple):
 
 
 def cmd_playlist(ctx: Context, args: argparse.Namespace) -> int:
-    """status, pick and the TARGET_COMMANDS: always in the app."""
+    """status, pick, reload and the TARGET_COMMANDS: always in the app."""
     target: str | None = getattr(args, "target", None)
     request: CommandRequest
     if args.command == "pick":
         request = PickRequest(target=target, image=args.image)
+    elif args.command == "reload":
+        request = ReloadRequest()
     else:
         command: Command = args.command  # a subparser name from Command
         request = Request(command=command, target=target)
-    reply = ctx.app_client(request, ctx.config_path)
+    reply = ctx.app_client(request, ctx.config)
     log.info("Reply: %s", reply.model_dump_json())
     text = format_reply(reply)
     if text.out:
@@ -213,6 +230,9 @@ def format_reply(reply: Reply) -> Text:
             return Text(0, "\n".join(lines))
         case HoldResult() | ResumeResult():
             return Text(0, _hold_text(reply))
+        case ReloadResult():
+            warnings = "\n".join(f"Warning: {w}" for w in reply.warnings)
+            return Text(0, "Config reloaded", warnings)
     raise AssertionError(f"Unhandled reply {reply!r}")
 
 
@@ -287,14 +307,14 @@ def cmd_app(ctx: Context, args: argparse.Namespace) -> int:
 
 
 def cmd_ui(ctx: Context, args: argparse.Namespace) -> int:
-    """`ui [layout|library]`: the windows, in their own process."""
+    """`ui [layout|library|settings]`: the windows, in their own process."""
     # pylint: disable=import-outside-toplevel
     from .app.processes import setup_logging
     from .app.ui.process import UiOptions, run_ui
 
     setup_logging(paths.ui_log_file())
     try:
-        return run_ui(UiOptions(ctx.config_path, args.window))
+        return run_ui(UiOptions(ctx.config, args.window))
     except WallpaperError as err:  # started by the tray, nobody sees stderr
         logging.getLogger(__name__).error("%s", err)
         raise
@@ -339,7 +359,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--config",
         type=Path,
         default=None,
-        help=f"playlist config file (default: {paths.config_file()})",
+        help=(
+            f"playlist config file (default: {paths.config_file()}); for "
+            f"commands to the running app, only needed to insist on one"
+        ),
     )
     parser.add_argument(
         "--verbose",
@@ -402,6 +425,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     status_parser = sub.add_parser("status", help="show playlists and their state")
     status_parser.set_defaults(handler=cmd_playlist)
+    sub.add_parser(
+        "reload", help="read the config file again (after editing it)"
+    ).set_defaults(handler=cmd_playlist)
 
     target_help = "playlist name, or a monitor it drives; optional with one playlist"
     helps = {
@@ -443,7 +469,7 @@ def main(
     ctx = Context(
         backend_factory=backend_factory,
         presence_factory=presence_factory,
-        config_path=args.config or paths.config_file(),
+        config=args.config,
         app_client=app_client,
     )
     try:

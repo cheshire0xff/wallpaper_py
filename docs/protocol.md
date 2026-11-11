@@ -30,15 +30,17 @@ release it may still change in place.)
 ## Requests
 
 ```json
-{"v": 2, "request": {"command": "next", "target": "konachan"}, "config": "C:\\Users\\me\\AppData\\Local\\wallpaper_py\\config.toml"}
+{"v": 2, "request": {"command": "next", "target": "konachan"}}
 ```
 
 - `v`: the protocol version; another one is refused (`protocol`).
-- `config`: the config file the client means. The app runs one config and
-  refuses others (`wrong_config`).
+- `config` (optional): the config file the client means, if the user named
+  one (`--config`). The app runs one config and refuses another
+  (`wrong_config`). Left out, the client means whatever config the app
+  runs; the overview names it (`config`, below).
 - `request.command`: `status`, `next`, `prev`, `fav`, `unfav`, `remove`,
-  `hold`, `resume`, `pick`, or `subscribe`.
-- `request.target` (all but `status` and `subscribe`): a playlist name, or a
+  `hold`, `resume`, `pick`, `reload`, or `subscribe`.
+- `request.target` (all but `status`, `reload` and `subscribe`): a playlist name, or a
   monitor the playlist drives (a name, a unique part of one, or the full
   id). It may be left out when there is only one playlist.
 - `request.image` (`pick` only, and required there): the image to show, an
@@ -68,6 +70,7 @@ get the image when they come back).
 | `fav` / `unfav` | `playlist`, `image`, `list_file` (favourites.txt), `changed` (false: it already was / wasn't a favourite) |
 | `remove` | `playlist`, `image` (listed for removal, never deleted), `list_file` (to-remove.txt), `change` (null: no monitor attached; it moves on later) |
 | `hold` / `resume` | `playlist`, `held` (now), `changed` (false: it already was / wasn't held) |
+| `reload` | `warnings` (config that is valid but probably a mistake); a config the app can't use is the error `config_error` instead |
 
 `pick` shows the image now, as if `next` had chosen it: it goes into the
 history right after the current entry, so `prev` goes back to what was
@@ -75,6 +78,13 @@ shown before, and the interval starts again. A held playlist doesn't rotate
 by itself, but `next`, `prev` and `pick` still work; a manual one
 (`interval = "manual"` in the config) never rotates, so `hold` / `resume`
 on it are an error (`failed`).
+
+`reload` reads the config file again and restarts the playlists from it
+(history, shuffle decks and holds are kept: they live in the state
+database). The new overview goes to subscribers before the reply. Send it
+after editing the file: the tray's *Reload config*, `wallpaper reload` and
+the settings window all do. While the config is broken, the other commands
+answer `config_error` until a `reload` succeeds.
 
 A playlist's monitor is `{"selector", "name", "attached", "id"}`: the
 selector as written in the config, the monitor's name (the selector if it
@@ -111,7 +121,7 @@ The message is meant for people; programs decide by `kind`.
 ## Subscribing
 
 ```json
-{"v": 2, "request": {"command": "subscribe"}, "config": "C:\\Users\\me\\AppData\\Local\\wallpaper_py\\config.toml"}
+{"v": 2, "request": {"command": "subscribe"}}
 ```
 
 The connection stays open and the app writes one event per line, tagged on
@@ -121,11 +131,11 @@ error line instead, then the connection closes.
 
 | Event | Fields | When |
 |---|---|---|
-| `overview_changed` | `overview`: `playlists` (each: `name`, `monitors`, `current`, `favourite`, `held`, `manual`), `monitors` (every monitor the desktop lists, also those in no playlist: `id`, `name`, `geometry`), `paused`, `error` (the app is up but its service isn't: e.g. a broken config) | on subscribing, then whenever it changes (also after `hold` / `resume`, and when a monitor is switched off or moves) |
+| `overview_changed` | `overview`: `playlists` (each: `name`, `monitors`, `current`, `favourite`, `held`, `manual`), `monitors` (every monitor the desktop lists, also those in no playlist: `id`, `name`, `geometry`), `paused`, `error` (the app is up but its service isn't: e.g. a broken config), `config` (the config file the app runs) | on subscribing, then whenever it changes (also after `hold` / `resume` and `reload`, and when a monitor is switched off or moves) |
 | `changed` | `change` | a wallpaper changed, by a tick or a command |
 
 ```json
-{"event": "overview_changed", "overview": {"playlists": [{"name": "fantasy", "monitors": [{"selector": "ZeroMOD", "name": "ZeroMOD", "attached": false, "id": "\\\\?\\DISPLAY#AUS27B1#..."}], "current": "D:\\pictures\\Fantasy\\7.png", "favourite": false, "held": false, "manual": true}], "monitors": [{"id": "\\\\?\\DISPLAY#DELA246#...", "name": "AW3225QF", "geometry": {"x": 0, "y": 0, "width": 3840, "height": 2160}}, {"id": "\\\\?\\DISPLAY#AUS27B1#...", "name": "ZeroMOD", "geometry": null}], "paused": null, "error": null}}
+{"event": "overview_changed", "overview": {"playlists": [{"name": "fantasy", "monitors": [{"selector": "ZeroMOD", "name": "ZeroMOD", "attached": false, "id": "\\\\?\\DISPLAY#AUS27B1#..."}], "current": "D:\\pictures\\Fantasy\\7.png", "favourite": false, "held": false, "manual": true}], "monitors": [{"id": "\\\\?\\DISPLAY#DELA246#...", "name": "AW3225QF", "geometry": {"x": 0, "y": 0, "width": 3840, "height": 2160}}, {"id": "\\\\?\\DISPLAY#AUS27B1#...", "name": "ZeroMOD", "geometry": null}], "paused": null, "error": null, "config": "C:\\Users\\me\\AppData\\Local\\wallpaper_py\\config.toml"}}
 {"event": "changed", "change": {"playlist": "konachan", "image": "D:\\pictures\\KONACHAN\\123.jpg", "reason": "next", "shown_on": ["AW3225QF", "PLX2783H"], "missed": []}}
 ```
 

@@ -11,7 +11,7 @@ thin. See [architecture.md](architecture.md) for the layers.
 | 1 | Core model, safe setter, Windows backend, CLI `list`/`set`, tooling, CI | done |
 | 2 | Playlists, mirrored groups, scheduler, history, favourites, to-remove | done (awaiting a real-desktop trial) |
 | 3 | App shell: tray, single instance, IPC, autostart | done (awaiting a real-desktop trial) |
-| 4 | UI process and layout window | in progress: foundation, pick / hold / manual and the layout window done (awaiting review); settings panel next |
+| 4 | UI process, layout and settings windows | done (pick / hold / manual, the layout and settings windows awaiting review and desktop checks) |
 | 5 | Library window | |
 | 6 | KDE backend | |
 | 7 | Polish | |
@@ -155,7 +155,7 @@ nothing while closed):
 - The always-running app = service thread + tray + command socket, as
   now; it stays small.
 - The windows (layout, library, settings) run in **their own process**,
-  `wallpaper ui [layout|library]`, started on demand and exiting when its
+  `wallpaper ui [layout|library|settings]`, started on demand and exiting when its
   last window closes, which gives all its memory back.
 - Starting: the tray's "Open layout / Open library" (or the CLI) first
   asks a running UI process to show that window (its own small socket,
@@ -305,7 +305,9 @@ Order for the rest of the phase, one session each:
    groups, and edit a playlist's directory, order, interval and mode. The
    app edits config.toml with a comment-preserving TOML library (tomlkit),
    so hand edits and comments survive, then reloads it. The file stays the
-   source of truth; hand editing keeps working.
+   source of truth; hand editing keeps working. **Done** (awaiting review
+   and the desktop checks, section 11); the About page too, without the
+   stats.
    Nice to have, in the same window if cheap, else Phase 7: an *About /
    info* page like the phone app's (see todo.md, "Settings / about"): data
    locations with *Open folder* / *Copy path*, version with git hash, and
@@ -389,6 +391,72 @@ Layout window, implemented (decisions made while building it):
   window). Unreadable images show "can't read: …" in the details.
 - No Qt sizing overrides (`sizeHint`, `heightForWidth`): they would shadow
   Qt methods (rule 3); widgets size themselves in `resizeEvent`.
+
+Settings window, implemented (decisions made while building it):
+
+- **Which config**: a client sends `config` only when the user gave
+  `--config`; without it, it means whatever the app runs (the envelope's
+  `config` is optional; an explicit different one is still refused). The
+  overview carries `config`, the file the app runs, so the windows (and
+  the UI socket, `UiServer.follow`) use the app's file. Starting an app
+  when none runs is unchanged: `--config`, else the default.
+- **The UI process edits the file**, like an editor: the app stays the
+  only writer of *state* and only reads the file again. `reload` became a
+  protocol command (also `wallpaper reload`; the tray's *Reload config*
+  sends it too), run by `ServiceWorker.execute` itself (it replaces the
+  service, so it isn't a `commands.execute` command). Its reply: `warnings`,
+  or the config error. The overview is published before the reply.
+- **`core/config_edit.py`** (Qt-free): `read_settings` takes the editable
+  values as written (texts, not parsed, so a bad value in the file can be
+  fixed in the form); `render` applies only what differs between the
+  settings read and the edited ones, through tomlkit: no change = the same
+  bytes; a changed value keeps its trailing comment *in its column*; paths
+  and selectors with backslashes are written as literal strings (basic if
+  the text has a `'`); line endings are kept (CRLF files stay CRLF). A
+  rename rewrites only the header line (tomlkit renders headers from the
+  table's display name; added playlists are appended after re-parsing). A
+  new key goes after the table's last key, not after the comment block
+  that introduces the next table, and a top-level key after the last
+  top-level one. Deleting a table also deletes the comment block right
+  above its header (after a blank line) and keeps the one above the next
+  table: tomlkit reads those blocks as the end of the previous table, so
+  this needs its internals (`_map`, `_insert_after`, the body list), pinned
+  by tests. Before writing, the text must pass `config.loads_config` (the
+  core's parser, now also on text); the write is atomic and refused if the
+  file's *content* changed since it was read (`ConfigConflictError`).
+- **Names**: a new or changed playlist name must be a bare TOML key
+  (letters, digits, `-`, `_`); names already in the file, quoted ones too,
+  are kept and editable. Unique case-insensitively (the core looks names up
+  that way).
+- **Validation** (`validate`) per field, shown under the field; Save stays
+  off and its tooltip and the line beside it say why. A missing folder is
+  an error only when it is new or changed, so an unplugged drive doesn't
+  block other edits. A playlist without monitors is an error (the core
+  requires one): delete it or give it a monitor.
+- **Monitors**: the layout window's `MonitorsView`, clickable here
+  (`clicked`); a click pops up the playlists, *No playlist* and *New
+  playlist…*. Each playlist also has a *Monitors* menu (keyboard
+  reachable) listing every monitor ("— now in konachan" for another's) and
+  its unlisted selectors ("not connected": unticking removes them).
+  Choosing moves the monitor, so one playlist per monitor holds by
+  construction (`assign_monitor`). The selector written: the name if no
+  other listed monitor has it, else the id; a monitor that stays keeps its
+  selector as written. Monitors matched by full id or exact name, as
+  `find_exact`.
+- **Saving**: Save and Revert only while something changed; after a save
+  the form is rebuilt from the saved text and the app is asked to reload
+  (the banner says the outcome). A conflict keeps the edits and offers
+  *Load the file again* (which drops them). Closing with changes asks Save
+  / Discard / Cancel; a Save that can't happen keeps the window open.
+- **About**: version from the package metadata plus `git describe
+  --always --dirty` when run from a checkout; locations: the config, the
+  state database, the two lists (as the config says, else the defaults),
+  both logs, the render cache and the thumbnail cache
+  (`paths.thumbnail_dir`, for Phase 5). *Open folder* opens the nearest
+  existing folder. No sizes on disk (walking a 20k-image thumbnail cache
+  on the UI thread would stall it); stats later, with `stats`.
+- Not done: images in the settings window's drawing (the layout window
+  has them), per-playlist `sound` (Phase 7), reordering playlists.
 
 ## Phase 5: library window
 

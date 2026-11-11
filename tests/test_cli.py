@@ -19,6 +19,8 @@ from wallpaper_py.protocol import (
     ErrorReply,
     MarkResult,
     PlaylistDetails,
+    ReloadRequest,
+    ReloadResult,
     RemoveResult,
     Reply,
     StatusResult,
@@ -132,7 +134,9 @@ class TestPlaylistCommands:
     def run(self, backend: FakeBackend, config: Path, *argv: str) -> int:
         """Playlist commands go to a stand-in for the app, in this process."""
 
-        def app_client(request: CommandRequest, config_path: Path) -> Reply:
+        def app_client(request: CommandRequest, config_path: Path | None) -> Reply:
+            assert config_path == config  # --config was given, so it is sent
+            assert not isinstance(request, ReloadRequest)  # the app runs that
             with open_service(config_path, backend, FakePresence()) as service:
                 return execute(service, request).reply
 
@@ -331,3 +335,35 @@ def test_ui_windows_match_the_launcher() -> None:
     args = cli.build_parser().parse_args(["ui"])
     assert args.window == "layout"
     assert cli.build_parser().parse_args(["ui", "library"]).window == "library"
+
+
+def test_reload_and_which_config_is_sent(capsys: pytest.CaptureFixture[str]) -> None:
+    sent: list[tuple[CommandRequest, Path | None]] = []
+
+    def app_client(request: CommandRequest, config: Path | None) -> Reply:
+        sent.append((request, config))
+        return ReloadResult(warnings=("w",))
+
+    assert cli.main(["reload"], app_client=app_client) == 0
+    assert capsys.readouterr() == ("Config reloaded\n", "Warning: w\n")
+    # No --config: none is sent, so the running app's own is meant.
+    assert sent == [(ReloadRequest(), None)]
+    assert cli.main(["--config", "x.toml", "reload"], app_client=app_client) == 0
+    assert sent[-1][1] == Path("x.toml")
+
+
+def test_ui_without_config_follows_the_app(monkeypatch: pytest.MonkeyPatch) -> None:
+    # pylint: disable=import-outside-toplevel
+    from wallpaper_py.app import processes
+    from wallpaper_py.app.ui import process
+
+    monkeypatch.setattr(processes, "setup_logging", lambda _: None)  # no log file
+    options: list[process.UiOptions] = []
+
+    def run_ui(given: process.UiOptions) -> int:
+        options.append(given)
+        return 0
+
+    monkeypatch.setattr(process, "run_ui", run_ui)
+    assert cli.main(["ui", "settings"]) == 0
+    assert options == [process.UiOptions(None, "settings")]

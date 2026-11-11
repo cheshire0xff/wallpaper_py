@@ -92,6 +92,32 @@ def test_cli_commands_go_through_the_running_app(
     assert [c.image.name for c in backend.set_calls] == ["a.jpg", "b.jpg", "a.jpg"]
 
 
+def test_cli_without_config_reaches_an_app_on_another_config(
+    qtbot: QtBot, tmp_path: Path, platform: Platform
+) -> None:
+    config = write_config(tmp_path)  # not the default config file
+    assert config != paths.config_file()
+    data = str(paths.data_dir())
+    results: dict[str, subprocess.CompletedProcess[str]] = {}
+
+    def terminal() -> None:
+        results["plain"] = run_python(qtbot, CLI, data, "next")
+        other = str(tmp_path / "other.toml")
+        results["other"] = run_python(qtbot, CLI, data, "--config", other, "next")
+        results["reload"] = run_python(qtbot, CLI, data, "reload")
+        QCoreApplication.quit()
+
+    QTimer.singleShot(0, terminal)
+    assert run_app(AppOptions(config, tray=False), platform) == 0
+    # No --config: whatever the app runs.
+    assert results["plain"].returncode == 0, results["plain"].stderr
+    assert results["plain"].stdout.strip() == "walls: b.jpg on Main"
+    # A config named explicitly must be the app's.
+    assert results["other"].returncode == 1
+    assert "The running app uses" in results["other"].stderr
+    assert results["reload"].stdout.strip() == "Config reloaded"
+
+
 def app_running() -> bool:
     lock = InstanceLock(paths.instance_lock())
     if lock.acquire():

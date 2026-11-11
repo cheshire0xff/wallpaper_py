@@ -1,6 +1,7 @@
 """
 Playlist commands run on the service: a `Request` in, a result (or an
-error) out, as the data models of `protocol.py`; no text. The CLI formats
+error) out, as the data models of `protocol.py`; no text. (`reload` is not
+one: it replaces the service, so the app runs it; see app/worker.py.) The CLI formats
 its output from them, the tray and the windows show them.
 
 `execute()` runs a command on the app's service thread, whether it came over
@@ -41,7 +42,6 @@ from .core.store import Store
 from .protocol import (
     TARGET_COMMANDS,
     Command,
-    CommandRequest,
     DesktopMonitor,
     ErrorKind,
     Geometry,
@@ -59,6 +59,7 @@ from .protocol import (
     RemoveResult,
     Reply,
     ResumeResult,
+    ServiceRequest,
     StatusResult,
 )
 
@@ -87,7 +88,7 @@ def open_service(
         )
 
 
-def execute(service: PlaylistService, request: CommandRequest) -> Outcome:
+def execute(service: PlaylistService, request: ServiceRequest) -> Outcome:
     try:
         if request.command == "status":
             return Outcome(_status(service))

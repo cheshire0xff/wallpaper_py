@@ -23,7 +23,6 @@ from wallpaper_py.app.ui.arrangement import (
     caption,
     playlists_by_monitor,
 )
-from wallpaper_py.app.ui.client import Client, ReplyCallback
 from wallpaper_py.app.ui.layout import (
     LayoutWindow,
     chip_text,
@@ -41,7 +40,6 @@ from wallpaper_py.app.ui.thumbnails import (
 from wallpaper_py.core.config import Order
 from wallpaper_py.core.service import Change
 from wallpaper_py.protocol import (
-    CommandRequest,
     DesktopMonitor,
     ErrorReply,
     Geometry,
@@ -55,6 +53,8 @@ from wallpaper_py.protocol import (
     Request,
     StatusResult,
 )
+
+from .fake_client import FakeClient as BaseFakeClient
 
 AW = DesktopMonitor(
     id="aw", name="AW3225QF", geometry=Geometry(x=0, y=0, width=3840, height=2160)
@@ -245,22 +245,8 @@ def test_card_text_without_a_monitor() -> None:
 # -- the window ----------------------------------------------------------------
 
 
-class FakeClient(Client):
-    """Records requests; a test answers them with `reply`."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.calls: list[tuple[CommandRequest, ReplyCallback]] = []
-
-    def run(self, request: CommandRequest, on_reply: ReplyCallback) -> None:
-        self.calls.append((request, on_reply))
-
-    def publish(self, overview: Overview) -> None:
-        """As if the app sent a new overview."""
-        self._set_overview(overview)
-
-    def commands(self) -> list[CommandRequest]:
-        return [r for r, _ in self.calls if r.command != "status"]
+class FakeClient(BaseFakeClient):
+    """Also answers `status` from an overview."""
 
     def answer_status(self, overview: Overview) -> None:
         """Answer the status requests so far (the window may ask again)."""

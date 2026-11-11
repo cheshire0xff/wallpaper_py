@@ -127,6 +127,7 @@
               "next": "#/$defs/Request",
               "pick": "#/$defs/PickRequest",
               "prev": "#/$defs/Request",
+              "reload": "#/$defs/ReloadRequest",
               "remove": "#/$defs/Request",
               "resume": "#/$defs/Request",
               "status": "#/$defs/Request",
@@ -143,20 +144,30 @@
               "$ref": "#/$defs/PickRequest"
             },
             {
+              "$ref": "#/$defs/ReloadRequest"
+            },
+            {
               "$ref": "#/$defs/Subscribe"
             }
           ],
           "title": "Request"
         },
         "config": {
-          "format": "path",
-          "title": "Config",
-          "type": "string"
+          "anyOf": [
+            {
+              "format": "path",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Config"
         }
       },
       "required": [
-        "request",
-        "config"
+        "request"
       ],
       "title": "Envelope",
       "type": "object"
@@ -443,6 +454,19 @@
           ],
           "default": null,
           "title": "Error"
+        },
+        "config": {
+          "anyOf": [
+            {
+              "format": "path",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Config"
         }
       },
       "title": "Overview",
@@ -706,6 +730,41 @@
       "title": "PrevResult",
       "type": "object"
     },
+    "ReloadRequest": {
+      "additionalProperties": false,
+      "description": "Read the config file again (after it was edited).",
+      "properties": {
+        "command": {
+          "const": "reload",
+          "default": "reload",
+          "title": "Command",
+          "type": "string"
+        }
+      },
+      "title": "ReloadRequest",
+      "type": "object"
+    },
+    "ReloadResult": {
+      "description": "The config was read again and the playlists restarted from it.",
+      "properties": {
+        "command": {
+          "const": "reload",
+          "default": "reload",
+          "title": "Command",
+          "type": "string"
+        },
+        "warnings": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Warnings",
+          "type": "array"
+        }
+      },
+      "title": "ReloadResult",
+      "type": "object"
+    },
     "RemoveResult": {
       "properties": {
         "command": {
@@ -775,6 +834,9 @@
             },
             {
               "$ref": "#/$defs/ResumeResult"
+            },
+            {
+              "$ref": "#/$defs/ReloadResult"
             }
           ],
           "discriminator": {
@@ -788,7 +850,8 @@
               "remove": "#/$defs/RemoveResult",
               "pick": "#/$defs/PickResult",
               "hold": "#/$defs/HoldResult",
-              "resume": "#/$defs/ResumeResult"
+              "resume": "#/$defs/ResumeResult",
+              "reload": "#/$defs/ReloadResult"
             }
           }
         },

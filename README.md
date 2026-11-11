@@ -9,8 +9,8 @@ libraries (10k+ images). See [todo.md](todo.md) for the feature list,
 [docs/architecture.md](docs/architecture.md) for the design.
 
 **Status:** the core, the Windows backend, the playlist service and the tray
-app exist, plus the UI process the windows will run in (for now one
-placeholder window). The layout and library windows are next.
+app exist, plus the UI process with the layout and settings windows. The
+library window is next.
 
 ## Install
 
@@ -50,12 +50,16 @@ wallpaper status                             # playlists, monitors, current, upc
 wallpaper next|prev|fav|unfav|remove [TARGET]  # TARGET: playlist or monitor name
 wallpaper pick IMAGE [TARGET]                # show IMAGE now (any directory)
 wallpaper hold|resume [TARGET]               # stop / restart rotating
-wallpaper ui [layout|library]                # open a window (see below)
+wallpaper reload                             # read the config file again
+wallpaper ui [layout|library|settings]       # open a window (see below)
 ```
 
 Playlists are defined in a TOML file; start from
 [docs/config.example.toml](docs/config.example.toml) and save it where
-`wallpaper --help` says (or pass `--config`).
+`wallpaper --help` says (or pass `--config`), or edit it in the settings
+window. `--config` picks the file the app starts with; commands to a
+running app don't need it (they go to whatever config it runs), and one
+given anyway must be the app's.
 
 - A playlist rotates a directory (recursively), *sorted* (natural order) or
   *shuffled* (every image once before any repeats; the order is kept across
@@ -96,21 +100,41 @@ command reached the running app or started one, and the app's raw reply.
 The tray menu has a section per playlist (its monitors by name, the current
 image, which opens on click, *Next*, *Previous*, a *Favourite* toggle,
 *Remove*, and a *Hold* toggle unless it is manual; the header says *held* or
-*manual*), then *Open layout*, *Open library*, *Reload config* (after
-editing it), *Open config folder*, *Start at login* and *Quit*. Left-click opens the same menu. The icon turns
+*manual*), then *Open layout*, *Open library*, *Settings…*, *Reload config*
+(after editing it by hand; like `wallpaper reload`, it notifies the error or
+any warnings), *Open config folder*, *Start at login* and *Quit*. Left-click
+opens the same menu. The icon turns
 grey while rotation is paused and shows a red badge if the config can't be
 loaded. Start at login uses the per-user Run key on Windows and
 `~/.config/autostart` on Linux; it starts `pythonw -m wallpaper_py tray`
 from the current environment, so no console window opens. The tray app logs
 to `wallpaper.log` in the per-user log directory (on Windows
-`%LOCALAPPDATA%\wallpaper_py\Logs`).
+`%LOCALAPPDATA%\wallpaper_py\Logs`). Everything it adds to your system
+(start at login, files, sockets, what it changes on the desktop) and how to
+remove it all: [docs/system-integration.md](docs/system-integration.md).
 
 The windows run in a separate process (`wallpaper ui`), started when one
 is opened and gone when the last one closes, so they cost nothing while
 closed. Opening a window while that process runs just brings the window up;
-it starts the app if needed and closes when the app quits. For now it shows
-a placeholder with the live state. It logs to `ui.log` next to
-`wallpaper.log`.
+it starts the app if needed and closes when the app quits. It logs to
+`ui.log` next to `wallpaper.log`.
+
+- **Layout** (`wallpaper ui`): the monitors to scale with their current
+  wallpapers, and a card per playlist with previous / next, favourite,
+  remove and hold.
+- **Settings** (`wallpaper ui settings`, tray *Settings…*): the config file
+  as a form. *Playlists*: click a monitor in the drawing to choose its
+  playlist (or *No playlist*, or *New playlist…*); per playlist its name,
+  folder, order, interval (or manual), mode and monitors. *General*:
+  pausing while locked or idle, and where favourites.txt / to-remove.txt
+  are. *About*: the version and every data location, with *Open folder* and
+  *Copy path*. It edits the file the running app uses, in place: only what
+  you changed is written, so your comments and layout stay, and hand
+  editing keeps working. Save asks the app to reload. Problems show next to
+  their field and keep *Save* off; if the file was edited by hand since the
+  window read it, nothing is overwritten and the window offers to load it
+  again. Closing with unsaved changes asks first.
+- **Library**: a placeholder for now.
 
 Other programs can drive the app over the same socket: see
 [docs/protocol.md](docs/protocol.md).

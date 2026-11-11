@@ -14,6 +14,7 @@ dependencies = [
     "comtypes>=1.4; sys_platform == 'win32'",
     "pyside6-essentials>=6.12.0",
     "pydantic>=2.14.3",
+    "tomlkit>=0.15.2",
 ]
 
 [dependency-groups]
