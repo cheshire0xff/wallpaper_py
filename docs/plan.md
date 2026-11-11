@@ -161,6 +161,32 @@ Manual mode, hold and pick (decided; kept deliberately simple):
 - Not doing (until missed): single-monitor overrides in a group, a hidden
   playlist for monitors in no playlist (CLI `set` covers them).
 
+Structured command API (so other programs can build their own UI on the
+socket, and our windows use the same models):
+
+- Every reply gets a `data` field next to `code` / `out` / `err`: a
+  pydantic model per command, as a tagged union on `command`.
+  - `status`: paused, and per playlist: name, order, interval, mode,
+    directory, monitors (name, attached), current, favourite,
+    next_in_seconds, upcoming.
+  - `next` / `pick`: the change (playlist, image, reason, shown_on,
+    missed); `prev`: the change or null (nothing earlier).
+  - `fav` / `unfav`: image, changed (false if nothing changed).
+  - `remove`: image, list_file, change (null if no monitor was attached).
+  - `hold` / `resume`: playlist, held.
+- Errors are structured too: `{"error": {"kind", "message"}}` with kinds
+  like `not_attached`, `unknown_playlist`, `no_images`, `config_error`.
+- The CLI prints its text from `data` (no more text-only replies); the
+  tray and windows consume the same models in-process.
+- Additive, so it stays protocol v1; rule from now on: v1 only ever adds
+  commands and fields, clients must ignore unknown fields.
+- Publish the JSON Schema of requests and results (pydantic generates
+  it), plus a short protocol doc in docs/.
+- Later, only if another UI actually gets written: a `subscribe` request
+  that keeps the connection open and streams events (changes, status), and
+  paging for history / library lists. Thumbnails stay off the socket;
+  clients read the image files by path.
+
 Open: "assign playlists and groups" from this window means the app edits
 config.toml. If we do it, edit with a comment-preserving TOML library
 (tomlkit) so hand edits survive; otherwise this window only shows the
