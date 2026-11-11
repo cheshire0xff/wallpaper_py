@@ -84,19 +84,6 @@ def _popen(command: Sequence[str], creationflags: int = 0) -> None:
     )
 
 
-def allow_foreground() -> None:
-    """
-    Let another process (the UI) bring its window to the front. Windows
-    only allows that to the foreground process and those it allows; call it
-    right after the user's click, before asking the UI process. Best effort.
-    """
-    if sys.platform == "win32":
-        import ctypes  # pylint: disable=import-outside-toplevel
-
-        asfw_any = -1  # any process
-        ctypes.windll.user32.AllowSetForegroundWindow(asfw_any)
-
-
 def setup_logging(log_file: Path | None) -> None:
     """The terminal (if there is one) and a rotating file, if given."""
     handlers: list[logging.Handler] = []

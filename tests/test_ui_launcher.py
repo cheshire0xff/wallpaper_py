@@ -132,6 +132,21 @@ def test_malformed_requests_get_an_error(
     assert error is not None and error.startswith("Malformed request: window")
 
 
+def test_another_protocol_version_is_refused(
+    qtbot: QtBot, server: UiServer, name: str
+) -> None:
+    # pylint: disable=unused-argument
+    answers: list[bytes] = []
+    owner = QObject()
+    line = b'{"v": 1, "window": "layout", "config": "c"}\n'
+    ipc.LineRequest(
+        name, line, answers.append, lambda *_: pytest.fail("failed"), parent=owner
+    )
+    qtbot.waitUntil(lambda: bool(answers))
+    error = ShowReply.model_validate_json(answers[0]).error
+    assert error is not None and "speaks protocol" in error
+
+
 def test_blocking_show_from_a_starting_ui(
     qtbot: QtBot, server: UiServer, name: str, config: Path, tmp_path: Path
 ) -> None:

@@ -73,12 +73,17 @@ class Envelope(Strict):
     @field_validator("v")
     @classmethod
     def _same_protocol(cls, version: int) -> int:
-        if version != PROTOCOL:
-            raise ValueError(
-                f"the running app speaks protocol {PROTOCOL}, not {version}; "
-                f"restart it after updating"
-            )
-        return version
+        return check_protocol(version, "the running app")
+
+
+def check_protocol(version: int, receiver: str) -> int:
+    """For a `v` field: the receiver only reads its own protocol version."""
+    if version != PROTOCOL:
+        raise ValueError(
+            f"{receiver} speaks protocol {PROTOCOL}, not {version}; "
+            f"restart it after updating"
+        )
+    return version
 
 
 # -- what the app reports ------------------------------------------------------

@@ -208,7 +208,11 @@ class SocketClient(Client):
             if self._start_app is None:
                 self._fail("wallpaper_py is not running")
                 return
-            self._start_app()
+            try:
+                self._start_app()
+            except OSError as err:
+                self._fail(f"Cannot start wallpaper_py: {err}")
+                return
             self._deadline = time.monotonic() + self._start_timeout_s
         elif time.monotonic() >= self._deadline:
             self._fail(f"could not start wallpaper_py; see {paths.log_file()}")

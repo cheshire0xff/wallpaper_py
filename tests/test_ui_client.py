@@ -134,6 +134,18 @@ def test_gives_up_if_the_app_does_not_start(
     assert failed.args[0].startswith("could not start wallpaper_py; see ")
 
 
+def test_a_start_that_cannot_run_fails(
+    qtbot: QtBot, clients: list[SocketClient], name: str, config: Path
+) -> None:
+    def start_app() -> None:
+        raise FileNotFoundError("no such interpreter")
+
+    client = make_client(clients, name, config, start_app)
+    with qtbot.waitSignal(client.failed) as failed:
+        client.start()
+    assert failed.args == ["Cannot start wallpaper_py: no such interpreter"]
+
+
 def test_without_a_starter_it_fails_at_once(
     qtbot: QtBot, clients: list[SocketClient], name: str, config: Path
 ) -> None:

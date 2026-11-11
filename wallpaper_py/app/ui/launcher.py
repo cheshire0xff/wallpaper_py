@@ -22,13 +22,14 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Literal, get_args
 
-from pydantic import ValidationError
+from pydantic import ValidationError, field_validator
 from PySide6.QtCore import QObject, Signal
 
+from ...backends import allow_foreground
 from ...core.model import WallpaperError
-from ...protocol import PROTOCOL, Message, Strict
+from ...protocol import PROTOCOL, Message, Strict, check_protocol
 from .. import ipc
-from ..processes import allow_foreground, start_detached
+from ..processes import start_detached
 
 log = logging.getLogger(__name__)
 
@@ -41,6 +42,11 @@ class ShowRequest(Strict):
     v: int = PROTOCOL
     window: WindowKind
     config: Path  # the UI process refuses another config than its own
+
+    @field_validator("v")
+    @classmethod
+    def _same_protocol(cls, version: int) -> int:
+        return check_protocol(version, "the open windows")
 
 
 class ShowReply(Message):

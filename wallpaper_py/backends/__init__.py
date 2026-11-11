@@ -1,6 +1,7 @@
 """
 Pick the platform pieces for the current desktop environment: wallpaper
-backend, presence hook, autostart, and the per-thread setup they need.
+backend, presence hook, autostart, the per-thread setup they need, and
+window focus between our processes.
 """
 
 from __future__ import annotations
@@ -58,6 +59,18 @@ def get_presence() -> Presence:
 
         return WindowsPresence()
     return NoPresence()  # logind / KDE idle: Phase 6
+
+
+def allow_foreground() -> None:
+    """
+    Let another process (the UI process) bring its window to the front;
+    call it right after the user's click. Only Windows needs this.
+    """
+    if sys.platform == "win32":
+        # pylint: disable=import-outside-toplevel
+        from .windows.foreground import allow_foreground as allow
+
+        allow()
 
 
 def get_autostart() -> Autostart:
