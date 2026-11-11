@@ -17,13 +17,13 @@ Status: **ok** (with the date, when known) all steps seen working;
 | [1. Monitors and `set`](#1-monitors-and-set) | ok | todo | todo |
 | [2. Playlists](#2-playlists) | ok, except a reboot (step 4; an app restart is ok 2026-11-11) | todo | todo |
 | [3. Pause on lock and idle](#3-pause-on-lock-and-idle) | ok | todo | todo |
-| [4. Monitor switched off](#4-monitor-switched-off) | todo | todo | todo |
+| [4. Monitor switched off](#4-monitor-switched-off) | ok 2026-11-11 for a mirrored group (from the log); a single-monitor playlist not yet | todo | todo |
 | [5. CLI and the app](#5-cli-and-the-app) | ok, except step 3 | todo | todo |
 | [6. Tray](#6-tray) | ok, except step 2 and a broken config (step 3) | todo | todo |
 | [7. Start at login](#7-start-at-login) | todo | todo | todo |
 | [8. Windows (UI process)](#8-windows-ui-process) | ok 2026-11-11 | todo | todo |
 | [9. Pick, hold and manual](#9-pick-hold-and-manual) | ok 2026-11-11, except waiting past an interval (steps 3, 6) | todo | todo |
-| [10. Layout window](#10-layout-window) | ok 2026-11-11, except *Remove* (step 3) and steps 4, 5, 7, 8 | todo | todo |
+| [10. Layout window](#10-layout-window) | ok 2026-11-11, except *Remove* (step 3) and steps 4, 5, 7 | todo | todo |
 
 ## 1. Monitors and `set`
 
