@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from wallpaper_py.core.model import WallpaperError
-from wallpaper_py.core.store import Store
+from wallpaper_py.core.store import SCHEMA_VERSION, Store
 
 
 @pytest.fixture(name="store")
@@ -66,10 +66,59 @@ def test_keep_applied_forgets_other_monitors(store: Store) -> None:
     assert store.applied("mon-b") is None
 
 
-def test_newer_schema_is_refused(tmp_path: Path) -> None:
+@pytest.mark.parametrize("version", [1, 99])
+def test_another_schema_is_refused_not_deleted(tmp_path: Path, version: int) -> None:
     path = tmp_path / "state.sqlite3"
     with Store(path) as store:
+        store.append_history("p", Path("a.jpg"), 1.0)
         # pylint: disable-next=protected-access
-        store._db.execute("PRAGMA user_version = 99")
-    with pytest.raises(WallpaperError, match="newer"):
+        store._db.execute(f"PRAGMA user_version = {version}")
+    with pytest.raises(WallpaperError) as error:
         Store(path)
+    message = str(error.value)
+    assert "another version of wallpaper_py" in message
+    assert f"delete {path} to start afresh" in message
+    assert "only the history and shuffle state are lost" in message
+    assert path.exists()  # never deleted for you
+
+
+def test_new_database_has_the_current_schema(tmp_path: Path) -> None:
+    with Store(tmp_path / "state.sqlite3") as store:
+        # pylint: disable-next=protected-access
+        (version,) = store._db.execute("PRAGMA user_version").fetchone()
+    assert version == SCHEMA_VERSION == 2
+
+
+def test_insert_history_after_an_entry(store: Store) -> None:
+    a, b = (store.append_history("p", Path(f"{n}.jpg"), 1.0) for n in "ab")
+    store.append_history("other", Path("x.jpg"), 1.0)
+    picked = store.insert_history("p", a, Path("picked.jpg"), 2.0)
+    assert [e.id for e in store.history_after("p", a)] == [picked, b]
+    assert [e.id for e in store.history_before("p", b)] == [picked, a]
+    end = store.insert_history("p", b, Path("end.jpg"), 3.0)  # after the last
+    first = store.insert_history("p", None, Path("none.jpg"), 4.0)  # no cursor
+    assert [e.id for e in store.history_before("p")] == [first, end, b, picked, a]
+    latest = store.latest_history("p")
+    assert latest is not None and latest.path == Path("none.jpg")
+
+
+def test_many_inserts_at_one_place_keep_the_order(store: Store) -> None:
+    a = store.append_history("p", Path("a.jpg"), 1.0)
+    b = store.append_history("p", Path("b.jpg"), 1.0)
+    inserted = [store.insert_history("p", a, Path(f"{i}.jpg"), 1.0) for i in range(80)]
+    # Each goes right after `a`, so the newest comes first; the halved gaps
+    # were renumbered on the way.
+    assert [e.id for e in store.history_after("p", a)] == [*reversed(inserted), b]
+
+
+def test_hold_is_kept(tmp_path: Path) -> None:
+    path = tmp_path / "state.sqlite3"
+    with Store(path) as store:
+        assert not store.playlist_state("p").held
+        assert store.set_held("p", True)
+        assert not store.set_held("p", True)  # already held
+    with Store(path) as store:
+        assert store.playlist_state("p").held
+        assert store.set_held("p", False)
+        assert not store.set_held("p", False)
+        assert not store.playlist_state("p").held

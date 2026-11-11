@@ -121,7 +121,7 @@ Inside the UI thread (direct):
 |---|---|
 | `ScreenWatcher.settled` | `ServiceHost.request_tick` |
 | `ServiceHost.overview_changed` | `Tray.show_overview` (redraws the menu) |
-| tray menu items | `Tray.run` -> `ServiceHost.submit` (reply callback: `Tray._replied`) |
+| tray menu items (playlist commands, including the *Hold* toggle) | `Tray.run` -> `ServiceHost.submit` (reply callback: `Tray._replied`) |
 | *Open layout* / *Open library* | `Tray.open_window` -> `WindowOpener.open` |
 | `WindowOpener.failed` | `Tray.notify` |
 
@@ -200,6 +200,13 @@ sequenceDiagram
 
 The worker never sees who asked: the socket's `connection_id` stays in
 `CommandServer`, the tray's callback (by `request_id`) in `ServiceHost`.
+
+Commands that change no wallpaper but the state the tray shows (*Hold*,
+`hold` / `resume` from the CLI, *Favourite*) take the same path: after
+every command `ServiceWorker.execute` calls `ServiceWorker._publish`, which
+sends the new `Overview` to the tray (`Tray.show_overview` redraws the
+toggle and the header) and to subscribers. The tray never flips its own
+state: what it shows is always the service's.
 
 A tick (every 5 s, or extra after a screen change):
 

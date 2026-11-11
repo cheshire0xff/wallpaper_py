@@ -1,15 +1,17 @@
 """
 The tray icon and its menu: one flat section per playlist (monitor names,
-current image, next / previous / favourite / remove), then app actions.
+current image, next / previous / favourite / remove / hold), then app
+actions.
 
-    konachan · AW3225QF + PLX2783H
+    konachan (held) · AW3225QF + PLX2783H
     12345.jpg                 (opens the image)
     Next
     Previous
     [x] Favourite             (toggle)
     Remove (list and skip)
+    [x] Hold                  (toggle; not for a manual playlist)
     ───
-    fantasy · ZeroMOD (off)
+    fantasy (manual) · ZeroMOD (off)
     ...
     ───
     Paused: idle              (only while paused)
@@ -151,7 +153,7 @@ def _add_playlist(menu: QMenu, playlist: PlaylistView) -> None:
         return _add(menu, text, request)
 
     monitors = " + ".join(_monitor_label(m) for m in playlist.monitors)
-    header = menu.addAction(_label(f"{playlist.name} · {monitors}"))
+    header = menu.addAction(_label(f"{_playlist_label(playlist)} · {monitors}"))
     header.setEnabled(False)
     font = header.font()
     font.setBold(True)
@@ -170,6 +172,17 @@ def _add_playlist(menu: QMenu, playlist: PlaylistView) -> None:
     favourite.setChecked(playlist.favourite)
     favourite.setEnabled(current is not None)
     run("Remove (list and skip)", "remove").setEnabled(current is not None)
+    if not playlist.manual:  # a manual playlist never rotates: nothing to hold
+        hold = run("Hold", "resume" if playlist.held else "hold")
+        hold.setCheckable(True)
+        hold.setChecked(playlist.held)
+
+
+def _playlist_label(playlist: PlaylistView) -> str:
+    """The name, and whether it rotates by itself."""
+    if playlist.manual:
+        return f"{playlist.name} (manual)"
+    return f"{playlist.name} (held)" if playlist.held else playlist.name
 
 
 def _monitor_label(monitor: MonitorView) -> str:
@@ -200,7 +213,7 @@ def tooltip(overview: Overview | None) -> str:
     else:
         for playlist in overview.playlists:
             name = playlist.current.name if playlist.current else "-"
-            lines.append(f"{playlist.name}: {name}")
+            lines.append(f"{_playlist_label(playlist)}: {name}")
         if overview.paused:
             lines.append(f"Paused: {overview.paused}")
     # Windows cuts tray tooltips at 127 characters.

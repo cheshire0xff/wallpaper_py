@@ -38,12 +38,12 @@ from ..core.presence import Presence
 from ..core.service import Change, PlaylistService
 from ..protocol import (
     ChangedEvent,
+    CommandRequest,
     ErrorReply,
     Event,
     Overview,
     OverviewChangedEvent,
     Reply,
-    Request,
 )
 from .ipc import CommandServer
 
@@ -143,7 +143,7 @@ class ServiceWorker(QObject):
         self._publish()
         self.ticked.emit()
 
-    def execute(self, request: Request) -> Reply:
+    def execute(self, request: CommandRequest) -> Reply:
         """Run one command: the only way in for socket, tray and windows."""
         reply: Reply
         if self._service is None:
@@ -164,12 +164,12 @@ class ServiceWorker(QObject):
         return reply
 
     @Slot(int, object)
-    def submit(self, request_id: int, request: Request) -> None:
+    def submit(self, request_id: int, request: CommandRequest) -> None:
         """A request queued by `ServiceHost.submit`; answered by `replied`."""
         self.replied.emit(request_id, self.execute(request))
 
     @Slot(int, object)
-    def _answer(self, connection_id: int, request: Request) -> None:
+    def _answer(self, connection_id: int, request: CommandRequest) -> None:
         """A request from the socket (on this thread, so no queueing)."""
         assert self._server is not None
         self._server.reply(connection_id, self.execute(request))
@@ -283,7 +283,7 @@ class ServiceHost(QObject):
     def start(self) -> None:
         self._thread.start()
 
-    def submit(self, request: Request, callback: ReplyCallback) -> None:
+    def submit(self, request: CommandRequest, callback: ReplyCallback) -> None:
         """Run `request` on the service; `callback` gets the reply (UI thread)."""
         request_id = self._next_id
         self._next_id += 1

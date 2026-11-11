@@ -111,7 +111,9 @@ lives on the service thread and calls `ServiceWorker.execute` directly, the
 one entry point for every command. Commands run one at a time between
 ticks, in order, so the core needs no locking; nothing on that thread may
 block on a client or spin a nested event loop. A command that changes a
-wallpaper (`next`, `prev`, `remove`) emits `changed` like a tick does. The
+wallpaper (`next`, `prev`, `pick`, `remove`) emits `changed` like a tick
+does; after every command the overview is published if it changed (that is
+how `hold` / `resume` reach the tray and subscribers). The
 socket is created once at start and closed at stop, so it keeps answering
 across config reloads. The UI waits on the worker only at shutdown.
 
@@ -167,11 +169,14 @@ read-only, the .txt files) is planned in Phase 5. The UI process logs to
 State lives in two places, by design:
 
 - **SQLite** (`store.py`) holds app-internal state only: history with a
-  cursor per playlist, the shuffle deck, active seconds since the last
-  change, and which image each monitor was given. It is the single source
-  of truth. The app is its only writer (CLI commands go through its
-  socket, starting the app if needed). WAL mode lets later read-only
-  windows read alongside.
+  cursor per playlist (ordered by an explicit `position`, not by id, so a
+  pick can go between older entries), the shuffle deck, active seconds
+  since the last change, the hold flag, and which image each monitor was
+  given. It is the single source of truth. The app is its only writer (CLI
+  commands go through its socket, starting the app if needed). WAL mode
+  lets later read-only windows read alongside. Pre-release, the schema
+  changes in place: a database of another schema version is refused with
+  a message to delete it (only history and shuffle state are lost).
 - **Favourites / to-remove** live only in their `.txt` files. Every change
   re-reads the file, applies one add or remove and writes it atomically;
   reads reload when the file's mtime/size changes. Entries for missing
@@ -186,7 +191,18 @@ skipped (remembered for the process lifetime).
 Time is counted per playlist in *active* seconds, added on each tick: not
 while paused (locked / idle via `Presence`), not while no member is
 attached, and not across gaps longer than a minute (sleep). A manual change
-resets the count.
+(next / prev / pick) resets the count.
+
+Pick, hold and manual mode: a *pick* shows a chosen image (any directory)
+like `next` would, inserted in the history right after the cursor; one
+from the playlist's directory is moved among the drawn cards of the
+shuffle deck (counts as seen), and a sorted walk goes on after the newest
+history entry from the directory (so a pick from elsewhere is a detour).
+A *held* playlist (flag in SQLite) and a *manual* one (`interval =
+"manual"`) never get a new image from a tick, not even a first one, and
+their count stands still; ticks still restore the current image on a
+returning monitor and replace one that can't be shown any more (listed for
+removal, deleted). Hold doesn't apply to a manual playlist.
 
 A member that was detached (or vanished from the monitor list) has its
 "applied" record dropped, so on return it is given the group's current

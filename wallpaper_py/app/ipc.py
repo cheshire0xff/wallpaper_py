@@ -34,11 +34,11 @@ from PySide6.QtNetwork import QLocalServer, QLocalSocket
 
 from ..core.model import WallpaperError
 from ..protocol import (
+    CommandRequest,
     Envelope,
     ErrorReply,
     Event,
     Reply,
-    Request,
     Subscribe,
 )
 
@@ -402,14 +402,14 @@ class LineServer(QObject):
 
 class CommandServer(LineServer):
     """
-    The app's socket. Emits `received(connection_id, Request)`; the owner
+    The app's socket. Emits `received(connection_id, CommandRequest)`; the owner
     answers with `reply(connection_id, Reply)`. A `subscribe` request is
     announced with `subscribed(connection_id)` and the connection stays
     open for `send_event()` / `broadcast()`. Malformed requests, other
     versions and requests for a different config file are answered here.
     """
 
-    received = Signal(int, object)  # connection id, protocol.Request
+    received = Signal(int, object)  # connection id, protocol.CommandRequest
     subscribed = Signal(int)  # connection id
 
     def __init__(
@@ -451,7 +451,7 @@ class CommandServer(LineServer):
             )
             self.reply(connection_id, ErrorReply.make("wrong_config", message))
             return
-        request: Request | Subscribe = envelope.request
+        request: CommandRequest | Subscribe = envelope.request
         if isinstance(request, Subscribe):
             self._subscribers.add(connection_id)
             self.subscribed.emit(connection_id)

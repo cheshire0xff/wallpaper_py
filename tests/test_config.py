@@ -114,6 +114,25 @@ def test_invalid_configs_are_explained(
         parse(raw, tmp_path)
 
 
+def test_manual_interval(tmp_path: Path) -> None:
+    raw = {
+        "playlists": {"strip": playlist(interval=" Manual ")},
+        "pause_when_idle": "5m",
+    }
+    config = parse(raw, tmp_path)
+    strip = config.playlist("strip")
+    assert strip is not None and strip.interval is None and strip.manual
+    assert not config.warnings()  # never changes, so never changes unseen
+    with pytest.raises(ConfigError, match="'30m' or 'manual'"):
+        parse({"playlists": {"a": playlist(interval=False)}}, tmp_path)
+
+
+def test_example_config_is_valid(tmp_path: Path) -> None:
+    example = Path(__file__).parents[1] / "docs" / "config.example.toml"
+    config = load_config(example, default_dir=tmp_path)
+    assert config.playlists
+
+
 def test_missing_file_says_where(tmp_path: Path) -> None:
     with pytest.raises(ConfigError, match="No config file"):
         load_config(tmp_path / "nope.toml", default_dir=tmp_path)

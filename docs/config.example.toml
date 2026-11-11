@@ -19,6 +19,9 @@ pause_when_idle = "5m"
 # One table per playlist. `monitors` takes exact names or full ids from
 # `wallpaper list --all`. More than one monitor: a mirrored group, which
 # shows the same image on every member. A monitor can be in one playlist.
+#
+# To stop a playlist for a while, use `wallpaper hold` (or the tray's Hold)
+# rather than editing this file; `wallpaper resume` starts it again.
 [playlists.konachan]
 directory = 'D:\pictures\KONACHAN'   # scanned recursively
 monitors = ["AW3225QF", "PLX2783H"]
@@ -30,5 +33,7 @@ mode = "fill"                        # fill / fit / stretch; omit: as is
 directory = 'D:\pictures\Fantasy'
 monitors = ["ZeroMOD"]
 order = "sorted"                     # natural order: 2 before 10
-interval = "10m"
+# "manual": never changes by itself, only by next / prev / pick
+# (`wallpaper pick IMAGE fantasy` shows any image, from any directory).
+interval = "manual"
 mode = "fill"

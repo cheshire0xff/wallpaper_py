@@ -30,6 +30,7 @@
             "scheduled",
             "next",
             "previous",
+            "picked",
             "restored"
           ],
           "title": "Reason",
@@ -92,9 +93,12 @@
           "discriminator": {
             "mapping": {
               "fav": "#/$defs/Request",
+              "hold": "#/$defs/Request",
               "next": "#/$defs/Request",
+              "pick": "#/$defs/PickRequest",
               "prev": "#/$defs/Request",
               "remove": "#/$defs/Request",
+              "resume": "#/$defs/Request",
               "status": "#/$defs/Request",
               "subscribe": "#/$defs/Subscribe",
               "unfav": "#/$defs/Request"
@@ -104,6 +108,9 @@
           "oneOf": [
             {
               "$ref": "#/$defs/Request"
+            },
+            {
+              "$ref": "#/$defs/PickRequest"
             },
             {
               "$ref": "#/$defs/Subscribe"
@@ -135,6 +142,7 @@
             "not_attached",
             "no_images",
             "nothing_shown",
+            "bad_image",
             "failed",
             "internal",
             "unreachable"
@@ -182,6 +190,35 @@
           "overview_changed": "#/$defs/OverviewChangedEvent"
         }
       }
+    },
+    "HoldResult": {
+      "properties": {
+        "command": {
+          "const": "hold",
+          "default": "hold",
+          "title": "Command",
+          "type": "string"
+        },
+        "playlist": {
+          "title": "Playlist",
+          "type": "string"
+        },
+        "held": {
+          "title": "Held",
+          "type": "boolean"
+        },
+        "changed": {
+          "title": "Changed",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "playlist",
+        "held",
+        "changed"
+      ],
+      "title": "HoldResult",
+      "type": "object"
     },
     "ImageMode": {
       "enum": [
@@ -350,6 +387,63 @@
       "title": "OverviewChangedEvent",
       "type": "object"
     },
+    "PickRequest": {
+      "additionalProperties": false,
+      "description": "Show a chosen image on a playlist now (from any directory).",
+      "properties": {
+        "command": {
+          "const": "pick",
+          "default": "pick",
+          "title": "Command",
+          "type": "string"
+        },
+        "target": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target"
+        },
+        "image": {
+          "format": "path",
+          "title": "Image",
+          "type": "string"
+        }
+      },
+      "required": [
+        "image"
+      ],
+      "title": "PickRequest",
+      "type": "object"
+    },
+    "PickResult": {
+      "properties": {
+        "command": {
+          "const": "pick",
+          "default": "pick",
+          "title": "Command",
+          "type": "string"
+        },
+        "playlist": {
+          "title": "Playlist",
+          "type": "string"
+        },
+        "change": {
+          "$ref": "#/$defs/Change"
+        }
+      },
+      "required": [
+        "playlist",
+        "change"
+      ],
+      "title": "PickResult",
+      "type": "object"
+    },
     "PlaylistDetails": {
       "properties": {
         "name": {
@@ -379,6 +473,16 @@
           "title": "Favourite",
           "type": "boolean"
         },
+        "held": {
+          "default": false,
+          "title": "Held",
+          "type": "boolean"
+        },
+        "manual": {
+          "default": false,
+          "title": "Manual",
+          "type": "boolean"
+        },
         "directory": {
           "format": "path",
           "title": "Directory",
@@ -388,8 +492,15 @@
           "$ref": "#/$defs/Order"
         },
         "interval": {
-          "title": "Interval",
-          "type": "number"
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Interval"
         },
         "mode": {
           "anyOf": [
@@ -402,8 +513,15 @@
           ]
         },
         "next_in_seconds": {
-          "title": "Next In Seconds",
-          "type": "number"
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Next In Seconds"
         },
         "upcoming": {
           "items": {
@@ -456,6 +574,16 @@
         },
         "favourite": {
           "title": "Favourite",
+          "type": "boolean"
+        },
+        "held": {
+          "default": false,
+          "title": "Held",
+          "type": "boolean"
+        },
+        "manual": {
+          "default": false,
+          "title": "Manual",
           "type": "boolean"
         }
       },
@@ -558,6 +686,15 @@
             },
             {
               "$ref": "#/$defs/RemoveResult"
+            },
+            {
+              "$ref": "#/$defs/PickResult"
+            },
+            {
+              "$ref": "#/$defs/HoldResult"
+            },
+            {
+              "$ref": "#/$defs/ResumeResult"
             }
           ],
           "discriminator": {
@@ -568,7 +705,10 @@
               "prev": "#/$defs/PrevResult",
               "fav": "#/$defs/MarkResult",
               "unfav": "#/$defs/MarkResult",
-              "remove": "#/$defs/RemoveResult"
+              "remove": "#/$defs/RemoveResult",
+              "pick": "#/$defs/PickResult",
+              "hold": "#/$defs/HoldResult",
+              "resume": "#/$defs/ResumeResult"
             }
           }
         },
@@ -579,6 +719,35 @@
     },
     "Request": {
       "$ref": "#/$defs/Envelope"
+    },
+    "ResumeResult": {
+      "properties": {
+        "command": {
+          "const": "resume",
+          "default": "resume",
+          "title": "Command",
+          "type": "string"
+        },
+        "playlist": {
+          "title": "Playlist",
+          "type": "string"
+        },
+        "held": {
+          "title": "Held",
+          "type": "boolean"
+        },
+        "changed": {
+          "title": "Changed",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "playlist",
+        "held",
+        "changed"
+      ],
+      "title": "ResumeResult",
+      "type": "object"
     },
     "StatusResult": {
       "properties": {

@@ -39,6 +39,7 @@ STRIP = PlaylistView(
     monitors=(monitor("ZeroMOD", None),),
     current=None,
     favourite=False,
+    manual=True,
 )
 
 
@@ -110,12 +111,14 @@ def test_flat_sections(menu: QMenu) -> None:
         ("Previous", True),
         ("Favourite", True),
         ("Remove (list and skip)", True),
-        ("strip · ZeroMOD (not found)", False),
+        ("Hold", True),
+        ("strip (manual) · ZeroMOD (not found)", False),
         ("Nothing shown yet", False),
         ("Next", False),
         ("Previous", False),
         ("Favourite", False),
         ("Remove (list and skip)", False),
+        # no Hold: a manual playlist never rotates
         ("Paused: idle", False),
         ("Open layout", True),
         ("Open library", True),
@@ -125,7 +128,24 @@ def test_flat_sections(menu: QMenu) -> None:
         ("Quit", True),
     ]
     assert find(menu, "Favourite").isChecked()
-    assert not find(menu, "Favourite", after="strip · ZeroMOD (not found)").isChecked()
+    strip = "strip (manual) · ZeroMOD (not found)"
+    assert not find(menu, "Favourite", after=strip).isChecked()
+    assert find(menu, "Hold").isCheckable() and not find(menu, "Hold").isChecked()
+
+
+def test_hold_toggle(menu: QMenu) -> None:
+    actions = Actions()
+    held = WALLS.model_copy(update={"held": True})
+    fill(menu, Overview(playlists=(held,)), actions)
+    assert items(menu)[0].text() == "walls (held) · AW3225QF + PLX2783H (off)"
+    hold = find(menu, "Hold")
+    assert hold.isChecked() and hold.isEnabled()
+    hold.trigger()
+    assert actions.calls == [queued("resume", "walls")]  # held: the toggle resumes
+
+    fill(menu, Overview(playlists=(WALLS,)), actions)
+    find(menu, "Hold").trigger()
+    assert actions.calls[-1] == queued("hold", "walls")
 
 
 def test_items_queue_commands(menu: QMenu) -> None:
@@ -202,7 +222,11 @@ def test_long_names_are_elided_in_the_middle(menu: QMenu) -> None:
 def test_tooltip_and_icon_state() -> None:
     assert tooltip(None) == "wallpaper_py\nStarting..."
     assert tooltip(Overview(playlists=(WALLS, STRIP), paused="idle")) == (
-        "wallpaper_py\nwalls: a & b.jpg\nstrip: -\nPaused: idle"
+        "wallpaper_py\nwalls: a & b.jpg\nstrip (manual): -\nPaused: idle"
+    )
+    held = WALLS.model_copy(update={"held": True})
+    assert (
+        tooltip(Overview(playlists=(held,))) == "wallpaper_py\nwalls (held): a & b.jpg"
     )
     assert icon_state(Overview(error="x")) is IconState.ERROR
     assert icon_state(Overview(paused="idle")) is IconState.PAUSED

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 import time
 from collections.abc import Callable, Sequence
@@ -30,15 +31,20 @@ from .core.setter import apply_wallpaper
 from .protocol import (
     TARGET_COMMANDS,
     Command,
+    CommandRequest,
     Envelope,
     ErrorReply,
+    HoldResult,
     MarkResult,
     NextResult,
+    PickRequest,
+    PickResult,
     PlaylistDetails,
     PrevResult,
     RemoveResult,
     Reply,
     Request,
+    ResumeResult,
     StatusResult,
 )
 
@@ -49,7 +55,7 @@ WINDOWS = ("layout", "library")
 BackendFactory = Callable[[], Backend]
 PresenceFactory = Callable[[], Presence]
 # Runs a request in the app (starting it if needed) and returns its reply.
-AppClient = Callable[[Request, Path], Reply]
+AppClient = Callable[[CommandRequest, Path], Reply]
 # The command line that starts the app for a config file.
 AppCommand = Callable[[Path], list[str]]
 
@@ -60,7 +66,9 @@ RETRY_INTERVAL_S = 0.2
 
 
 def send_to_app(
-    request: Request, config_path: Path, app_command: AppCommand | None = None
+    request: CommandRequest,
+    config_path: Path,
+    app_command: AppCommand | None = None,
 ) -> Reply:
     """
     Run `request` in the app. If none is running, start it in the tray
@@ -155,9 +163,14 @@ class Text(NamedTuple):
 
 
 def cmd_playlist(ctx: Context, args: argparse.Namespace) -> int:
-    """status / next / prev / fav / unfav / remove: always in the app."""
-    command: Command = args.command  # a subparser name from COMMANDS
-    request = Request(command=command, target=getattr(args, "target", None))
+    """status, pick and the TARGET_COMMANDS: always in the app."""
+    target: str | None = getattr(args, "target", None)
+    request: CommandRequest
+    if args.command == "pick":
+        request = PickRequest(target=target, image=args.image)
+    else:
+        command: Command = args.command  # a subparser name from Command
+        request = Request(command=command, target=target)
     reply = ctx.app_client(request, ctx.config_path)
     log.info("Reply: %s", reply.model_dump_json())
     text = format_reply(reply)
@@ -169,14 +182,15 @@ def cmd_playlist(ctx: Context, args: argparse.Namespace) -> int:
 
 
 def format_reply(reply: Reply) -> Text:
-    # pylint: disable=too-many-return-statements
+    # One case per reply model.
+    # pylint: disable=too-many-return-statements,too-many-branches
     match reply:
         case ErrorReply():
             return Text(1, err=f"error: {reply.error.message}")
         case StatusResult():
             warnings = "\n".join(f"Warning: {w}" for w in reply.warnings)
             return Text(0, format_status(reply.playlists, reply.paused), warnings)
-        case NextResult():
+        case NextResult() | PickResult():
             return Text(0, reply.change.describe())
         case PrevResult():
             if reply.change is None:
@@ -197,17 +211,15 @@ def format_reply(reply: Reply) -> Text:
             else:
                 lines.append(f"{reply.playlist}: changes once a monitor is attached")
             return Text(0, "\n".join(lines))
+        case HoldResult() | ResumeResult():
+            return Text(0, _hold_text(reply))
     raise AssertionError(f"Unhandled reply {reply!r}")
 
 
 def format_status(playlists: Sequence[PlaylistDetails], paused: str | None) -> str:
     lines: list[str] = []
     for playlist in playlists:
-        mode = playlist.mode.value if playlist.mode else "as is"
-        lines.append(
-            f"{playlist.name}  ({playlist.order.value}, every "
-            f"{format_duration(playlist.interval)}, {mode})"
-        )
+        lines.append(f"{playlist.name}  ({', '.join(_traits(playlist))})")
         members = []
         for monitor in playlist.monitors:
             if monitor.attached is None:
@@ -218,12 +230,43 @@ def format_status(playlists: Sequence[PlaylistDetails], paused: str | None) -> s
         lines.append(f"  monitors:  {', '.join(members)}")
         lines.append(f"  directory: {playlist.directory}")
         lines.append(f"  current:   {playlist.current or '-'}")
-        next_in = format_duration(playlist.next_in_seconds)
-        lines.append(f"  next in:   {next_in} of active time")
+        lines.append(f"  next in:   {_next_in(playlist)}")
         upcoming = ", ".join(p.name for p in playlist.upcoming) or "-"
         lines.append(f"  upcoming:  {upcoming}")
     lines.append(f"Rotation paused: {paused}" if paused else "Rotation active")
     return "\n".join(lines)
+
+
+def _hold_text(reply: HoldResult | ResumeResult) -> str:
+    name = reply.playlist
+    if reply.held:
+        if reply.changed:
+            return (
+                f"{name}: held; only next / prev / pick change it until "
+                f"`wallpaper resume {name}`"
+            )
+        return f"{name} is already held"
+    return f"{name}: rotating again" if reply.changed else f"{name} is not held"
+
+
+def _traits(playlist: PlaylistDetails) -> list[str]:
+    """Order, interval, mode, and held if it is."""
+    if playlist.interval is None:
+        rotation = "manual"
+    else:
+        rotation = f"every {format_duration(playlist.interval)}"
+    mode = playlist.mode.value if playlist.mode else "as is"
+    traits = [playlist.order.value, rotation, mode]
+    if playlist.held:
+        traits.append("held")
+    return traits
+
+
+def _next_in(playlist: PlaylistDetails) -> str:
+    if playlist.next_in_seconds is None:
+        return "only by next / prev / pick (manual)"
+    left = f"{format_duration(playlist.next_in_seconds)} of active time"
+    return f"held ({left} once resumed)" if playlist.held else left
 
 
 def cmd_app(ctx: Context, args: argparse.Namespace) -> int:
@@ -258,6 +301,11 @@ def cmd_ui(ctx: Context, args: argparse.Namespace) -> int:
 
 
 # -- arguments ---------------------------------------------------------------
+
+
+def absolute_path(value: str) -> Path:
+    """Absolute (the app runs in another directory); symlinks are kept."""
+    return Path(os.path.abspath(value))
 
 
 def existing_file(value: str) -> Path:
@@ -362,11 +410,20 @@ def build_parser() -> argparse.ArgumentParser:
         "fav": "add the current image to favourites",
         "unfav": "remove the current image from favourites",
         "remove": "list the current image for removal, show the next",
+        "hold": "stop rotating until resume (next / prev / pick still work)",
+        "resume": "rotate a held playlist again",
     }
     for name in TARGET_COMMANDS:
         command = sub.add_parser(name, help=helps[name])
         command.add_argument("target", nargs="?", help=target_help)
         command.set_defaults(handler=cmd_playlist)
+
+    pick = sub.add_parser(
+        "pick", help="show an image now, from any directory (prev goes back)"
+    )
+    pick.add_argument("image", type=absolute_path, help="image file")
+    pick.add_argument("target", nargs="?", help=target_help)
+    pick.set_defaults(handler=cmd_playlist)
     return parser
 
 

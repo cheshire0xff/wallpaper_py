@@ -15,13 +15,14 @@ Status: **ok** (with the date, when known) all steps seen working;
 | Section | Windows 11 | KDE (Arch) | KDE (Kubuntu) |
 |---|---|---|---|
 | [1. Monitors and `set`](#1-monitors-and-set) | ok | todo | todo |
-| [2. Playlists](#2-playlists) | ok, except step 4 | todo | todo |
+| [2. Playlists](#2-playlists) | ok, except a reboot (step 4; an app restart is ok 2026-11-11) | todo | todo |
 | [3. Pause on lock and idle](#3-pause-on-lock-and-idle) | ok | todo | todo |
 | [4. Monitor switched off](#4-monitor-switched-off) | todo | todo | todo |
-| [5. CLI and the app](#5-cli-and-the-app) | ok, except `--verbose` and step 3 | todo | todo |
-| [6. Tray](#6-tray) | steps 2 and 3 todo | todo | todo |
+| [5. CLI and the app](#5-cli-and-the-app) | ok, except step 3 | todo | todo |
+| [6. Tray](#6-tray) | ok, except step 2 and a broken config (step 3) | todo | todo |
 | [7. Start at login](#7-start-at-login) | todo | todo | todo |
 | [8. Windows (UI process)](#8-windows-ui-process) | ok 2026-11-11 | todo | todo |
+| [9. Pick, hold and manual](#9-pick-hold-and-manual) | ok 2026-11-11, except waiting past an interval (steps 3, 6) | todo | todo |
 
 ## 1. Monitors and `set`
 
@@ -98,3 +99,33 @@ monitor.
    to the front.
 6. With a window open, tray *Quit*: the window closes too.
 7. With a window open, `wallpaper next`: its "Last change" line updates.
+
+## 9. Pick, hold and manual
+
+The state database's schema changed (version 2): an older `state.sqlite3`
+is refused with a message naming the file to delete (in the tray, and from
+any CLI command). Delete it first; only history and shuffle state are lost.
+
+The behaviour behind every step below is already tested with the fake
+backend (`tests/test_service.py`, `test_commands.py`, `test_cli.py`,
+`test_tray.py`, `test_worker.py`, including hold across an app restart).
+These steps only confirm what a test can't see: the image really appearing
+on the right monitors, the real tray menu, and a real quit and restart.
+
+1. `wallpaper pick <an image from another directory> <playlist>`: it shows
+   on every attached monitor of the playlist (all members of a mirrored
+   group). `wallpaper prev <playlist>` brings back what was shown before,
+   and `wallpaper next <playlist>` the picked image again.
+2. `wallpaper pick <missing file>` and `wallpaper pick <a .txt file>`: a
+   clear error, and the wallpaper doesn't change.
+3. Tray *Hold* on a playlist: the menu header says *(held)*, the item is
+   ticked, and the playlist doesn't change past its interval (the other
+   playlists do). *Next* still works. `wallpaper status` says *held*.
+4. With a playlist held, quit the app (tray *Quit*) and start it again: it
+   is still held, and its monitors get its current image back.
+5. Untick *Hold* (or `wallpaper resume`): it changes again once the rest of
+   its interval has passed.
+6. Set a playlist to `interval = "manual"` and *Reload config*: the header
+   says *(manual)*, there is no *Hold* item, and it never changes by itself
+   (leave it well past its old interval, also across an app restart).
+   `wallpaper hold <it>` says why it can't be held; `next` and `pick` work.

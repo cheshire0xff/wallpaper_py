@@ -26,12 +26,12 @@ from PySide6.QtNetwork import QLocalSocket
 from ...core import paths
 from ...protocol import (
     ChangedEvent,
+    CommandRequest,
     Envelope,
     ErrorReply,
     Overview,
     OverviewChangedEvent,
     Reply,
-    Request,
     Subscribe,
 )
 from .. import ipc
@@ -55,7 +55,7 @@ class Client(QObject):
         super().__init__(parent)
         self.overview: Overview | None = None  # None until the first arrives
 
-    def run(self, request: Request, on_reply: ReplyCallback) -> None:
+    def run(self, request: CommandRequest, on_reply: ReplyCallback) -> None:
         """Run `request` in the app; `on_reply` gets the reply (this thread)."""
         raise NotImplementedError
 
@@ -102,7 +102,7 @@ class SocketClient(Client):
         self._over = True
         self._drop_socket()
 
-    def run(self, request: Request, on_reply: ReplyCallback) -> None:
+    def run(self, request: CommandRequest, on_reply: ReplyCallback) -> None:
         def answered(line: bytes) -> None:
             try:
                 reply = ipc.decode_reply(line)

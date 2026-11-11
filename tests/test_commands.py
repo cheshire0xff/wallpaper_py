@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Literal
 
 import pytest
+from PIL import Image
 
 from wallpaper_py.commands import error_reply, execute, open_service, overview
 from wallpaper_py.core import paths
@@ -17,16 +18,21 @@ from wallpaper_py.core.service import (
 )
 from wallpaper_py.protocol import (
     Command,
+    Envelope,
     ErrorReply,
+    HoldResult,
     MarkResult,
     MonitorView,
     NextResult,
     Overview,
+    PickRequest,
+    PickResult,
     PlaylistView,
     PrevResult,
     RemoveResult,
     Reply,
     Request,
+    ResumeResult,
     StatusResult,
 )
 
@@ -158,6 +164,77 @@ def test_errors_are_structured(
     reply = outcome.reply
     assert isinstance(reply, ErrorReply)
     assert reply.error.kind == kind and reply.error.message.startswith(message)
+
+
+def test_pick_hold_resume_reply_with_data(
+    service: PlaylistService, tmp_path: Path
+) -> None:
+    image = tmp_path / "elsewhere" / "x.png"
+    image.parent.mkdir()
+    Image.new("RGB", (8, 8)).save(image)
+    outcome = execute(service, PickRequest(target="walls", image=image))
+    change = Change("walls", image, "picked", ("Main",))
+    assert outcome == (PickResult(playlist="walls", change=change), change)
+
+    assert run(service, "hold", "walls") == HoldResult(
+        playlist="walls", held=True, changed=True
+    )
+    assert run(service, "hold", "main") == HoldResult(
+        playlist="walls", held=True, changed=False
+    )
+    assert overview(service).playlists[0].held
+    assert run(service, "resume", "walls") == ResumeResult(
+        playlist="walls", held=False, changed=True
+    )
+    assert run(service, "resume", "walls") == ResumeResult(
+        playlist="walls", held=False, changed=False
+    )
+    assert execute(service, Request(command="hold", target="walls")).change is None
+
+
+@pytest.mark.parametrize(
+    "image, message",
+    [("missing.png", "No such image file"), ("walls/a.jpg", "Cannot open")],
+)
+def test_pick_errors(
+    service: PlaylistService, tmp_path: Path, image: str, message: str
+) -> None:
+    outcome = execute(service, PickRequest(target="walls", image=tmp_path / image))
+    assert outcome.change is None
+    reply = outcome.reply
+    assert isinstance(reply, ErrorReply) and reply.error.kind == "bad_image"
+    assert reply.error.message.startswith(message)
+
+
+def test_pick_request_is_strict(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="absolute"):
+        PickRequest(image=Path("relative.png"))
+    with pytest.raises(ValueError):
+        PickRequest.model_validate({"image": str(tmp_path / "a.png"), "x": 1})
+    with pytest.raises(ValueError):
+        Request.model_validate({"command": "pick", "target": "walls"})
+    envelope = Envelope.model_validate_json(
+        Envelope(request=PickRequest(image=tmp_path), config=tmp_path).model_dump_json()
+    )
+    assert envelope.request == PickRequest(image=tmp_path)
+
+
+def test_manual_playlist(tmp_path: Path, backend: FakeBackend) -> None:
+    make_images(tmp_path / "walls", "a.jpg")
+    make_images(tmp_path / "strip", "s.jpg")
+    config = tmp_path / "config.toml"
+    manual = CONFIG.replace('interval = "10m"', 'interval = "manual"')
+    config.write_text(manual, encoding="utf-8")
+    with open_service(config, backend, FakePresence()) as service:
+        reply = run(service, "hold", "walls")
+        assert isinstance(reply, ErrorReply) and reply.error.kind == "failed"
+        assert "walls is manual" in reply.error.message
+        status = run(service, "status")
+        assert isinstance(status, StatusResult)
+        walls = status.playlists[0]
+        assert walls.manual and not walls.held
+        assert walls.interval is None and walls.next_in_seconds is None
+        assert overview(service).playlists[0].manual
 
 
 def test_no_images_and_unexpected_errors() -> None:

@@ -11,13 +11,16 @@ from wallpaper_py.app.ui.launcher import WINDOWS
 from wallpaper_py.commands import execute, open_service
 from wallpaper_py.core import paths
 from wallpaper_py.core.backend import Backend
+from wallpaper_py.core.config import Order
+from wallpaper_py.core.model import ImageMode
 from wallpaper_py.core.service import Change
 from wallpaper_py.protocol import (
+    CommandRequest,
     ErrorReply,
     MarkResult,
+    PlaylistDetails,
     RemoveResult,
     Reply,
-    Request,
     StatusResult,
 )
 
@@ -129,7 +132,7 @@ class TestPlaylistCommands:
     def run(self, backend: FakeBackend, config: Path, *argv: str) -> int:
         """Playlist commands go to a stand-in for the app, in this process."""
 
-        def app_client(request: Request, config_path: Path) -> Reply:
+        def app_client(request: CommandRequest, config_path: Path) -> Reply:
             with open_service(config_path, backend, FakePresence()) as service:
                 return execute(service, request).reply
 
@@ -185,6 +188,42 @@ class TestPlaylistCommands:
         assert "upcoming:  b.jpg, c.jpg, a.jpg" in out
         assert "Rotation active" in out
 
+    def test_pick_hold_resume(
+        self,
+        backend: FakeBackend,
+        config: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        (tmp_path / "elsewhere").mkdir()
+        Image.new("RGB", (8, 8)).save(tmp_path / "elsewhere" / "x.png")
+        monkeypatch.chdir(tmp_path / "elsewhere")  # a relative path is fine
+        assert self.run(backend, config, "next") == 0
+        assert self.run(backend, config, "pick", "x.png") == 0
+        assert self.run(backend, config, "prev", "walls") == 0
+        assert self.run(backend, config, "pick", "missing.png", "walls") == 1
+        assert self.run(backend, config, "hold") == 0
+        assert self.run(backend, config, "hold", "walls") == 0
+        assert self.run(backend, config, "status") == 0
+        assert self.run(backend, config, "resume") == 0
+        assert self.run(backend, config, "resume") == 0
+        captured = capsys.readouterr()
+        out = captured.out.splitlines()
+        assert out[:5] == [
+            "walls: a.jpg on Main",
+            "walls: x.png on Main",
+            "walls: a.jpg on Main",
+            "walls: held; only next / prev / pick change it until "
+            "`wallpaper resume walls`",
+            "walls is already held",
+        ]
+        assert "walls  (sorted, every 10m, as is, held)" in out
+        assert "  next in:   held (10m of active time once resumed)" in out
+        assert out[-2:] == ["walls: rotating again", "walls is not held"]
+        missing = tmp_path / "elsewhere" / "missing.png"
+        assert captured.err == f"error: No such image file: {missing}\n"
+
     def test_missing_config_is_explained(
         self,
         backend: FakeBackend,
@@ -233,6 +272,30 @@ def test_verbose_tells_how_the_app_was_reached(
     assert messages[0].startswith("Asking the running app (socket wallpaper_py-")
     assert messages[1] == "No app is running: starting one"
     assert messages[2].startswith("Starting ")
+
+
+def test_status_of_a_manual_playlist() -> None:
+    strip = PlaylistDetails(
+        name="strip",
+        monitors=(),
+        current=None,
+        favourite=False,
+        manual=True,
+        directory=Path("/p"),
+        order=Order.SHUFFLE,
+        interval=None,
+        mode=ImageMode.FILL,
+        next_in_seconds=None,
+        upcoming=(),
+    )
+    lines = cli.format_status([strip], None).splitlines()
+    assert lines[0] == "strip  (shuffle, manual, fill)"
+    assert "  next in:   only by next / prev / pick (manual)" in lines
+
+
+def test_pick_parses_an_absolute_path(tmp_path: Path) -> None:
+    args = cli.build_parser().parse_args(["pick", str(tmp_path / "x.png"), "strip"])
+    assert (args.image, args.target) == (tmp_path / "x.png", "strip")
 
 
 def test_reply_texts() -> None:

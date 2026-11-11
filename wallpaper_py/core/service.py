@@ -1,15 +1,24 @@
 """
 The playlist service: rotates wallpapers, walks history, marks images.
 
-Driven by `tick()` (every few seconds, from `wallpaper run` now and a Qt
-timer later) and by user commands (`next`, `previous`, `favourite`,
-`remove`). The backend, presence hook, clock and random generator are
+Driven by `tick()` (every few seconds, from the app's timer) and by user
+commands (`next`, `previous`, `pick`, `favourite`, `remove`, `hold`,
+`resume`). The backend, presence hook, clock and random generator are
 injected, so all of it is tested with fakes.
 
 Timing: each playlist counts *active* seconds since its last change, i.e.
 time while it has an attached monitor, the session is not locked or idle,
 and this process is running. A change happens when that reaches the
-interval; a manual next / previous starts the count again.
+interval; a next / previous / pick starts the count again.
+
+A held playlist (and a manual one, `interval = "manual"`) does not rotate:
+its count stands still and ticks never choose a new image for it, not even
+a first one. They still give its current image to a monitor that comes
+back, and replace a current image that can't be shown any more (listed for
+removal, deleted, unreadable).
+
+Pick shows a chosen image, from any directory, as if `next` had chosen it:
+it goes into the history right after the current entry.
 
 Safety: an image is first shown, then committed (history, deck). If no
 monitor of the playlist is attached the change is postponed, never skipped
@@ -20,6 +29,7 @@ one member is attached; a member that comes back gets the current image.
 from __future__ import annotations
 
 import logging
+import os
 import random
 import time
 from collections.abc import Callable, Sequence
@@ -29,6 +39,7 @@ from typing import Literal
 
 from .backend import Backend
 from .config import Config, Order, PlaylistConfig
+from .imaging import check_image
 from .library import Library, path_key
 from .marks import MarkFile
 from .model import (
@@ -70,7 +81,11 @@ class NothingShownError(PlaylistError):
     """The playlist has not shown an image yet, so there is no current one."""
 
 
-ChangeReason = Literal["scheduled", "next", "previous", "restored"]
+class ManualPlaylistError(PlaylistError):
+    """Hold / resume on a manual playlist, which never rotates anyway."""
+
+
+ChangeReason = Literal["scheduled", "next", "previous", "picked", "restored"]
 
 
 @dataclass(frozen=True)
@@ -101,6 +116,7 @@ class PlaylistStatus:
     current: Path | None
     elapsed: float
     upcoming: tuple[Path, ...]
+    held: bool = False  # never for a manual playlist
 
 
 @dataclass(frozen=True)
@@ -191,14 +207,21 @@ class PlaylistService:
             self._postponed.discard(playlist.name)
 
         current = self._current(playlist)
-        due = current is None or not self._showable(current.path, removed)
-        if self._pause_reason is None:
-            due |= self._store.add_elapsed(playlist.name, elapsed) >= playlist.interval
+        if current is not None and not self._showable(current.path, removed):
+            due = True  # even when held: it must not stay on screen
+        elif playlist.interval is None or self.held(playlist):
+            due = False  # never rotates by itself, nor shows a first image
+        else:
+            due = current is None
+            if self._pause_reason is None:
+                spent = self._store.add_elapsed(playlist.name, elapsed)
+                due |= spent >= playlist.interval
         if due:
             return self._step(
                 playlist, attached, lambda: self._peek_next(playlist), "scheduled"
             )
-        assert current is not None
+        if current is None:  # held or manual, nothing shown yet
+            return None
         return self._fill_in(playlist, attached, current.path)
 
     def _seconds_since_last_tick(self) -> float:
@@ -265,6 +288,68 @@ class PlaylistService:
             "previous",
         )
 
+    def pick(self, playlist: PlaylistConfig, image: Path) -> Change:
+        """
+        Show `image` now, as if `next` had chosen it: it goes into the
+        history right after the current entry (so `previous` goes back to
+        what was shown before), and the interval starts again. It may come
+        from any directory; one from the playlist's own directory counts as
+        seen in the current shuffle cycle.
+
+        Raises:
+            ImageLoadError: `image` is missing or not an image.
+            PlaylistError: `image` is listed for removal.
+            MonitorNotAttachedError: no member is attached; nothing changed.
+        """
+        image = self._as_scanned(playlist, image)
+        if path_key(image) in self.to_remove.keys():
+            raise PlaylistError(
+                f"{image.name} is listed for removal in {self.to_remove.file}; "
+                f"take it off the list to show it"
+            )
+        check_image(image)
+        shown, missed = self._show(playlist, image, self._attached_now(playlist))
+        self._broken.discard(path_key(image))  # it loads now
+        now = self._clock()
+        with self._store.transaction():
+            cursor = self._store.playlist_state(playlist.name).cursor
+            history_id = self._store.insert_history(playlist.name, cursor, image, now)
+            if playlist.order is Order.SHUFFLE and self._in_directory(playlist, image):
+                images = self._library.images(playlist.directory)
+                self._deck(playlist).mark_seen(images, image)
+            self._store.set_cursor(playlist.name, history_id)
+            for monitor in shown:
+                self._store.set_applied(monitor.id, playlist.name, image, now)
+        return Change(
+            playlist.name,
+            image,
+            "picked",
+            tuple(m.name for m in shown),
+            tuple(m.name for m in missed),
+        )
+
+    def held(self, playlist: PlaylistConfig) -> bool:
+        """Held by `hold` (a manual playlist never is: it doesn't rotate)."""
+        return not playlist.manual and self._store.playlist_state(playlist.name).held
+
+    def hold(self, playlist: PlaylistConfig) -> bool:
+        """Stop rotating until `resume`; False if it already was held."""
+        self._refuse_manual(playlist, "hold")
+        return self._store.set_held(playlist.name, True)
+
+    def resume(self, playlist: PlaylistConfig) -> bool:
+        """Rotate again, where the count stopped; False if it wasn't held."""
+        self._refuse_manual(playlist, "resume")
+        return self._store.set_held(playlist.name, False)
+
+    @staticmethod
+    def _refuse_manual(playlist: PlaylistConfig, command: str) -> None:
+        if playlist.manual:
+            raise ManualPlaylistError(
+                f'{playlist.name} is manual (interval = "manual"): it never '
+                f"changes by itself, so there is nothing to {command}"
+            )
+
     def current(self, playlist: PlaylistConfig) -> Path | None:
         entry = self._current(playlist)
         return entry.path if entry else None
@@ -308,6 +393,7 @@ class PlaylistService:
                     current=self.current(playlist),
                     elapsed=self._store.playlist_state(playlist.name).elapsed,
                     upcoming=tuple(self._upcoming(playlist, removed, upcoming)),
+                    held=self.held(playlist),
                 )
             )
         return result
@@ -343,13 +429,44 @@ class PlaylistService:
         def drawable(image: Path) -> bool:
             return str(image) in scanned and self._showable(image, removed)
 
-        latest = self._store.latest_history(playlist.name)
-        latest_path = latest.path if latest else None
         if playlist.order is Order.SORTED:
-            image = next_sorted(images, latest_path, drawable)
+            image = next_sorted(images, self._sorted_after(playlist), drawable)
             return _Candidate(image) if image else None
-        card = self._deck(playlist).peek(images, drawable, avoid=latest_path)
+        latest = self._store.latest_history(playlist.name)
+        avoid = latest.path if latest else None
+        card = self._deck(playlist).peek(images, drawable, avoid=avoid)
         return _Candidate(card.path, card=card) if card else None
+
+    def _sorted_after(self, playlist: PlaylistConfig) -> Path | None:
+        """
+        Where the sorted walk goes on: after the newest history entry from
+        the playlist's directory (a pick from elsewhere is a detour; one from
+        the directory moves the walk there).
+        """
+        for entry in self._store.history_before(playlist.name, limit=100):
+            if self._in_directory(playlist, entry.path):
+                return entry.path
+        return None
+
+    @staticmethod
+    def _in_directory(playlist: PlaylistConfig, image: Path) -> bool:
+        directory = path_key(playlist.directory)
+        return path_key(image).startswith(directory.rstrip(os.sep) + os.sep)
+
+    def _as_scanned(self, playlist: PlaylistConfig, image: Path) -> Path:
+        """
+        `image` spelled as the playlist's scan has it, if it is one of its
+        images (so the deck and the history know it); else as given.
+        """
+        if not self._in_directory(playlist, image):
+            return image
+        key = path_key(image)
+        for refresh in (False, True):  # it may be newer than the cached scan
+            images = self._library.images(playlist.directory, refresh=refresh)
+            found = next((p for p in images if path_key(p) == key), None)
+            if found is not None:
+                return found
+        return image
 
     def _peek_previous(self, playlist: PlaylistConfig) -> _Candidate | None:
         removed = self.to_remove.keys()
@@ -379,10 +496,8 @@ class PlaylistService:
             return result[:limit]
         images = self._library.images(playlist.directory)
         if playlist.order is Order.SORTED:
-            latest = self._store.latest_history(playlist.name)
-            more = upcoming_sorted(
-                images, latest.path if latest else None, showable, limit
-            )
+            after = self._sorted_after(playlist)
+            more = upcoming_sorted(images, after, showable, limit)
         else:
             more = [
                 c.path for c in self._deck(playlist).upcoming(images, showable, limit)
@@ -477,7 +592,7 @@ class PlaylistService:
         now = self._clock()
         with self._store.transaction():
             history_id = candidate.history_id
-            if history_id is None:
+            if history_id is None:  # new images come after all of the history
                 history_id = self._store.append_history(
                     playlist.name, candidate.image, now
                 )

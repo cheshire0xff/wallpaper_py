@@ -2,7 +2,8 @@
 The app's socket protocol as pydantic models: what goes over the wire, and
 nothing else (no logic, no Qt). See docs/protocol.md.
 
-- In: an `Envelope` holding a `Request` (a playlist command) or `Subscribe`.
+- In: an `Envelope` holding a `Request` (a playlist command), a
+  `PickRequest` (`pick`, which also carries an image) or `Subscribe`.
 - Out: a `Reply`, which is data only: one result model per command, tagged
   on `command`, or an `ErrorReply`. The CLI formats its text from these;
   the tray and the UI process show them.
@@ -10,7 +11,8 @@ nothing else (no logic, no Qt). See docs/protocol.md.
 
 `commands.py` runs requests, `app/ipc.py` carries the lines. The protocol
 only ever adds commands, fields, error kinds and events; clients ignore
-fields they don't know. A breaking change bumps `PROTOCOL`.
+fields they don't know. A breaking change bumps `PROTOCOL`. (Until the
+first release it may still change in place; see AGENTS.md.)
 
 docs/protocol.schema.json is generated from these models
 (`scripts/protocol_schema.py`); a test keeps it current.
@@ -29,10 +31,13 @@ from .core.service import Change
 
 PROTOCOL = 2
 
-Command = Literal["status", "next", "prev", "fav", "unfav", "remove"]
-COMMANDS: tuple[Command, ...] = get_args(Command)
-# Commands that act on a target (playlist or monitor): all but `status`.
-TARGET_COMMANDS: tuple[Command, ...] = COMMANDS[1:]
+# The commands a plain `Request` carries.
+Command = Literal["status", "next", "prev", "fav", "unfav", "remove", "hold", "resume"]
+# Of those, the ones that act on a target (playlist or monitor): all but status.
+TARGET_COMMANDS: tuple[Command, ...] = get_args(Command)[1:]
+# Every command: also `pick`, which has a request model of its own.
+AnyCommand = Literal[Command, "pick"]
+COMMANDS: tuple[AnyCommand, ...] = get_args(AnyCommand)
 
 
 class Message(BaseModel):
@@ -57,6 +62,25 @@ class Request(Strict):
     target: str | None = None  # playlist name, or a monitor it drives
 
 
+class PickRequest(Strict):
+    """Show a chosen image on a playlist now (from any directory)."""
+
+    command: Literal["pick"] = "pick"
+    target: str | None = None  # playlist name, or a monitor it drives
+    image: Path  # absolute: the app doesn't know the sender's directory
+
+    @field_validator("image")
+    @classmethod
+    def _absolute(cls, image: Path) -> Path:
+        if not image.is_absolute():
+            raise ValueError(f"image must be an absolute path, not {image}")
+        return image
+
+
+# Every request that runs a command (what `commands.execute` takes).
+CommandRequest = Request | PickRequest
+
+
 class Subscribe(Strict):
     """Keep the connection open and receive one `Event` per line."""
 
@@ -67,7 +91,9 @@ class Envelope(Strict):
     """A request on the wire."""
 
     v: int = PROTOCOL
-    request: Annotated[Request | Subscribe, Field(discriminator="command")]
+    request: Annotated[
+        Request | PickRequest | Subscribe, Field(discriminator="command")
+    ]
     config: Path  # the config file the sender means; the app refuses others
 
     @field_validator("v")
@@ -100,6 +126,8 @@ class PlaylistView(Message):
     monitors: tuple[MonitorView, ...]
     current: Path | None
     favourite: bool  # the current image is in favourites
+    held: bool = False  # held by `hold`: ticks don't change it (never if manual)
+    manual: bool = False  # interval "manual": only next / prev / pick change it
 
     @property
     def attached(self) -> bool:
@@ -118,9 +146,10 @@ class Overview(Message):
 class PlaylistDetails(PlaylistView):
     directory: Path
     order: Order
-    interval: float  # seconds of active time
+    interval: float | None  # seconds of active time; None: manual
     mode: ImageMode | None  # None: as is
-    next_in_seconds: float  # of active time
+    # Of active time; None: manual. While held, what is left once resumed.
+    next_in_seconds: float | None
     upcoming: tuple[Path, ...]
 
 
@@ -162,8 +191,35 @@ class RemoveResult(Message):
     change: Change | None  # None: no monitor attached, it moves on later
 
 
+class PickResult(Message):
+    command: Literal["pick"] = "pick"
+    playlist: str
+    change: Change
+
+
+class HoldResult(Message):
+    command: Literal["hold"] = "hold"
+    playlist: str
+    held: bool  # now: always True
+    changed: bool  # False: it was held already
+
+
+class ResumeResult(Message):
+    command: Literal["resume"] = "resume"
+    playlist: str
+    held: bool  # now: always False
+    changed: bool  # False: it wasn't held
+
+
 Result = Annotated[
-    StatusResult | NextResult | PrevResult | MarkResult | RemoveResult,
+    StatusResult
+    | NextResult
+    | PrevResult
+    | MarkResult
+    | RemoveResult
+    | PickResult
+    | HoldResult
+    | ResumeResult,
     Field(discriminator="command"),
 ]
 
@@ -175,6 +231,7 @@ ErrorKind = Literal[
     "not_attached",  # none of the playlist's monitors is attached
     "no_images",  # nothing to show in the playlist's directory
     "nothing_shown",  # no current image yet (fav / unfav / remove)
+    "bad_image",  # pick: the image is missing or not one Pillow can open
     "failed",  # any other expected failure; see the message
     "internal",  # a bug; the app logged it
     "unreachable",  # client side only: no app, or it did not answer

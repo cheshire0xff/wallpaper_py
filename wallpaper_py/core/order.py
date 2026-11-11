@@ -95,6 +95,24 @@ class ShuffleDeck:
         """Consume everything up to and including `card`."""
         self._store.set_deck_pos(self._playlist, card.position)
 
+    def mark_seen(self, images: Sequence[Path], image: Path) -> None:
+        """
+        Count `image` (one of `images`, shown out of turn: picked) as drawn
+        in this cycle, so it doesn't come up again before the next one. The
+        other cards keep their order.
+        """
+        if not images:
+            return
+        self._add_new(images)
+        position = self._store.card_position(self._playlist, image)
+        drawn_up_to = self._store.playlist_state(self._playlist).deck_pos
+        if position is None or position <= drawn_up_to:
+            return  # not in the deck, or drawn already
+        first = self._store.first_card_position(self._playlist)
+        assert first is not None  # `image` is in the deck
+        # Before every card, so among the drawn ones (and unique).
+        self._store.move_card(self._playlist, image, min(first, drawn_up_to) - 1)
+
     def _valid_cards(self, valid: Valid) -> Iterator[Card]:
         position = self._store.playlist_state(self._playlist).deck_pos
         for pos, path in self._store.deck_after(self._playlist, position):

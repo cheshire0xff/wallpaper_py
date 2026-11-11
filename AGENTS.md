@@ -39,6 +39,8 @@ steps there for new desktop-facing behaviour, for the user to try.
   through `ServiceWorker.execute`. Nothing on that thread may block on a
   client or spin a nested event loop.
 - mypy is strict; pydantic models for anything (de)serialized.
+- Pre-release: no migrations or backward compatibility for stored state or
+  the protocol; change it in place.
 - When you rename something named in docs/app-wiring.md, update the doc:
   `tests/test_docs.py` checks it.
 

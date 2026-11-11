@@ -10,7 +10,7 @@ Example (see docs/config.example.toml for the full commented version):
     directory = 'D:\\pictures\\KONACHAN'
     monitors = ["AW3225QF", "PLX2783H"]   # more than one: mirrored group
     order = "shuffle"
-    interval = "30m"
+    interval = "30m"                      # or "manual": only next / prev / pick
     mode = "fill"
 """
 
@@ -43,15 +43,21 @@ class PlaylistConfig:
     image on every member).
 
     `monitors` holds selectors: exact monitor names or full ids, as shown by
-    `wallpaper list --all`.
+    `wallpaper list --all`. `interval` is None for a manual playlist
+    (`interval = "manual"`): it never changes by itself, only by next /
+    prev / pick.
     """
 
     name: str
     directory: Path
     monitors: tuple[str, ...]
-    interval: float  # seconds
+    interval: float | None  # seconds of active time; None: manual
     order: Order = Order.SHUFFLE
     mode: ImageMode | None = None
+
+    @property
+    def manual(self) -> bool:
+        return self.interval is None
 
 
 @dataclass(frozen=True)
@@ -79,7 +85,7 @@ class Config:
             f"shorter than pause_when_idle ({format_duration(idle)}): an image "
             f"can change unseen before the idle pause starts"
             for p in self.playlists
-            if p.interval < idle
+            if p.interval is not None and p.interval < idle
         ]
 
 
@@ -87,6 +93,7 @@ _DURATION = re.compile(
     r"(?:(?P<d>\d+)d)?(?:(?P<h>\d+)h)?(?:(?P<m>\d+)m)?(?:(?P<s>\d+)s)?"
 )
 _UNIT_SECONDS = {"d": 86400, "h": 3600, "m": 60, "s": 1}
+MANUAL = "manual"  # the interval of a playlist that never changes by itself
 
 _TOP_KEYS = {
     "playlists",
@@ -199,17 +206,11 @@ def _parse_playlist(name: str, table: Any, base_dir: Path) -> PlaylistConfig:
     ):
         raise ConfigError(f"{where} monitors must be a list of monitor names")
 
-    if not isinstance(table["interval"], str):
-        raise ConfigError(f"{where} interval must be a string like '30m'")
-    interval = parse_duration(table["interval"])
-    if interval < 10:
-        raise ConfigError(f"{where} interval must be at least 10s")
-
     return PlaylistConfig(
         name=name,
         directory=_path(table["directory"], base_dir, f"{where} directory"),
         monitors=tuple(m.strip() for m in monitors),
-        interval=interval,
+        interval=_interval(table["interval"], where),
         order=_enum(Order, table.get("order", "shuffle"), f"{where} order"),
         mode=(
             _enum(ImageMode, table["mode"], f"{where} mode")
@@ -217,6 +218,18 @@ def _parse_playlist(name: str, table: Any, base_dir: Path) -> PlaylistConfig:
             else None
         ),
     )
+
+
+def _interval(value: Any, where: str) -> float | None:
+    """A duration in seconds, or None for "manual"."""
+    if not isinstance(value, str):
+        raise ConfigError(f"{where} interval must be a string like '30m' or 'manual'")
+    if value.strip().lower() == MANUAL:
+        return None
+    interval = parse_duration(value)
+    if interval < 10:
+        raise ConfigError(f"{where} interval must be at least 10s, or 'manual'")
+    return interval
 
 
 def _check_monitors_unique(playlists: tuple[PlaylistConfig, ...]) -> None:

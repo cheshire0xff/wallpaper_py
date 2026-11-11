@@ -9,6 +9,7 @@ from contextlib import nullcontext
 from pathlib import Path
 
 import pytest
+from PIL import Image
 from PySide6.QtNetwork import QLocalSocket
 from pytestqt.qtbot import QtBot
 
@@ -17,12 +18,16 @@ from wallpaper_py.app.worker import ServiceHost, ServiceSettings
 from wallpaper_py.core.service import Change
 from wallpaper_py.protocol import (
     ChangedEvent,
+    CommandRequest,
     Envelope,
     ErrorReply,
+    HoldResult,
     MarkResult,
     NextResult,
     Overview,
     OverviewChangedEvent,
+    PickRequest,
+    PickResult,
     PrevResult,
     Reply,
     Request,
@@ -87,7 +92,7 @@ def start(qtbot: QtBot, host: ServiceHost) -> Overview:
     return overview
 
 
-def submit(qtbot: QtBot, host: ServiceHost, request: Request) -> Reply:
+def submit(qtbot: QtBot, host: ServiceHost, request: CommandRequest) -> Reply:
     replies: list[Reply] = []
     host.submit(request, replies.append)
     qtbot.waitUntil(lambda: bool(replies))
@@ -95,7 +100,7 @@ def submit(qtbot: QtBot, host: ServiceHost, request: Request) -> Reply:
 
 
 def ask(
-    qtbot: QtBot, name: str, config: Path, request: Request | Subscribe
+    qtbot: QtBot, name: str, config: Path, request: CommandRequest | Subscribe
 ) -> QLocalSocket:
     """Send a request over the socket without waiting for the reply."""
     return connect(qtbot, name, ipc.encode(Envelope(request=request, config=config)))
@@ -117,7 +122,7 @@ def error(reply: Reply) -> str:
     return reply.error.message
 
 
-def send(qtbot: QtBot, name: str, config: Path, request: Request) -> Reply:
+def send(qtbot: QtBot, name: str, config: Path, request: CommandRequest) -> Reply:
     return answer(qtbot, ask(qtbot, name, config, request))
 
 
@@ -271,3 +276,45 @@ def test_shutdown_before_start_is_harmless(config: Path) -> None:
         ServiceSettings(config, lambda: FakeBackend([]), FakePresence, nullcontext)
     )
     assert host.shutdown()
+
+
+def test_hold_reaches_the_tray_and_subscribers(
+    qtbot: QtBot, host: ServiceHost, name: str, config: Path
+) -> None:
+    start(qtbot, host)
+    subscriber = ask(qtbot, name, config, Subscribe())
+    read_lines(qtbot, subscriber, 1)  # the current overview
+    with qtbot.waitSignal(host.overview_changed) as blocker:
+        reply = submit(qtbot, host, Request(command="hold"))
+    assert reply == HoldResult(playlist="walls", held=True, changed=True)
+    assert blocker.args[0].playlists[0].held
+    [line] = read_lines(qtbot, subscriber, 1)
+    event = ipc.decode_event(line)
+    assert isinstance(event, OverviewChangedEvent) and event.overview.playlists[0].held
+
+
+def test_hold_survives_an_app_restart(
+    qtbot: QtBot, host: ServiceHost, backend: FakeBackend, name: str, config: Path
+) -> None:
+    start(qtbot, host)
+    submit(qtbot, host, Request(command="hold"))
+    assert host.shutdown(5_000)
+    again = make_host(config, lambda: backend, name)
+    try:
+        assert start(qtbot, again).playlists[0].held
+    finally:
+        assert again.shutdown(5_000)
+
+
+def test_pick_over_the_socket(
+    qtbot: QtBot, host: ServiceHost, name: str, config: Path, tmp_path: Path
+) -> None:
+    start(qtbot, host)
+    image = tmp_path / "elsewhere" / "x.png"
+    image.parent.mkdir()
+    Image.new("RGB", (8, 8)).save(image)
+    with qtbot.waitSignal(host.changed) as blocker:
+        reply = send(qtbot, name, config, PickRequest(image=image))
+    assert isinstance(reply, PickResult) and reply.change.image == image
+    assert blocker.args[0].reason == "picked"
+    assert shown(send(qtbot, name, config, Request(command="prev"))) == "a.jpg"

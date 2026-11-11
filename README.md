@@ -48,6 +48,8 @@ wallpaper [-c CONFIG] tray                   # the app, in the tray (what starts
 wallpaper [-c CONFIG] run [--poll SECONDS]   # the app, headless in this terminal (Ctrl+C stops)
 wallpaper status                             # playlists, monitors, current, upcoming
 wallpaper next|prev|fav|unfav|remove [TARGET]  # TARGET: playlist or monitor name
+wallpaper pick IMAGE [TARGET]                # show IMAGE now (any directory)
+wallpaper hold|resume [TARGET]               # stop / restart rotating
 wallpaper ui [layout|library]                # open a window (see below)
 ```
 
@@ -60,7 +62,18 @@ Playlists are defined in a TOML file; start from
   reboots), on one monitor or a **mirrored group**.
 - The interval counts *active* time since the last change: it pauses while
   the session is locked or idle, while none of the playlist's monitors is
-  attached, and while the PC sleeps. `next` / `prev` start it again.
+  attached, and while the PC sleeps. `next` / `prev` / `pick` start it again.
+- `pick IMAGE` shows any image, from any directory, as if `next` had
+  chosen it: `prev` goes back to what was shown before. A picked image from
+  the playlist's own directory counts as seen in the current shuffle cycle;
+  in a sorted playlist, rotation goes on from it. The image must be one
+  Pillow can open.
+- `hold` stops a playlist rotating until `resume` (the tray has a *Hold*
+  toggle too); `next`, `prev` and `pick` still work, and the held state
+  survives restarts. `interval = "manual"` in the config makes a playlist
+  that never changes by itself, only by `next` / `prev` / `pick` (it shows
+  nothing until you pick or step it once). `status` and the tray show which
+  playlists are held or manual.
 - A monitor that is switched off is never written to: its playlist waits
   (a group keeps going on its other members) and the monitor gets the
   current image when it comes back.
@@ -82,7 +95,8 @@ command reached the running app or started one, and the app's raw reply.
 
 The tray menu has a section per playlist (its monitors by name, the current
 image, which opens on click, *Next*, *Previous*, a *Favourite* toggle,
-*Remove*), then *Open layout*, *Open library*, *Reload config* (after
+*Remove*, and a *Hold* toggle unless it is manual; the header says *held* or
+*manual*), then *Open layout*, *Open library*, *Reload config* (after
 editing it), *Open config folder*, *Start at login* and *Quit*. Left-click opens the same menu. The icon turns
 grey while rotation is paused and shows a red badge if the config can't be
 loaded. Start at login uses the per-user Run key on Windows and

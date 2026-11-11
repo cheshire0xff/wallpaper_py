@@ -24,7 +24,12 @@ from wallpaper_py.app.ui.window import PlaceholderWindow, describe_overview
 from wallpaper_py.app.worker import ServiceHost
 from wallpaper_py.core import paths
 from wallpaper_py.core.service import Change
-from wallpaper_py.protocol import MonitorView, Overview, PlaylistView, Request
+from wallpaper_py.protocol import (
+    CommandRequest,
+    MonitorView,
+    Overview,
+    PlaylistView,
+)
 
 from .clients import NO_WINDOW, run_python
 from .hosts import make_host
@@ -63,9 +68,9 @@ sys.exit(run_ui(UiOptions(config, window, app_command=harmless)))
 class FakeClient(Client):
     def __init__(self) -> None:
         super().__init__()
-        self.requests: list[Request] = []
+        self.requests: list[CommandRequest] = []
 
-    def run(self, request: Request, on_reply: ReplyCallback) -> None:
+    def run(self, request: CommandRequest, on_reply: ReplyCallback) -> None:
         self.requests.append(request)
 
 

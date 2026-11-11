@@ -42,6 +42,22 @@ def load(source: Path, size: tuple[int, int]) -> Image.Image:
         raise ImageLoadError(f"Cannot load {source}: {err}") from err
 
 
+def check_image(source: Path) -> None:
+    """
+    Make sure `source` is a file Pillow can open (it reads the header only).
+
+    Raises:
+        ImageLoadError: missing, not a file, or not an image Pillow knows.
+    """
+    if not source.is_file():
+        raise ImageLoadError(f"No such image file: {source}")
+    try:
+        with Image.open(source):
+            pass
+    except (OSError, SyntaxError, ValueError, Image.DecompressionBombError) as err:
+        raise ImageLoadError(f"Cannot open {source} as an image: {err}") from err
+
+
 def fill_box(src: tuple[int, int], dst: tuple[int, int]) -> Box:
     """Centered crop box in `src` with the aspect ratio of `dst`."""
     sw, sh = src

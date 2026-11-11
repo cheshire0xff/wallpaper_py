@@ -21,7 +21,7 @@ from typing import Literal, NamedTuple
 from .core import paths
 from .core.backend import Backend
 from .core.config import ConfigError, PlaylistConfig, load_config
-from .core.model import MonitorNotAttachedError, WallpaperError
+from .core.model import ImageLoadError, MonitorNotAttachedError, WallpaperError
 from .core.presence import Presence
 from .core.selection import MonitorSelectionError
 from .core.service import (
@@ -36,18 +36,22 @@ from .core.store import Store
 from .protocol import (
     TARGET_COMMANDS,
     Command,
+    CommandRequest,
     ErrorKind,
     ErrorReply,
+    HoldResult,
     MarkResult,
     MonitorView,
     NextResult,
     Overview,
+    PickRequest,
+    PickResult,
     PlaylistDetails,
     PlaylistView,
     PrevResult,
     RemoveResult,
     Reply,
-    Request,
+    ResumeResult,
     StatusResult,
 )
 
@@ -76,11 +80,14 @@ def open_service(
         )
 
 
-def execute(service: PlaylistService, request: Request) -> Outcome:
+def execute(service: PlaylistService, request: CommandRequest) -> Outcome:
     try:
         if request.command == "status":
             return Outcome(_status(service))
         playlist = service.find_playlist(request.target)
+        if isinstance(request, PickRequest):
+            change = service.pick(playlist, request.image)
+            return Outcome(PickResult(playlist=playlist.name, change=change), change)
         return _TARGET_HANDLERS[request.command](service, playlist)
     except WallpaperError as err:
         return Outcome(error_reply(err))
@@ -94,6 +101,7 @@ _ERROR_KINDS: tuple[tuple[type[Exception], ErrorKind], ...] = (
     (MonitorSelectionError, "unknown_target"),
     (NoImagesError, "no_images"),
     (NothingShownError, "nothing_shown"),
+    (ImageLoadError, "bad_image"),
     (WallpaperError, "failed"),
 )
 
@@ -163,6 +171,16 @@ def _remove(service: PlaylistService, playlist: PlaylistConfig) -> Outcome:
     return Outcome(result, change)
 
 
+def _hold(service: PlaylistService, playlist: PlaylistConfig) -> Outcome:
+    changed = service.hold(playlist)
+    return Outcome(HoldResult(playlist=playlist.name, held=True, changed=changed))
+
+
+def _resume(service: PlaylistService, playlist: PlaylistConfig) -> Outcome:
+    changed = service.resume(playlist)
+    return Outcome(ResumeResult(playlist=playlist.name, held=False, changed=changed))
+
+
 _Handler = Callable[[PlaylistService, PlaylistConfig], Outcome]
 _TARGET_HANDLERS: dict[Command, _Handler] = {
     "next": _next,
@@ -170,6 +188,8 @@ _TARGET_HANDLERS: dict[Command, _Handler] = {
     "fav": _fav,
     "unfav": _unfav,
     "remove": _remove,
+    "hold": _hold,
+    "resume": _resume,
 }
 assert set(_TARGET_HANDLERS) == set(TARGET_COMMANDS)
 
@@ -199,17 +219,20 @@ def _view(service: PlaylistService, status: PlaylistStatus) -> PlaylistView:
         monitors=monitors,
         current=current,
         favourite=current is not None and current in service.favourites,
+        held=status.held,
+        manual=status.playlist.manual,
     )
 
 
 def _details(service: PlaylistService, status: PlaylistStatus) -> PlaylistDetails:
     playlist = status.playlist
+    interval = playlist.interval
     return PlaylistDetails(
         **dict(_view(service, status)),
         directory=playlist.directory,
         order=playlist.order,
-        interval=playlist.interval,
+        interval=interval,
         mode=playlist.mode,
-        next_in_seconds=playlist.interval - status.elapsed,
+        next_in_seconds=None if interval is None else interval - status.elapsed,
         upcoming=status.upcoming,
     )

@@ -11,9 +11,18 @@ from PIL import Image
 
 from wallpaper_py.core.config import Config, Order, PlaylistConfig
 from wallpaper_py.core.library import Library
-from wallpaper_py.core.model import ImageMode, MonitorNotAttachedError
+from wallpaper_py.core.model import (
+    ImageLoadError,
+    ImageMode,
+    MonitorNotAttachedError,
+)
 from wallpaper_py.core.selection import MonitorSelectionError
-from wallpaper_py.core.service import Change, PlaylistError, PlaylistService
+from wallpaper_py.core.service import (
+    Change,
+    ManualPlaylistError,
+    PlaylistError,
+    PlaylistService,
+)
 from wallpaper_py.core.store import Store
 
 from .fakes import FakeBackend, FakeClock, FakePresence, make_images, make_monitor
@@ -354,3 +363,181 @@ def test_status(env: Env) -> None:
     ]
     assert fantasy.current == env.tmp / "fantasy" / "f1.png"
     assert [p.name for p in fantasy.upcoming] == ["f2.png", "f10.png", "f1.png"]
+
+
+# -- pick ----------------------------------------------------------------------
+
+
+def real_image(path: Path) -> Path:
+    """A small real image (pick checks that Pillow can open it)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.new("RGB", (8, 8), "teal").save(path)
+    return path
+
+
+def test_pick_from_another_directory_and_back(env: Env) -> None:
+    env.service.tick()
+    before = env.service.current(env.konachan)
+    upcoming = env.service.status()[0].upcoming
+    env.tick_for(INTERVAL - 2 * STEP)
+    picked = real_image(env.tmp / "elsewhere" / "x.png")
+    change = env.service.pick(env.konachan, picked)
+    assert (change.image, change.reason) == (picked, "picked")
+    assert change.shown_on == ("AW3225QF", "PLX2783H")
+    assert env.shown("AW3225QF") == picked
+    assert env.service.status()[0].upcoming == upcoming  # the deck is untouched
+    # The interval starts again.
+    assert not [c for c in env.tick_for(INTERVAL - STEP) if c.playlist == "konachan"]
+
+    back = env.service.previous(env.konachan)
+    assert back is not None and back.image == before
+    assert env.service.next(env.konachan).image == picked  # forward in history
+    assert env.service.next(env.konachan).image == upcoming[0]
+
+
+def test_pick_goes_right_after_the_cursor(env: Env) -> None:
+    env.service.tick()
+    images = [env.service.current(env.konachan)]
+    images += [env.service.next(env.konachan).image for _ in range(2)]
+    env.service.previous(env.konachan)  # back on images[1]
+    picked = real_image(env.tmp / "elsewhere" / "x.png")
+    env.service.pick(env.konachan, picked)
+    assert env.service.next(env.konachan).image == images[2]  # what was ahead
+    walked_back = []
+    while (change := env.service.previous(env.konachan)) is not None:
+        walked_back.append(change.image)
+    assert walked_back == [picked, images[1], images[0]]
+
+
+def test_pick_from_the_directory_counts_as_seen(env: Env) -> None:
+    for image in (env.tmp / "konachan").iterdir():
+        real_image(image)
+    env.service.tick()
+    first = env.service.current(env.konachan)
+    later = env.service.status(upcoming=8)[0].upcoming[-1]  # last of the cycle
+    # Spelled differently (here with "..") it is still the same image.
+    typed = env.tmp / "konachan" / ".." / "konachan" / later.name
+    assert env.service.pick(env.konachan, typed).image == later
+    upcoming = env.service.status(upcoming=8)[0].upcoming
+    assert later not in upcoming and len(upcoming) == 6
+    rest = [env.service.next(env.konachan).image for _ in range(6)]
+    assert len({first, later, *rest}) == 8  # the whole cycle, once each
+
+
+def test_pick_in_sorted_order(env: Env) -> None:
+    for image in (env.tmp / "fantasy").iterdir():
+        real_image(image)
+    env.service.tick()  # f1
+    env.service.pick(env.fantasy, real_image(env.tmp / "elsewhere" / "x.png"))
+    assert env.service.next(env.fantasy).image.name == "f2.png"  # a detour
+    env.service.pick(env.fantasy, env.tmp / "fantasy" / "f10.png")
+    assert env.service.next(env.fantasy).image.name == "f1.png"  # moved the walk
+
+
+def test_pick_refuses_missing_and_unreadable_images(env: Env) -> None:
+    env.service.tick()
+    current = env.service.current(env.konachan)
+    calls = len(env.backend.set_calls)
+    with pytest.raises(ImageLoadError, match="No such image file"):
+        env.service.pick(env.konachan, env.tmp / "nowhere.png")
+    with pytest.raises(ImageLoadError, match="Cannot open"):
+        env.service.pick(env.konachan, env.tmp / "konachan" / "k01.jpg")  # empty
+    with pytest.raises(ImageLoadError, match="No such image file"):
+        env.service.pick(env.konachan, env.tmp / "konachan")  # a directory
+    assert env.service.current(env.konachan) == current
+    assert len(env.backend.set_calls) == calls
+
+
+def test_pick_refuses_images_listed_for_removal(env: Env) -> None:
+    env.service.tick()
+    picked = real_image(env.tmp / "elsewhere" / "x.png")
+    env.service.to_remove.add(picked)
+    with pytest.raises(PlaylistError, match="listed for removal"):
+        env.service.pick(env.konachan, picked)
+
+
+def test_pick_with_no_monitor_attached_changes_nothing(env: Env) -> None:
+    env.service.tick()
+    current = env.service.current(env.konachan)
+    env.backend.detach("AW3225QF")
+    env.backend.detach("PLX2783H")
+    with pytest.raises(MonitorNotAttachedError):
+        env.service.pick(env.konachan, real_image(env.tmp / "elsewhere" / "x.png"))
+    assert env.service.current(env.konachan) == current
+    assert len(env.store.history_before("konachan")) == 1  # nothing was added
+
+
+# -- hold and manual -------------------------------------------------------------
+
+
+def test_held_playlist_waits_but_takes_commands(env: Env) -> None:
+    env.service.tick()
+    env.tick_for(INTERVAL / 2)
+    assert env.service.hold(env.konachan)
+    assert not env.service.hold(env.konachan)  # already held: no error
+    assert env.service.held(env.konachan)
+    assert not [c for c in env.tick_for(10 * INTERVAL) if c.playlist == "konachan"]
+    assert {c.playlist for c in env.tick_for(INTERVAL)} == {"fantasy"}
+
+    # Commands still work.
+    shown = env.service.next(env.konachan).image
+    assert env.service.previous(env.konachan) is not None
+    picked = real_image(env.tmp / "elsewhere" / "x.png")
+    assert env.service.pick(env.konachan, picked).image == picked
+    assert shown != picked
+
+
+def test_resume_continues_the_count(env: Env) -> None:
+    env.service.tick()
+    env.tick_for(INTERVAL / 2)
+    env.service.hold(env.konachan)
+    env.tick_for(10 * INTERVAL)
+    assert env.service.resume(env.konachan)
+    assert not env.service.resume(env.konachan)  # not held: no error
+    waiting = env.tick_for(INTERVAL / 2 - STEP)
+    assert not [c for c in waiting if c.playlist == "konachan"]
+    assert [c for c in env.tick_for(STEP) if c.playlist == "konachan"]
+
+
+def test_hold_survives_a_restart(env: Env) -> None:
+    env.service.tick()
+    current = env.service.current(env.konachan)
+    env.service.hold(env.konachan)
+    env.restart()
+    env.service.restore()
+    assert env.service.held(env.konachan)
+    changes = [c for c in env.tick_for(5 * INTERVAL) if c.playlist == "konachan"]
+    assert [c.reason for c in changes] == ["restored"]  # its image put back
+    assert env.service.current(env.konachan) == current
+    assert env.service.status()[0].held
+
+
+def test_held_playlist_still_replaces_a_removed_image(env: Env) -> None:
+    env.service.tick()
+    env.service.hold(env.konachan)
+    env.backend.detach("AW3225QF")
+    env.backend.detach("PLX2783H")
+    image, change = env.service.remove(env.konachan)
+    assert change is None  # nowhere to show the next one yet
+    env.backend.update("PLX2783H", rect=make_monitor("x").rect)
+    [change] = [c for c in env.service.tick() if c.playlist == "konachan"]
+    assert change.image != image and change.reason == "scheduled"
+
+
+def test_manual_playlist_never_changes_by_itself(env: Env) -> None:
+    manual = replace(env.fantasy, interval=None)
+    env.config = replace(env.config, playlists=(env.konachan, manual))
+    env.restart()
+    assert manual.manual
+    assert not [c for c in env.tick_for(10 * INTERVAL) if c.playlist == "fantasy"]
+    assert env.service.current(manual) is None  # not even a first image
+    assert env.service.next(manual).image.name == "f1.png"
+    assert not [c for c in env.tick_for(10 * INTERVAL) if c.playlist == "fantasy"]
+    assert env.service.next(manual).image.name == "f2.png"
+    assert env.service.previous(manual) is not None
+
+    with pytest.raises(ManualPlaylistError, match="nothing to hold"):
+        env.service.hold(manual)
+    with pytest.raises(ManualPlaylistError, match="nothing to resume"):
+        env.service.resume(manual)
+    assert not env.service.held(manual)

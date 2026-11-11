@@ -9,7 +9,8 @@ while it is out of date).
 
 **Version 2.** It only ever adds commands, fields, error kinds and events.
 Clients must ignore fields they don't know, and treat an unknown error kind
-like `failed`. A breaking change bumps the version.
+like `failed`. A breaking change bumps the version. (Until the first
+release it may still change in place.)
 
 ## Connecting
 
@@ -35,11 +36,18 @@ like `failed`. A breaking change bumps the version.
 - `v`: the protocol version; another one is refused (`protocol`).
 - `config`: the config file the client means. The app runs one config and
   refuses others (`wrong_config`).
-- `request.command`: `status`, `next`, `prev`, `fav`, `unfav`, `remove`, or
-  `subscribe`.
+- `request.command`: `status`, `next`, `prev`, `fav`, `unfav`, `remove`,
+  `hold`, `resume`, `pick`, or `subscribe`.
 - `request.target` (all but `status` and `subscribe`): a playlist name, or a
   monitor the playlist drives (a name, a unique part of one, or the full
   id). It may be left out when there is only one playlist.
+- `request.image` (`pick` only, and required there): the image to show, an
+  absolute path (the app doesn't know the client's directory). It may be in
+  any directory.
+
+```json
+{"v": 2, "request": {"command": "pick", "target": "fantasy", "image": "D:\\pictures\\other\\7.png"}, "config": "C:\\Users\\me\\AppData\\Local\\wallpaper_py\\config.toml"}
+```
 
 Requests are checked strictly: unknown fields are refused.
 
@@ -47,17 +55,26 @@ Requests are checked strictly: unknown fields are refused.
 
 Data only, no text: one model per command, tagged on `command`, or an
 error. What a `change` holds: `playlist`, `image` (path), `reason`
-(`scheduled`, `next`, `previous`, `restored`), `shown_on` (monitor names)
-and `missed` (members that detached during the change; they get the image
-when they come back).
+(`scheduled`, `next`, `previous`, `picked`, `restored`), `shown_on`
+(monitor names) and `missed` (members that detached during the change; they
+get the image when they come back).
 
 | Command | Reply fields |
 |---|---|
-| `status` | `playlists` (each: `name`, `monitors`, `current`, `favourite`, `directory`, `order`, `interval` in seconds, `mode`, `next_in_seconds` of active time, `upcoming` paths), `paused` (why, or null), `warnings` (config that is valid but probably a mistake) |
+| `status` | `playlists` (each: `name`, `monitors`, `current`, `favourite`, `held`, `manual`, `directory`, `order`, `interval` in seconds (null: manual), `mode`, `next_in_seconds` of active time (null: manual; while held, what is left once resumed), `upcoming` paths), `paused` (why, or null), `warnings` (config that is valid but probably a mistake) |
 | `next` | `playlist`, `change` |
 | `prev` | `playlist`, `change` (null: nothing earlier in the history) |
+| `pick` | `playlist`, `change` (reason `picked`) |
 | `fav` / `unfav` | `playlist`, `image`, `list_file` (favourites.txt), `changed` (false: it already was / wasn't a favourite) |
 | `remove` | `playlist`, `image` (listed for removal, never deleted), `list_file` (to-remove.txt), `change` (null: no monitor attached; it moves on later) |
+| `hold` / `resume` | `playlist`, `held` (now), `changed` (false: it already was / wasn't held) |
+
+`pick` shows the image now, as if `next` had chosen it: it goes into the
+history right after the current entry, so `prev` goes back to what was
+shown before, and the interval starts again. A held playlist doesn't rotate
+by itself, but `next`, `prev` and `pick` still work; a manual one
+(`interval = "manual"` in the config) never rotates, so `hold` / `resume`
+on it are an error (`failed`).
 
 A monitor is `{"selector", "name", "attached"}`: the selector as written in
 the config, the monitor's name (the selector if it isn't listed), and
@@ -82,6 +99,7 @@ whether it is attached (`null`: not listed right now).
 | `not_attached` | none of the playlist's monitors is attached |
 | `no_images` | nothing to show in the playlist's directory |
 | `nothing_shown` | the playlist has no current image yet (`fav`, `unfav`, `remove`) |
+| `bad_image` | `pick`: the image is missing, not a file, or not one Pillow can open |
 | `failed` | any other expected failure; the message says what |
 | `internal` | a bug; the app logged the details |
 | `unreachable` | never sent by the app: a client's own "no app, or it did not answer" |
@@ -101,11 +119,11 @@ error line instead, then the connection closes.
 
 | Event | Fields | When |
 |---|---|---|
-| `overview_changed` | `overview`: `playlists` (each: `name`, `monitors`, `current`, `favourite`), `paused`, `error` (the app is up but its service isn't: e.g. a broken config) | on subscribing, then whenever it changes |
+| `overview_changed` | `overview`: `playlists` (each: `name`, `monitors`, `current`, `favourite`, `held`, `manual`), `paused`, `error` (the app is up but its service isn't: e.g. a broken config) | on subscribing, then whenever it changes (also after `hold` / `resume`) |
 | `changed` | `change` | a wallpaper changed, by a tick or a command |
 
 ```json
-{"event": "overview_changed", "overview": {"playlists": [{"name": "fantasy", "monitors": [{"selector": "ZeroMOD", "name": "ZeroMOD", "attached": false}], "current": "D:\\pictures\\Fantasy\\7.png", "favourite": false}], "paused": null, "error": null}}
+{"event": "overview_changed", "overview": {"playlists": [{"name": "fantasy", "monitors": [{"selector": "ZeroMOD", "name": "ZeroMOD", "attached": false}], "current": "D:\\pictures\\Fantasy\\7.png", "favourite": false, "held": false, "manual": true}], "paused": null, "error": null}}
 {"event": "changed", "change": {"playlist": "konachan", "image": "D:\\pictures\\KONACHAN\\123.jpg", "reason": "next", "shown_on": ["AW3225QF", "PLX2783H"], "missed": []}}
 ```
 

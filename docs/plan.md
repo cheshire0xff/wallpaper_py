@@ -11,7 +11,7 @@ thin. See [architecture.md](architecture.md) for the layers.
 | 1 | Core model, safe setter, Windows backend, CLI `list`/`set`, tooling, CI | done |
 | 2 | Playlists, mirrored groups, scheduler, history, favourites, to-remove | done (awaiting a real-desktop trial) |
 | 3 | App shell: tray, single instance, IPC, autostart | done (awaiting a real-desktop trial) |
-| 4 | UI process and layout window | in progress: foundation done (awaiting review) |
+| 4 | UI process and layout window | in progress: foundation and pick / hold / manual done (awaiting review) |
 | 5 | Library window | |
 | 6 | KDE backend | |
 | 7 | Polish | |
@@ -193,8 +193,9 @@ Manual mode, hold and pick (decided; kept deliberately simple):
   rewrite the config, and resuming needs no remembered interval). While
   held, ticks don't advance; next / prev / pick still work. Toggle in the
   tray and here.
-- **Manual mode** = `interval = "manual"` in the config: the playlist starts
-  held. (Intended for the ZeroMOD strip.)
+- **Manual mode** = `interval = "manual"` in the config: the playlist never
+  changes by itself, and hold doesn't apply to it. (Intended for the
+  ZeroMOD strip.)
 - Pick and hold are separate one-click actions; no dialog, no combined
   "show and hold".
 - Not doing (until missed): single-monitor overrides in a group, a hidden
@@ -262,7 +263,8 @@ Foundation, implemented (decisions made while building it):
 Order for the rest of the phase, one session each:
 
 1. **Pick, hold and manual mode**: core, protocol (`pick`, `hold`,
-   `resume`), CLI, tray *Hold* toggle. No new windows.
+   `resume`), CLI, tray *Hold* toggle. No new windows. **Done** (awaiting
+   review and the desktop checks, section 9).
 2. **Layout window**: shows the assignment (monitors to scale, current
    wallpaper per playlist, toggles, next / prev); replaces the
    placeholder.
@@ -271,6 +273,46 @@ Order for the rest of the phase, one session each:
    app edits config.toml with a comment-preserving TOML library (tomlkit),
    so hand edits and comments survive, then reloads it. The file stays the
    source of truth; hand editing keeps working.
+
+Pick, hold and manual mode, implemented (decisions made while building it):
+
+- **Manual** playlists don't "start held" (as first planned): they simply
+  never rotate, and hold doesn't apply to them (`hold` / `resume` on one is
+  an error saying why; the tray has no *Hold* item for it). In the config
+  `interval = "manual"`; in the core `PlaylistConfig.interval` is None. A
+  manual playlist shows nothing until the first next / pick.
+- Held or manual, a tick never chooses a new image (not even a first one)
+  and the active-time count stands still, so `resume` continues where it
+  stopped. Ticks still restore the current image on a returning monitor,
+  and still replace a current image that can't be shown any more (listed
+  for removal, deleted): `remove` on a held playlist with no monitor
+  attached still moves on once one is.
+- **Pick**: the request is its own model, `PickRequest` (`command`,
+  `target`, `image`, an absolute path; the CLI makes it absolute without
+  resolving symlinks), so `image` is required for pick and refused
+  elsewhere. Commands run on `CommandRequest = Request | PickRequest`.
+  The image must exist and open in Pillow (`imaging.check_image`, header
+  only); otherwise the new error kind `bad_image`. An image on the
+  to-remove list is refused (`failed`): the next tick would replace it
+  anyway. Pick from the playlist's directory (matched by path key, so
+  another spelling works) uses the scan's spelling; in a shuffle it moves
+  the card among the drawn ones (`ShuffleDeck.mark_seen`), keeping the
+  others' order. In sorted order the walk goes on after the newest history
+  entry *from the directory*, so a pick from elsewhere is a detour and one
+  from the directory moves the walk there.
+- **History order**: a `position` column (REAL), new entries at max + 1, a
+  pick at the midpoint after the cursor; positions are renumbered when two
+  get closer than 1e-6. **Hold**: a `held` column on `playlist`.
+- **No migrations before the first release** (decided during this step):
+  the schema changed in place to version 2; a database of another version
+  is refused with a message to delete it (only history and shuffle state
+  are lost), never deleted automatically. The same goes for the protocol:
+  it stayed version 2 although `interval` / `next_in_seconds` in `status`
+  can now be null (manual).
+- Results: `PickResult` (`change`, reason `picked`), `HoldResult` and
+  `ResumeResult` (`held`, `changed`). `PlaylistView` gained `held` and
+  `manual`; the tray header shows *(held)* / *(manual)*, also in the
+  tooltip.
 
 ## Phase 5: library window
 
