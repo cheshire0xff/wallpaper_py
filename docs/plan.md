@@ -136,12 +136,47 @@ Windows 11, monitor switch-off with the app running).
 
 Monitors drawn to scale in their real arrangement, each showing a thumbnail
 of its current wallpaper. Assign playlists and groups, and run next/prev/fav
-from here.
+from here. Per playlist, a "current wallpaper" card (todo.md, Library
+window): thumbnail, name, size, dimensions, fav / remove toggles.
+
+Manual mode, hold and pick (decided; kept deliberately simple):
+
+- **A playlist is the unit; a mirrored group always mirrors.** No
+  single-monitor overrides inside a group: a monitor that should do its own
+  thing gets its own playlist.
+- **Pick** ("Show on <playlist>"): the image is inserted right after the
+  history cursor and shown, like `next` with a chosen image (the interval
+  restarts). Images from any directory work: history entries are plain
+  paths, the directory only supplies *new* images. `prev` goes back to what
+  was shown before. A pick from the playlist's own directory counts as seen
+  in the current shuffle cycle.
+- **Hold**: a per-playlist flag in SQLite (not the TOML: the app doesn't
+  rewrite the config, and resuming needs no remembered interval). While
+  held, ticks don't advance; next / prev / pick still work. Toggle in the
+  tray and here.
+- **Manual mode** = `interval = "manual"` in the config: the playlist starts
+  held. (Intended for the ZeroMOD strip.)
+- Pick and hold are separate one-click actions; no dialog, no combined
+  "show and hold".
+- Not doing (until missed): single-monitor overrides in a group, a hidden
+  playlist for monitors in no playlist (CLI `set` covers them).
+
+Open: "assign playlists and groups" from this window means the app edits
+config.toml. If we do it, edit with a comment-preserving TOML library
+(tomlkit) so hand edits survive; otherwise this window only shows the
+assignment.
 
 ## Phase 5: library window
 
 Features: the "Library window" section of [todo.md](../todo.md) (enlarge
-with path / size / dimensions, toggles, filter, sort, ...).
+with path / size / dimensions, toggles, filter, sort, ...), plus **"Show on
+<playlist>"** (pick, see Phase 4) in the enlarged view.
+
+Sorting by "added": Favourites and To remove use the line order of their
+.txt files (entries are appended). The library uses the file's creation
+time on Windows (taken from the symlink itself for links, i.e. when it was
+added to the library; not mtime, which copies keep), and mtime on Linux
+(no portable creation time in Python).
 
 Tabs: Library, Favourites, Removed, History, Upcoming. Grids that scale to
 20k images (`QListView` icon mode with a virtual model; thumbnails decoded in
@@ -153,6 +188,15 @@ disk cache, at tile size x DPR). Background pre-generation of the disk cache.
 plasmashell D-Bus (`evaluateScript`) for per-monitor wallpapers (per
 activity), KScreen for monitor identity. Run `spikes/kde_probe.sh` on Arch
 first. Then CI and checks on Kubuntu 26.04 as well.
+
+Linux Qt dependencies (promised early on, not done yet):
+
+- README: the system packages per distro (Ubuntu/Kubuntu, Arch), e.g.
+  `libxcb-cursor0` for the xcb plugin since Qt 6.5, and the libEGL / libGL
+  / xkbcommon / fontconfig set CI installs.
+- A readable startup error when Qt can't load its platform plugin or a
+  library, naming the package to install (and `QT_DEBUG_PLUGINS=1` for
+  anything else), instead of Qt's cryptic message.
 
 ## Phase 7: polish
 
