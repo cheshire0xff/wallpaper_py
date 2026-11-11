@@ -204,6 +204,20 @@ time on Windows (taken from the symlink itself for links, i.e. when it was
 added to the library; not mtime, which copies keep), and mtime on Linux
 (no portable creation time in Python).
 
+Reading and updating state (the windows are clients of the service, like
+the tray and the socket):
+
+- All writes go through `ServiceWorker.execute` (fav / remove / pick /
+  hold ...): the service stays the only writer.
+- Windows may read directly, without a round trip: a read-only SQLite
+  connection (history, deck / upcoming; WAL allows it) and the
+  favourites / to-remove .txt files.
+- They re-read when the service thread emits fine-grained events, not only
+  the `Overview`: `marks_changed` (favourites / to-remove, including
+  external edits of the .txt files, noticed on a tick by their mtime /
+  size), `history_changed(playlist)`, and `changed` (a wallpaper changed,
+  from a tick *or* a command). Add these to docs/app-wiring.md.
+
 Tabs: Library, Favourites, Removed, History, Upcoming. Grids that scale to
 20k images (`QListView` icon mode with a virtual model; thumbnails decoded in
 worker threads with a LIFO queue, Pillow draft mode, an LRU memory budget, a
