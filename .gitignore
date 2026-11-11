@@ -1,6 +1,15 @@
 .venv
 __pycache__
 .mypy_cache
+.pytest_cache
+*.egg-info/
+build/
+dist/
+
+# Images: test images are generated, renders go to the user cache dir.
 *.jpg
 *.jpeg
 *.png
+wallpaper_py/processed/
+
+spikes/*.log

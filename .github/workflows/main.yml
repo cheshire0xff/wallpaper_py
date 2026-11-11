@@ -1,44 +1,36 @@
-name: "Windows CI: Code Quality & Integration Pipeline"
+name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 jobs:
-  code-checks:
-    name: Run Python Quality Checks
-    runs-on: windows-latest
+  checks:
+    name: Checks (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows runs the real-desktop backend tests; Linux checks that the
+        # core and tooling work without Windows-only dependencies.
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.13'  # Match your Python version
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+          enable-cache: true
 
-    - name: Cache Python dependencies
-      uses: actions/cache@v4
-      with:
-        path: ~\AppData\Local\pip\Cache
-        key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt', 'requirements_dev.txt') }}
-        restore-keys: |
-          ${{ runner.os }}-pip-
+      - name: Install
+        run: uv sync --locked
 
-    - name: Install linting tools
-      run: pip install -r requirements_dev.txt
+      - name: Black, mypy, pylint, pytest
+        run: uv run python scripts/check.py
 
-    - name: Run Black formatting check
-      run: python scripts/black.py --check
-
-    - name: Run Mypy type checking
-      run: python scripts/mypy.py
-
-    - name: Run Pylint analysis
-      run: python scripts/pylint.py
-      
-    - name: Run Monitor List Integration Test
-      run: python -m wallpaper_py.changer list
+      - name: CLI smoke test
+        if: runner.os == 'Windows'
+        run: uv run wallpaper list --all

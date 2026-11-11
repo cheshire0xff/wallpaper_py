@@ -1,10 +1,29 @@
+"""Minimal comtypes binding for the IDesktopWallpaper COM interface."""
+
+import sys
+
+assert sys.platform == "win32"  # pylint: disable=wrong-import-position
+
+# pylint: disable=wrong-import-position,wrong-import-order
 import ctypes
 from ctypes import HRESULT, POINTER, Structure, pointer
 from ctypes.wintypes import LPCWSTR, UINT, LPWSTR, DWORD
 from enum import Enum
 from typing import cast
 from comtypes import IUnknown, GUID, COMMETHOD, CoCreateInstance
-from wallpaper_py.desktop_protocol import Rectangle
+from wallpaper_py.core.model import Rectangle
+
+_ole32 = ctypes.WinDLL("ole32")
+_ole32.CoTaskMemFree.argtypes = [ctypes.c_void_p]
+_ole32.CoTaskMemFree.restype = None
+
+
+def _take_string(value: LPWSTR) -> str:
+    """Read a COM-allocated [out] string and free it (avoids a leak per call)."""
+    try:
+        return value.value or ""
+    finally:
+        _ole32.CoTaskMemFree(ctypes.cast(value, ctypes.c_void_p))
 
 
 class RECT(Structure):
@@ -30,7 +49,7 @@ class IDesktopWallpaper(IUnknown):  # type: ignore[misc]
 
     @classmethod
     def co_create_instance(cls) -> "IDesktopWallpaper":
-        # Search `Desktop Wallpaper` in `\HKEY_CLASSES_ROOT\CLSID` to obtain the magic string
+        # CLSID of "Desktop Wallpaper" (see HKEY_CLASSES_ROOT\CLSID)
         class_id = GUID("{C2CF3110-460E-4fc1-B9D0-8A1C0C9CC4BD}")
         instance = CoCreateInstance(class_id, interface=cls)
         return cast(IDesktopWallpaper, instance)
@@ -76,7 +95,7 @@ class IDesktopWallpaper(IUnknown):  # type: ignore[misc]
     ]
 
     def get_monitor_device_path_count(self) -> int:
-        count = UINT()
+        count = UINT(0)
         self.__com_GetMonitorDevicePathCount(pointer(count))
         return count.value
 
@@ -91,27 +110,24 @@ class IDesktopWallpaper(IUnknown):  # type: ignore[misc]
     def get_wallpaper(self, monitor_id: str) -> str:
         wallpaper = LPWSTR()
         self.__com_GetWallpaper(LPCWSTR(monitor_id), pointer(wallpaper))
-        assert wallpaper.value is not None
-        return wallpaper.value
+        return _take_string(wallpaper)
 
     def get_monitor_device_path_at(self, monitor_index: int) -> str:
         monitor_id = LPWSTR()
         self.__com_GetMonitorDevicePathAt(UINT(monitor_index), pointer(monitor_id))
-        assert monitor_id.value is not None
-        return monitor_id.value
+        return _take_string(monitor_id)
 
     def get_position(self) -> Position:
-        dword = DWORD()
+        dword = DWORD(0)
         self.__com_GetPosition(pointer(dword))
         assert dword.value is not None
         return Position(dword.value)
 
     def set_position(self, position: Position) -> None:
-        result = self.__com_SetPosition(DWORD(position.value))
-        print(result)
+        self.__com_SetPosition(DWORD(position.value))
 
     def get_background_color(self) -> int:
-        dword = DWORD()
+        dword = DWORD(0)
         self.__com_GetBackgroundColor(pointer(dword))
         assert dword.value is not None
         return dword.value

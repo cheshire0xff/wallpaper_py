@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wallpaper_py"
+version = "0.2.0"
+description = "Per-monitor wallpaper playlists for Windows and KDE Plasma"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pillow>=11",
+    "platformdirs>=4",
+    "comtypes>=1.4; sys_platform == 'win32'",
+]
+
+[dependency-groups]
+dev = ["black", "mypy", "pylint", "pytest"]
+
+[project.scripts]
+wallpaper = "wallpaper_py.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["wallpaper_py*"]
+
+[tool.mypy]
+strict = true
+
+[[tool.mypy.overrides]]
+# comtypes creates COM methods at runtime, so its own (1.5+) type hints can't
+# describe our interfaces; treat it as untyped.
+module = ["comtypes", "comtypes.*"]
+follow_imports = "skip"
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["windows: needs the real Windows desktop (IDesktopWallpaper)"]

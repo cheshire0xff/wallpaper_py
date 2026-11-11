@@ -1,6 +1,16 @@
+[MAIN]
+# comtypes only exists on Windows; don't report it as missing elsewhere.
+ignored-modules=comtypes
+# Compiled extension modules pylint may introspect.
+extension-pkg-allow-list=PySide6
+
 [MESSAGE CONTROL]
 disable=
     missing-docstring,
     missing-function-docstring,
     missing-class-docstring,
     too-few-public-methods,
+
+[FORMAT]
+# Match black.
+max-line-length=88
