@@ -6,12 +6,12 @@ it scales the whole desktop (positions may be negative: a monitor left of
 the main one starts at a negative x) to fit an area, keeping aspect ratios.
 Detached monitors have no position on the desktop; they are drawn after
 the arrangement, in a row to its right, at their last known size (else
-1920 x 1080), dimmed and marked "off".
+1920×1080), dimmed and marked "off".
 
 `MonitorsView` paints it: each monitor with the current image of its
-playlist, members of a mirrored group outlined in the accent colour, and
-under each its name, resolution and playlist ("no playlist" for one no
-playlist drives).
+playlist, without an outline (one would read as a selection), and under
+each its name, resolution and playlist ("no playlist" for one no playlist
+drives).
 """
 
 from __future__ import annotations
@@ -27,7 +27,6 @@ from PySide6.QtGui import (
     QPainter,
     QPainterPath,
     QPaintEvent,
-    QPen,
     QPixmap,
     QResizeEvent,
 )
@@ -153,21 +152,10 @@ def playlists_by_monitor(overview: Overview) -> dict[str, str]:
     return result
 
 
-def mirrored(overview: Overview) -> set[str]:
-    """Ids of monitors in a mirrored group (a playlist on several monitors)."""
-    return {
-        member.id
-        for playlist in overview.playlists
-        if len(playlist.monitors) > 1
-        for member in playlist.monitors
-        if member.id is not None
-    }
-
-
 def caption(monitor: DesktopMonitor, playlist: str | None) -> tuple[str, str]:
     """The two lines under a monitor: its name, then size (or off) · playlist."""
     g = monitor.geometry
-    state = f"{g.width} × {g.height}" if g is not None else "off"
+    state = f"{g.width}×{g.height}" if g is not None else "off"
     return monitor.name, f"{state} · {playlist or 'no playlist'}"
 
 
@@ -240,27 +228,19 @@ class MonitorsView(QWidget):
             for member in playlist.monitors
             if member.id is not None and playlist.current is not None
         }
-        group = mirrored(self._overview)
         for item in placed:
             image = images.get(item.monitor.id)
             self._paint_monitor(
-                painter,
-                item,
-                self._images.get(image) if image is not None else None,
-                item.monitor.id in group,
+                painter, item, self._images.get(image) if image is not None else None
             )
         boxes = [p.box for p in placed]
         for item in placed:
             self._paint_caption(painter, item, by_monitor.get(item.monitor.id), boxes)
         painter.end()
 
-    def _paint_monitor(
-        self,
-        painter: QPainter,
-        item: Placed,
-        pixmap: QPixmap | None,
-        in_group: bool,
-    ) -> None:
+    @staticmethod
+    def _paint_monitor(painter: QPainter, item: Placed, pixmap: QPixmap | None) -> None:
+        """No outline (it would read as a selection): the fill marks the edge."""
         box = item.box
         rect = QRectF(box.x, box.y, box.width, box.height).adjusted(
             INSET, INSET, -INSET, -INSET
@@ -274,13 +254,6 @@ class MonitorsView(QWidget):
             painter.setClipRect(rect)
             painter.drawPixmap(_cover(rect, pixmap), pixmap, QRectF(pixmap.rect()))
             painter.restore()
-        pen = QPen(theme.accent(self.palette()) if in_group else theme.BACKDROP_EDGE)
-        pen.setWidthF(2.0 if in_group else 1.0)
-        if not item.attached:
-            pen.setStyle(Qt.PenStyle.DashLine)
-        painter.setPen(pen)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        painter.drawRect(rect)
         if not item.attached:
             painter.setOpacity(1.0)
             painter.setPen(theme.BACKDROP_TEXT)

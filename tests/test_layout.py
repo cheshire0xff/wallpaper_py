@@ -20,7 +20,6 @@ from wallpaper_py.app.ui.arrangement import (
     MonitorsView,
     arrange,
     caption,
-    mirrored,
     playlists_by_monitor,
 )
 from wallpaper_py.app.ui.client import Client, ReplyCallback
@@ -165,12 +164,11 @@ def test_only_detached_monitors() -> None:
     assert not arrange([], 400, 300)
 
 
-def test_mirrored_groups_and_monitors_in_no_playlist() -> None:
-    assert mirrored(OVERVIEW) == {"aw", "plx"}  # konachan; fantasy is one monitor
+def test_captions_and_monitors_in_no_playlist() -> None:
     by_monitor = playlists_by_monitor(OVERVIEW)
     assert by_monitor == {"aw": "konachan", "plx": "konachan", "zero": "fantasy"}
-    assert caption(AW, "konachan") == ("AW3225QF", "3840 × 2160 · konachan")
-    assert caption(TV, by_monitor.get("tv")) == ("TV", "1920 × 1080 · no playlist")
+    assert caption(AW, "konachan") == ("AW3225QF", "3840×2160 · konachan")
+    assert caption(TV, by_monitor.get("tv")) == ("TV", "1920×1080 · no playlist")
     assert caption(ZERO, "fantasy") == ("ZeroMOD", "off · fantasy")
 
 
@@ -180,7 +178,7 @@ def test_monitors_view_draws_every_monitor(qtbot: QtBot) -> None:
     view.resize(900, 300)
     view.show_overview(OVERVIEW)
     assert {p.monitor.id for p in view.placed()} == {"aw", "plx", "zero", "tv"}
-    assert "TV: 1920 × 1080 · no playlist" in view.accessibleDescription()
+    assert "TV: 1920×1080 · no playlist" in view.accessibleDescription()
     assert "ZeroMOD: off · fantasy" in view.accessibleDescription()
     view.grab()  # paints without error
     before = view.placed()[0].box
@@ -211,7 +209,7 @@ def test_formats() -> None:
 def test_card_text_normal() -> None:
     assert chip_text(KONACHAN) is None
     assert details_text(KONACHAN, details(KONACHAN), THUMBNAIL, 754.0) == (
-        "3840 × 2160 · 4.2 MB · shuffle, 30 min · next in 13 min"
+        "3840×2160 · 4.2 MB · shuffle, 30 min · next in 13 min"
     )
     # Before the image and the schedule have arrived.
     assert details_text(KONACHAN, None, None, None) == ""
@@ -232,7 +230,7 @@ def test_card_text_held() -> None:
 def test_card_text_manual() -> None:
     assert chip_text(FANTASY) == "Manual"
     assert details_text(FANTASY, details(FANTASY), THUMBNAIL, None) == (
-        "3840 × 2160 · 4.2 MB · shuffle · manual"
+        "3840×2160 · 4.2 MB · shuffle · manual"
     )
 
 
@@ -340,7 +338,7 @@ def test_window_draws_the_overview(
     # Thumbnails arrive off the UI thread; details follow.
     qtbot.waitUntil(lambda: konachan.thumbnail() is not None)
     assert konachan.image.pixmap() is not None
-    assert konachan.details.text() == "3840 × 2160 · 4.2 MB"
+    assert konachan.details.text() == "3840×2160 · 4.2 MB"
     # Then the schedule, from one status request.
     statuses = [r for r, _ in client.calls if r.command == "status"]
     assert statuses == [Request(command="status")]

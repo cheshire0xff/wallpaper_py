@@ -151,7 +151,7 @@ def details_text(
     if view.current is not None and thumbnail is not None:
         info: ImageInfo | None = thumbnail.info
         if info is not None:
-            parts += [f"{info.width} × {info.height}", format_size(info.file_size)]
+            parts += [f"{info.width}×{info.height}", format_size(info.file_size)]
         else:
             parts.append(f"can't read: {thumbnail.error or 'unknown error'}")
     if (schedule := schedule_text(view, details, left)) is not None:

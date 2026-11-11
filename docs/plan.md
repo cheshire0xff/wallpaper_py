@@ -194,9 +194,10 @@ Look (decided, from a mockup the user approved; it holds for every window):
   4 small), the backdrop colour, the icon loader, and the shared widgets
   (an icon button; the image thumbnail on the backdrop). Not a framework.
 - Layout window, top to bottom:
-  - *Monitors*: the arrangement to scale on the backdrop. Members of a
-    mirrored group share an accent outline. Under each: name (bold),
-    resolution and playlist.
+  - *Monitors*: the arrangement to scale on the backdrop, without
+    outlines (an accent outline read as a selection, so mirrored groups
+    aren't marked in the drawing; the card shows them). Under each: name
+    (bold), resolution (`3840×2160`, no spaces) and playlist.
   - *Playlists*: a grid of cards. Each card: a 16:9 thumbnail
     (letterboxed on the backdrop); the playlist name, its monitors (a link
     icon for a mirrored group) and a *Held* / *Manual* chip; the image's
@@ -357,9 +358,9 @@ Layout window, implemented (decisions made while building it):
 - **Arrangement**: one scale for the whole desktop, aspect kept, centred,
   with room for two caption lines under the bottom row. A detached monitor
   has no position, so it is drawn to the right of the others, at its last
-  size seen this session (else 1920 x 1080), dimmed, dashed, "off". Members
-  of a mirrored group get the accent outline (all groups share the one
-  accent; the caption names the playlist). A caption that would overlap a
+  size seen this session (else 1920×1080), dimmed, "off". No outlines at
+  all (decided after review: an accent outline on mirrored members read as
+  a selection). A caption that would overlap a
   monitor below goes inside it on a dark band. Unlisted members ("not
   found") aren't drawn; the card names them.
 - **Cards**: thumbnail fit (letterboxed) at 16:9; the monitor drawing

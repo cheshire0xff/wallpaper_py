@@ -142,8 +142,8 @@ thumbnails off the UI thread) is tested with fakes (`tests/test_layout.py`,
 
 1. *Monitors* matches the real arrangement: the PLX2783H left of the
    AW3225QF (it sits at -1920,0), sizes to scale, each showing its current
-   image. The mirrored pair share the accent outline; under each: its
-   name, resolution and playlist. A monitor in no playlist says
+   image, with no outline; under each: its name, resolution (e.g.
+   3840×2160) and playlist. A monitor in no playlist says
    "no playlist". Resize the window: the drawing rescales, nothing is cut
    off, and the cards rearrange into fewer or more columns.
 2. Each playlist card: the thumbnail (letterboxed, on the dark backdrop),
@@ -169,7 +169,7 @@ thumbnails off the UI thread) is tested with fakes (`tests/test_layout.py`,
    (4K PNGs), press *Next* repeatedly and move / resize the window
    meanwhile; it stays responsive, and each card ends on its current image.
 8. Switch a monitor off (e.g. OLED refresh) with the window open: within a
-   few seconds it is drawn dimmed, dashed, marked "off", to the right of
+   few seconds it is drawn dimmed, marked "off", to the right of
    the others, at its usual size; the others are drawn where Windows now
    puts them (it may move them). Switched on, it returns to its real
    position.

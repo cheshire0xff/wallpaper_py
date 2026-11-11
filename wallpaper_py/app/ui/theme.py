@@ -44,7 +44,6 @@ ICON_SIZE = 20
 
 BACKDROP = QColor("#161616")  # behind images, in light and dark mode
 BACKDROP_RAISED = QColor("#262626")  # an empty image area on the backdrop
-BACKDROP_EDGE = QColor("#4a4a4a")
 BACKDROP_TEXT = QColor("#e8e8e8")
 BACKDROP_TEXT_DIM = QColor("#a0a0a0")
 
