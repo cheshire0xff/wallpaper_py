@@ -58,5 +58,7 @@ the wallpapers.
 1. More CLI verbosity, e.g. `--debug` (debug level): each step of reaching the app
    (socket attempts, taking / waiting for / releasing the lock, timings), on top of
    `--verbose`'s summary.
+1. Screenshots in the README (the settings window with monitor tiles, the library, the tray menu):
+   they sell the app better than any description. Light and dark mode; keep them current when the UI changes.
 1. Virtual backend (made-up monitors, nothing set on the real desktop) for end-to-end
    tests and a demo mode, and page renders uploaded by CI (docs/plan.md, Phase 7).
