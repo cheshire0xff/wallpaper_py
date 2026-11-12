@@ -107,11 +107,13 @@ def test_light_tones() -> None:
     assert not tones.dark
     assert tones.page.name() == "#f3f3f3"  # the palette's own window colour
     assert tones.line.lightness() < tones.page.lightness()
-    # A dark panel behind images, with light text on it.
-    assert tones.panel == theme.BACKDROP
-    assert tones.panel_text == theme.BACKDROP_TEXT
+    # A silver panel behind images, a step darker than the page, with the
+    # page's dark text and accent on it.
+    assert tones.panel.lightness() < tones.page.lightness()
+    assert 0.78 < tones.panel.lightnessF() < 0.86  # silver, about #d4d4d4
+    assert tones.panel_text == tones.text
     assert tones.accent.lightnessF() <= 0.45
-    assert tones.panel_accent.lightnessF() >= 0.6  # readable on the dark panel
+    assert tones.panel_accent == tones.accent
     assert tones.on_accent.name() == "#ffffff"
 
 
@@ -209,7 +211,7 @@ def test_image_view_keeps_its_aspect_and_letterboxes(qtbot: QtBot) -> None:
     view.set_pixmap(tall)
     shot = view.grab().toImage()
     assert shot.pixelColor(160, 90).name() == "#ff0000"  # the image, centred
-    assert shot.pixelColor(20, 90) == theme.BACKDROP  # the backdrop beside it
+    assert shot.pixelColor(20, 90) == theme.tones().panel  # the panel beside it
     view.set_pixmap(None, "Loading…")
     assert view.pixmap() is None and view.placeholder() == "Loading…"
     view.grab()

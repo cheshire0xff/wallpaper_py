@@ -8,9 +8,11 @@ framework.
   `QPalette`, never hard-coded per OS. In dark mode the page is a shade
   darker than the palette's Window colour; the sidebar is the same colour,
   set apart only by a thin lighter `line`; image panels are a little
-  lighter than the page. Light mode keeps the palette's Window colour and a
-  dark panel behind images (`BACKDROP`: wallpapers look washed out on
-  white). `window_palette` puts the tones into the palette roles the native
+  lighter than the page. Light mode keeps the palette's Window colour; the
+  panel behind images is a silver grey a step darker than the page, with
+  the palette's (dark) text on it (wallpapers look washed out on white;
+  the old near-black panel was too stark; chosen from the mockup).
+  `window_palette` puts the tones into the palette roles the native
   style draws with (Window, Base and Button for the borderless filled
   fields, PlaceholderText for muted text); the main window sets it, and
   everything painted here reads `tones()` when it paints, so a change of
@@ -87,10 +89,6 @@ CONTROL_WIDTH = 360  # the settings' control column
 PAGE_MARGIN = 32  # left / right of a page's content
 PAGE_TOP = 20
 
-# Behind images in light mode (and its text); dark mode uses `Tones.panel`.
-BACKDROP = QColor("#161616")
-BACKDROP_TEXT = QColor("#e8e8e8")
-BACKDROP_TEXT_DIM = QColor("#a0a0a0")
 # The status dot (the palette has no such roles): dark mode, light mode.
 OK = (QColor("#6ccb5f"), QColor("#0f7b0f"))
 ERROR = (QColor("#ff99a4"), QColor("#c42b1c"))
@@ -196,7 +194,9 @@ def derive_tones(palette: QPalette) -> Tones:
     if dark:
         panel, panel_text, panel_muted = mix(page, text, 0.04), text, soft
     else:
-        panel, panel_text, panel_muted = BACKDROP, BACKDROP_TEXT, BACKDROP_TEXT_DIM
+        # Silver: about #d4d4d4 on Windows' #f3f3f3.
+        panel = mix(page, text, 0.13)
+        panel_text, panel_muted = QColor(text), mix(text, panel, 0.3)
     on_accent = QColor("#000000" if accent.lightnessF() > 0.55 else "#ffffff")
     return Tones(
         dark=dark,
@@ -213,7 +213,7 @@ def derive_tones(palette: QPalette) -> Tones:
         panel_raised=mix(panel, QColor("#ffffff"), 0.07),
         panel_text=panel_text,
         panel_muted=panel_muted,
-        panel_accent=accent if dark else readable_accent(accent, True),
+        panel_accent=accent,
         panel_line=mix(panel, panel_text, 0.09),
         ok=OK[0] if dark else OK[1],
         error=ERROR[0] if dark else ERROR[1],

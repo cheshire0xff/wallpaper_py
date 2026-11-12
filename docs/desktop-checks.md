@@ -21,9 +21,9 @@ Status: **ok** (with the date, when known) all steps seen working;
 | [5. CLI and the app](#5-cli-and-the-app) | ok, except step 3 | todo | todo |
 | [6. Tray](#6-tray) | ok, except step 2 and a broken config (step 3) | todo | todo |
 | [7. Start at login](#7-start-at-login) | todo | todo | todo |
-| [8.1 The window: opening, pages, closing](#81-opening-pages-and-closing) | todo (one window since Phase 4 step 4; as separate windows: ok 2026-11-11) | todo | todo |
-| [8.2 The window: Home](#82-home) | todo (rows and panel are new; as the layout window: ok 2026-11-11, except *Remove* and steps 4, 5, 6) | todo | todo |
-| [8.3 The window: Settings](#83-settings) | steps 1, 2 ok 2026-11-12 (step 1 also on a copy of the real config; file handling unchanged since); 3-11 todo | todo | todo |
+| [8.1 The window: opening, pages, closing](#81-opening-pages-and-closing) | steps 2, 3, 4, 9, 10 ok 2026-11-12 (step 9 before the silver light-mode panel); 1, 5-8 todo | todo | todo |
+| [8.2 The window: Home](#82-home) | step 1 ok 2026-11-12; 2-7 todo as rows (as the layout window: ok 2026-11-11, except *Remove* and steps 4, 5, 6) | todo | todo |
+| [8.3 The window: Settings](#83-settings) | steps 1, 2, 4, 7 ok 2026-11-12 (step 1 also on a copy of the real config); 3, 5, 6, 8-11 todo | todo | todo |
 | [9. Pick, hold and manual](#9-pick-hold-and-manual) | ok 2026-11-11, except waiting past an interval (steps 3, 6) | todo | todo |
 
 ## 1. Monitors and `set`
@@ -123,8 +123,9 @@ settings, the tones; `test_home.py`, `test_settings.py`,
 9. Switch the system between light and dark mode (Settings >
    Personalisation > Colours) with the window open: the window follows
    (page, sidebar, its thin line, fields, icons, the selected item's
-   accent); in light mode the monitor drawing and thumbnails stay on a dark
-   panel, in dark mode on a panel a little lighter than the page.
+   accent); in light mode the monitor drawing and thumbnails are on a
+   silver panel with dark text, in dark mode on a panel a little lighter
+   than the page.
 10. The look against [design/](design/README.md): the sidebar the page's
     colour with only a thin lighter line beside it (and under the title
     bar); the selected page with an accent bar, a faint accent fill and a

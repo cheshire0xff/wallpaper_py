@@ -517,7 +517,10 @@ One window, implemented (decisions made while building it):
   14 % alpha. The accent is lightened until readable on dark (Windows'
   #0078d4 becomes about #40acff; the mockup's #60cdff is Windows' own
   light accent, which Qt doesn't expose). Light mode: the page is the
-  Window colour, the panel behind images the old dark `BACKDROP`.
+  Window colour, the panel behind images silver (the page mixed 13 %
+  towards the text: about #d4d4d4 on Windows) with the page's dark text and
+  accent; the first near-black panel was too stark (changed after the
+  desktop checks, picked from four tones in the mockup).
   The status dot's green / red are the only fixed colours besides the
   backdrop (the palette has no such roles), one pair per mode.
 - **Applying them without stylesheets**: the window sets *only* Window,
