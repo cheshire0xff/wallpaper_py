@@ -9,8 +9,8 @@ libraries (10k+ images). See [todo.md](todo.md) for the feature list,
 [docs/architecture.md](docs/architecture.md) for the design.
 
 **Status:** the core, the Windows backend, the playlist service and the tray
-app exist, plus the UI process with the layout and settings windows. The
-library window is next.
+app exist, plus the UI process with its window (Home and Settings). The
+library is next.
 
 ## Install
 
@@ -51,13 +51,13 @@ wallpaper next|prev|fav|unfav|remove [TARGET]  # TARGET: playlist or monitor nam
 wallpaper pick IMAGE [TARGET]                # show IMAGE now (any directory)
 wallpaper hold|resume [TARGET]               # stop / restart rotating
 wallpaper reload                             # read the config file again
-wallpaper ui [layout|library|settings]       # open a window (see below)
+wallpaper ui [home|library|settings]         # open the window on a page (see below)
 ```
 
 Playlists are defined in a TOML file; start from
 [docs/config.example.toml](docs/config.example.toml) and save it where
 `wallpaper --help` says (or pass `--config`), or edit it in the settings
-window. `--config` picks the file the app starts with; commands to a
+page. `--config` picks the file the app starts with; commands to a
 running app don't need it (they go to whatever config it runs), and one
 given anyway must be the app's.
 
@@ -100,7 +100,8 @@ command reached the running app or started one, and the app's raw reply.
 The tray menu has a section per playlist (its monitors by name, the current
 image, which opens on click, *Next*, *Previous*, a *Favourite* toggle,
 *Remove*, and a *Hold* toggle unless it is manual; the header says *held* or
-*manual*), then *Open layout*, *Open library*, *Settings…*, *Reload config*
+*manual*), then *Open wallpaper_py* (the window on Home), *Library*,
+*Settings…*, *Reload config*
 (after editing it by hand; like `wallpaper reload`, it notifies the error or
 any warnings), *Open config folder*, *Start at login* and *Quit*. Left-click
 opens the same menu. The icon turns
@@ -113,28 +114,35 @@ to `wallpaper.log` in the per-user log directory (on Windows
 (start at login, files, sockets, what it changes on the desktop) and how to
 remove it all: [docs/system-integration.md](docs/system-integration.md).
 
-The windows run in a separate process (`wallpaper ui`), started when one
-is opened and gone when the last one closes, so they cost nothing while
-closed. Opening a window while that process runs just brings the window up;
-it starts the app if needed and closes when the app quits. It logs to
-`ui.log` next to `wallpaper.log`.
+The window runs in a separate process (`wallpaper ui`), started when it
+is opened and gone when it closes, so it costs nothing while closed. It has
+a sidebar with its pages (Home, Library, Settings) and the app's status
+(rotation active or paused). Opening it while that process runs just
+brings it to the front on the page asked for; it starts the app if needed
+and closes when the app quits. It follows the system's light / dark mode
+and accent. It logs to `ui.log` next to `wallpaper.log`.
 
-- **Layout** (`wallpaper ui`): the monitors to scale with their current
-  wallpapers, and a card per playlist with previous / next, favourite,
-  remove and hold.
+- **Home** (`wallpaper ui`, tray *Open wallpaper_py*): the monitors to
+  scale with their current wallpapers, and a row per playlist with
+  previous / next, favourite, remove and hold. Pointing at a row outlines
+  its monitors.
 - **Settings** (`wallpaper ui settings`, tray *Settings…*): the config file
   as a form. *Playlists*: click a monitor in the drawing to choose its
-  playlist (or *No playlist*, or *New playlist…*); per playlist its name,
-  folder, order, interval (or manual), mode and monitors. *General*:
+  playlist (or *No playlist*, or *New playlist…*); one playlist open at a
+  time (the others show a summary), with its name, folder, order, changes
+  (every *duration* of active time, or manually), mode and monitors.
+  *General*:
   pausing while locked or idle, and where favourites.txt / to-remove.txt
   are. *About*: the version and every data location, with *Open folder* and
   *Copy path*. It edits the file the running app uses, in place: only what
   you changed is written, so your comments and layout stay, and hand
   editing keeps working. Save asks the app to reload. Problems show next to
   their field and keep *Save* off; if the file was edited by hand since the
-  window read it, nothing is overwritten and the window offers to load it
-  again. Closing with unsaved changes asks first.
-- **Library**: a placeholder for now.
+  page read it, nothing is overwritten and the page offers to load it
+  again. Unsaved changes stay while you visit other pages; closing the
+  window with them asks first.
+- **Library** (`wallpaper ui library`, tray *Library*): a placeholder for
+  now.
 
 Other programs can drive the app over the same socket: see
 [docs/protocol.md](docs/protocol.md).

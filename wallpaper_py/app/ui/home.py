@@ -1,13 +1,16 @@
 """
-The layout window: the monitors to scale, then one card per playlist with
-its current wallpaper (docs/plan.md, Phase 4, "Look").
+Home, the main window's first page: the monitors to scale on a panel, then
+one row per playlist with its current wallpaper (docs/plan.md, Phase 4,
+"Look" and "One window"; docs/design/home.png).
 
 Everything it shows comes from the app through `Client`: it redraws from
 `overview_changed` (never polls), and after each new overview asks once
 for `status` for the schedule (order, interval, time left), which it counts
 down locally until the next overview. Buttons send the playlist commands;
 their toggles (favourite, hold) show the app's state from the overview,
-never the click. A command's error shows in its card, not as a dialog.
+never the click. A command's error shows in its row, not as a dialog.
+Pointing at a row (or at a monitor) highlights the playlist in both: a
+faint fill on the row, an accent outline on its monitors.
 
 Image details (dimensions, file size) and thumbnails are read from the
 files by `ThumbnailLoader`, off the UI thread.
@@ -21,20 +24,10 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
-from PySide6.QtCore import QEvent, QSize, Qt, QTimer, Signal, Slot
-from PySide6.QtGui import (
-    QCloseEvent,
-    QEnterEvent,
-    QFont,
-    QPainter,
-    QPaintEvent,
-    QPalette,
-    QPen,
-    QResizeEvent,
-)
+from PySide6.QtCore import QEvent, QRectF, QSize, Qt, QTimer, Signal, Slot
+from PySide6.QtGui import QEnterEvent, QPainter, QPaintEvent, QPalette
 from PySide6.QtWidgets import (
     QFrame,
-    QGridLayout,
     QHBoxLayout,
     QLabel,
     QScrollArea,
@@ -61,10 +54,9 @@ from . import theme
 from .arrangement import MonitorsView
 from .client import Client
 from .thumbnails import ImageInfo, Thumbnail, ThumbnailLoader
-from .window import Window
 
-THUMBNAIL_BOX = QSize(480, 270)  # logical px; one decode serves card and monitor
-CARD_MIN_WIDTH = 300
+THUMBNAIL_BOX = QSize(480, 270)  # logical px; one decode serves row and monitor
+ROW_IMAGE = QSize(176, 99)
 COUNTDOWN_MS = 1000
 
 Clock = Callable[[], float]
@@ -84,17 +76,24 @@ def format_size(size: int) -> str:
 
 
 def format_duration(seconds: float) -> str:
-    """< 1 min, 12 min, 1 h, 1 h 05 min, 2 d, 2 d 3 h (to the nearest minute)."""
-    if seconds < 60:
-        return "< 1 min"
-    minutes = round(seconds / 60)
+    """
+    As the config writes durations: 45s, 5m50s (under 10 minutes), 21m,
+    1h, 1h5m, 2d, 2d3h.
+    """
+    whole = max(round(seconds), 0)
+    if whole < 60:
+        return f"{whole}s"
+    if whole < 600:
+        minutes, rest = divmod(whole, 60)
+        return f"{minutes}m{rest}s" if rest else f"{minutes}m"
+    minutes = round(whole / 60)
     if minutes < 60:
-        return f"{minutes} min"
+        return f"{minutes}m"
     hours, minutes = divmod(minutes, 60)
     if hours < 24:
-        return f"{hours} h" if not minutes else f"{hours} h {minutes:02d} min"
+        return f"{hours}h{minutes}m" if minutes else f"{hours}h"
     days, hours = divmod(hours, 24)
-    return f"{days} d" if not hours else f"{days} d {hours} h"
+    return f"{days}d{hours}h" if hours else f"{days}d"
 
 
 def members_text(view: PlaylistView) -> str:
@@ -123,7 +122,7 @@ def schedule_text(
     view: PlaylistView, details: PlaylistDetails | None, left: float | None
 ) -> str | None:
     """
-    "shuffle, 30 min · next in 12 min"; "… · 12 min left once resumed"
+    "shuffle, every 30m · next in 12m"; "… · 12m left once resumed"
     (held); "shuffle · manual". `left`: seconds of active time left.
     """
     if details is None:
@@ -131,7 +130,7 @@ def schedule_text(
     order = details.order.value
     if view.manual or details.interval is None:
         return f"{order} · manual"
-    text = f"{order}, {format_duration(details.interval)}"
+    text = f"{order}, every {format_duration(details.interval)}"
     if left is None:
         return text
     remaining = format_duration(max(left, 0.0))
@@ -148,7 +147,7 @@ def details_text(
     thumbnail: Thumbnail | None,
     left: float | None,
 ) -> str:
-    """The card's details line: dimensions · file size · order, interval · next."""
+    """The row's details line: dimensions · file size · order, interval · next."""
     parts: list[str] = []
     if view.current is not None and thumbnail is not None:
         info: ImageInfo | None = thumbnail.info
@@ -161,7 +160,7 @@ def details_text(
     return " · ".join(parts)
 
 
-# -- the card --------------------------------------------------------------------
+# -- a row ------------------------------------------------------------------------
 
 
 class ElidedLabel(QLabel):
@@ -184,11 +183,11 @@ class ElidedLabel(QLabel):
         painter.end()
 
 
-class PlaylistCard(QFrame):
+class PlaylistRow(QWidget):
     """
-    One playlist: thumbnail, name, monitors, chip, file name, details, and
-    the buttons previous, next | favourite, remove, hold. `requested` asks
-    the window to send a command; the card itself holds no client.
+    One playlist: thumbnail; name, monitors, chip; file name; details; then
+    the borderless buttons previous, next | favourite, remove, hold.
+    `requested` asks the page to send a command; the row holds no client.
     """
 
     # pylint: disable=too-many-instance-attributes
@@ -200,25 +199,28 @@ class PlaylistCard(QFrame):
         super().__init__(parent)
         self._view = view
         self._highlighted = False
+        self._divider = False  # a line above (every row but the first)
         self._details: PlaylistDetails | None = None
         self._thumbnail: Thumbnail | None = None
         self._left: float | None = None
-        self.setMinimumWidth(CARD_MIN_WIDTH)
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         self.image = theme.ImageView(parent=self)
+        self.image.setFixedSize(ROW_IMAGE)
         self.title = QLabel(self)
-        bold = QFont(self.title.font())
-        bold.setBold(True)
-        self.title.setFont(bold)
+        self.title.setFont(theme.scaled_font(self.title.font(), 1.15, bold=True))
         self.link = QLabel(self)
         self.link.setToolTip("Mirrored group: the same image on every monitor")
         self.monitors = ElidedLabel(self)
+        self.monitors.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred
+        )
+        self.monitors.setMinimumWidth(theme.space(5))
+        self.monitors.setForegroundRole(QPalette.ColorRole.PlaceholderText)
+        self.monitors.setFont(theme.scaled_font(self.monitors.font(), 0.93))
         self.chip = theme.Chip(self)
         self.file = ElidedLabel(self)
-        self.details = QLabel(self)
-        self.details.setWordWrap(True)
-        self.details.setForegroundRole(QPalette.ColorRole.PlaceholderText)
+        self.details = theme.muted("", self, wrap=True)
         self.message_icon = QLabel(self)
         self.message = QLabel(self)
         self.message.setWordWrap(True)
@@ -249,39 +251,45 @@ class PlaylistCard(QFrame):
         heading.setSpacing(theme.space())
         heading.addWidget(self.title)
         heading.addWidget(self.link)
-        heading.addWidget(self.monitors, 1)
+        heading.addWidget(self.monitors)
         heading.addWidget(self.chip)
-
-        buttons = QHBoxLayout()
-        buttons.setSpacing(theme.space(0.5))
-        buttons.addWidget(self.prev_button)
-        buttons.addWidget(self.next_button)
-        divider = QFrame(self)
-        divider.setFrameShape(QFrame.Shape.VLine)
-        divider.setFrameShadow(QFrame.Shadow.Sunken)
-        buttons.addSpacing(theme.space(0.5))
-        buttons.addWidget(divider)
-        buttons.addSpacing(theme.space(0.5))
-        buttons.addWidget(self.fav_button)
-        buttons.addWidget(self.remove_button)
-        buttons.addWidget(self.hold_button)
-        buttons.addStretch(1)
+        heading.addStretch(1)
 
         message = QHBoxLayout()
         message.setSpacing(theme.space())
         message.addWidget(self.message_icon, 0, Qt.AlignmentFlag.AlignTop)
         message.addWidget(self.message, 1)
 
-        layout = QVBoxLayout(self)
-        margin = theme.space(1.5)
-        layout.setContentsMargins(margin, margin, margin, margin)
-        layout.setSpacing(theme.space())
-        layout.addWidget(self.image)
-        layout.addLayout(heading)
-        layout.addWidget(self.file)
-        layout.addWidget(self.details)
+        text = QVBoxLayout()
+        text.setSpacing(theme.space(0.5))
+        text.addStretch(1)
+        text.addLayout(heading)
+        text.addWidget(self.file)
+        text.addWidget(self.details)
+        text.addLayout(message)
+        text.addStretch(1)
+
+        buttons = QHBoxLayout()
+        buttons.setSpacing(theme.space(0.5))
+        buttons.addWidget(self.prev_button)
+        buttons.addWidget(self.next_button)
+        separator = QWidget(self)
+        separator.setFixedSize(theme.space(1.5) + 1, 20)
+        separator_layout = QHBoxLayout(separator)
+        separator_layout.setContentsMargins(theme.space(0.75), 0, theme.space(0.75), 0)
+        separator_layout.addWidget(theme.Divider(separator, Qt.Orientation.Vertical))
+        buttons.addWidget(separator)
+        buttons.addWidget(self.fav_button)
+        buttons.addWidget(self.remove_button)
+        buttons.addWidget(self.hold_button)
+
+        layout = QHBoxLayout(self)
+        vertical = theme.space(1.75)
+        layout.setContentsMargins(0, vertical + 1, theme.space(), vertical)
+        layout.setSpacing(theme.space(2.5))
+        layout.addWidget(self.image, 0, Qt.AlignmentFlag.AlignTop)
+        layout.addLayout(text, 1)
         layout.addLayout(buttons)
-        layout.addLayout(message)
 
     # -- state -------------------------------------------------------------------
 
@@ -300,8 +308,7 @@ class PlaylistCard(QFrame):
         self.title.setText(view.name)
         self.monitors.setText(members_text(view))
         self.monitors.setToolTip(members_text(view))
-        mirrored = len(view.monitors) > 1
-        self.link.setVisible(mirrored)
+        self.link.setVisible(len(view.monitors) > 1)  # a mirrored group
         chip = chip_text(view)
         self.chip.setText(chip or "")
         self.chip.setVisible(chip is not None)
@@ -341,10 +348,19 @@ class PlaylistCard(QFrame):
         return self._thumbnail
 
     def show_message(self, text: str | None, error: bool = False) -> None:
-        """A note under the buttons (e.g. a command's error); None hides it."""
+        """A note under the details (e.g. a command's error); None hides it."""
         self.message.setText(text or "")
         self.message.setVisible(bool(text))
         self.message_icon.setVisible(bool(text) and error)
+
+    def set_divider(self, divider: bool) -> None:
+        """A thin line above this row (every row but the first)."""
+        if divider != self._divider:
+            self._divider = divider
+            self.update()
+
+    def divider(self) -> bool:
+        return self._divider
 
     def _show_image(self) -> None:
         if self._view.current is None:
@@ -362,18 +378,19 @@ class PlaylistCard(QFrame):
         self.details.setVisible(bool(text))
 
     def _tint(self) -> None:
-        """The small icons in the text, from the palette (buttons do their own)."""
-        color = self.palette().color(QPalette.ColorRole.WindowText)
+        """The small icons in the text (buttons do their own)."""
         ratio = self.devicePixelRatioF()
-        self.link.setPixmap(theme.tinted_pixmap("link", color, 16, ratio))
+        muted = self.palette().color(QPalette.ColorRole.PlaceholderText)
+        text = self.palette().color(QPalette.ColorRole.WindowText)
+        self.link.setPixmap(theme.tinted_pixmap("link", muted, 14, ratio))
         self.message_icon.setPixmap(
-            theme.tinted_pixmap("circle-alert", color, 16, ratio)
+            theme.tinted_pixmap("circle-alert", text, 16, ratio)
         )
 
     # -- painting ----------------------------------------------------------------
 
     def set_highlighted(self, highlighted: bool) -> None:
-        """An accent edge while this playlist is pointed at (here or a monitor)."""
+        """A faint fill while this playlist is pointed at (here or a monitor)."""
         if highlighted != self._highlighted:
             self._highlighted = highlighted
             self.update()
@@ -391,21 +408,21 @@ class PlaylistCard(QFrame):
 
     def paintEvent(self, event: QPaintEvent) -> None:  # pylint: disable=invalid-name
         del event
+        tones = theme.tones()
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if self._divider:
+            painter.fillRect(QRectF(0, 0, self.width(), 1), tones.line)
         if self._highlighted:
-            painter.setPen(QPen(theme.accent(self.palette()), 2))
-            rect = self.rect().toRectF().adjusted(1, 1, -1, -1)
-        else:
-            painter.setPen(self.palette().color(QPalette.ColorRole.Mid))
-            rect = self.rect().toRectF().adjusted(0.5, 0.5, -0.5, -0.5)
-        painter.setBrush(self.palette().color(QPalette.ColorRole.Base))
-        painter.drawRoundedRect(rect, theme.RADIUS, theme.RADIUS)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(tones.hover)
+            rect = QRectF(self.rect()).adjusted(0, 1 if self._divider else 0, 0, 0)
+            painter.drawRoundedRect(rect, theme.RADIUS, theme.RADIUS)
         painter.end()
 
     def changeEvent(self, event: QEvent) -> None:  # pylint: disable=invalid-name
         super().changeEvent(event)
-        if event.type() == QEvent.Type.PaletteChange:
+        if theme.palette_changed(event):
             self._tint()
 
     # -- buttons -----------------------------------------------------------------
@@ -435,26 +452,26 @@ class PlaylistCard(QFrame):
         self._send("resume" if self._view.held else "hold")
 
 
-# -- the window ------------------------------------------------------------------
+# -- the page ---------------------------------------------------------------------
 
 
 class _ReplyTo:
     """
-    A reply callback for `Client.run` that holds the window weakly: the
-    window may close (and be deleted) before the reply arrives.
+    A reply callback for `Client.run` that holds the page weakly: the window
+    may close (and be deleted) before the reply arrives.
     """
 
-    def __init__(self, window: LayoutWindow, playlist: str | None) -> None:
-        self._window = weakref.ref(window)
+    def __init__(self, page: HomePage, playlist: str | None) -> None:
+        self._page = weakref.ref(page)
         self._playlist = playlist
 
     def __call__(self, reply: Reply) -> None:
-        window = self._window()
-        if window is not None and Shiboken.isValid(window):
-            window.replied(self._playlist, reply)
+        page = self._page()
+        if page is not None and Shiboken.isValid(page):
+            page.replied(self._playlist, reply)
 
 
-class LayoutWindow(Window):
+class HomePage(QWidget):
     """See the module docstring."""
 
     # pylint: disable=too-many-instance-attributes
@@ -464,10 +481,9 @@ class LayoutWindow(Window):
         client: Client,
         loader: ThumbnailLoader | None = None,
         clock: Clock = time.monotonic,
+        parent: QWidget | None = None,
     ) -> None:
-        super().__init__()
-        self.setWindowTitle("wallpaper_py · Layout")
-        self.resize(980, 760)
+        super().__init__(parent)
         self._client = client
         self._clock = clock
         self._overview: Overview | None = None
@@ -476,8 +492,7 @@ class LayoutWindow(Window):
         self._status_running = False
         self._status_again = False
         self._closed = False
-        self.cards: dict[str, PlaylistCard] = {}
-        self._columns = 0
+        self.rows: dict[str, PlaylistRow] = {}
 
         if loader is None:
             ratio = self.devicePixelRatioF()
@@ -490,14 +505,13 @@ class LayoutWindow(Window):
         self.banner.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
+        self.monitors_heading = theme.heading("Monitors", self)
         self.monitors_view = MonitorsView(self)
+        self.monitors_view.set_heights(220, 360, 0.3)
         self.monitors_view.hovered.connect(self._hover)
-        self.empty = QLabel("No playlists in the config yet.", self)
-        self.empty.setForegroundRole(QPalette.ColorRole.PlaceholderText)
-        self._grid_widget = QWidget(self)
-        self._grid = QGridLayout(self._grid_widget)
-        self._grid.setContentsMargins(0, 0, 0, 0)
-        self._grid.setSpacing(theme.space(2))
+        self.empty = theme.muted("No playlists in the config yet.", self)
+        self._rows_box = QVBoxLayout()
+        self._rows_box.setSpacing(0)
         self._build()
 
         self._countdown = QTimer(self)
@@ -512,15 +526,32 @@ class LayoutWindow(Window):
             self._set_banner("Connecting to wallpaper_py…")
 
     def _build(self) -> None:
-        content, layout = theme.page(self)
+        panel = theme.Panel(self)
+        header = QHBoxLayout()
+        header.setSpacing(theme.space(1.5))
+        header.addWidget(self.monitors_heading, 1)
+        header.addWidget(theme.muted("Hover a playlist to see its monitors", panel))
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(
+            theme.space(2.5), theme.space(1.75), theme.space(2.5), theme.space()
+        )
+        panel_layout.setSpacing(theme.space(1.5))
+        panel_layout.addLayout(header)
+        panel_layout.addWidget(theme.Divider(panel, on_panel=True))
+        panel_layout.addWidget(self.monitors_view)
+
+        content = QWidget(self)
+        layout = theme.page_layout(content, bottom=theme.PAGE_MARGIN)
+        layout.addWidget(theme.title("Home", content))
         layout.addWidget(self.banner)
-        layout.addWidget(theme.heading("Monitors", content))
-        layout.addWidget(self.monitors_view)
+        layout.addWidget(panel)
         layout.addSpacing(theme.space())
-        layout.addWidget(theme.heading("Playlists", content))
+        playlists = theme.heading("Playlists", content)
+        layout.addWidget(playlists)
         layout.addWidget(self.empty)
-        layout.addWidget(self._grid_widget)
+        layout.addLayout(self._rows_box)
         layout.addStretch(1)
+        layout.setSpacing(theme.space(2))
 
         self._scroll = QScrollArea(self)
         self._scroll.setWidgetResizable(True)
@@ -534,15 +565,13 @@ class LayoutWindow(Window):
 
     @Slot(object)
     def show_overview(self, overview: Overview) -> None:
+        if self._closed:
+            return
         self._overview = overview
-        if overview.error:
-            self._set_banner(f"Error: {overview.error}")
-        elif overview.paused:
-            self._set_banner(f"Rotation paused: {overview.paused}")
-        else:
-            self._set_banner(None)
+        self._set_banner(f"Error: {overview.error}" if overview.error else None)
+        self.monitors_heading.setText(f"Monitors ({len(overview.monitors)})")
         self.monitors_view.show_overview(overview)
-        self._update_cards(overview)
+        self._update_rows(overview)
         current = [p.current for p in overview.playlists if p.current is not None]
         self.loader.want(current)
         for path in current:  # the cached ones now; the others once loaded
@@ -561,76 +590,65 @@ class LayoutWindow(Window):
         if playlist is None:
             self._status_replied(reply)
             return
-        card = self.cards.get(playlist)
-        if card is None:
+        row = self.rows.get(playlist)
+        if row is None:
             return
         if isinstance(reply, ErrorReply):
-            card.show_message(reply.error.message, error=True)
+            row.show_message(reply.error.message, error=True)
         elif isinstance(reply, PrevResult) and reply.change is None:
-            card.show_message("Nothing earlier in the history")
+            row.show_message("Nothing earlier in the history")
         elif isinstance(reply, RemoveResult) and reply.change is None:
-            card.show_message(
+            row.show_message(
                 f"{reply.image.name} is listed for removal; the playlist "
                 "moves on once a monitor is on"
             )
         else:
-            card.show_message(None)
+            row.show_message(None)
 
-    # -- cards -------------------------------------------------------------------
+    def shutdown(self) -> None:
+        """The window closes: stop counting, wait for running thumbnail jobs."""
+        self._closed = True
+        self._countdown.stop()
+        self.loader.close()
 
-    def _update_cards(self, overview: Overview) -> None:
+    # -- rows --------------------------------------------------------------------
+
+    def _update_rows(self, overview: Overview) -> None:
         names = [p.name for p in overview.playlists]
-        for name in [n for n in self.cards if n not in names]:
-            gone = self.cards.pop(name)
-            self._grid.removeWidget(gone)
+        for name in [n for n in self.rows if n not in names]:
+            gone = self.rows.pop(name)
+            self._rows_box.removeWidget(gone)
+            gone.hide()
             gone.deleteLater()
         for view in overview.playlists:
-            card = self.cards.get(view.name)
-            if card is None:
-                new = PlaylistCard(view, self._grid_widget)
+            row = self.rows.get(view.name)
+            if row is None:
+                new = PlaylistRow(view, self)
                 new.requested.connect(self._send)
                 new.hovered.connect(self._hover)
-                self.cards[view.name] = new
+                self.rows[view.name] = new
             else:
-                card.show_view(view)
+                row.show_view(view)
         # In the overview's (the config's) order.
-        self.cards = {name: self.cards[name] for name in names}
+        self.rows = {name: self.rows[name] for name in names}
+        for index, row in enumerate(self.rows.values()):
+            self._rows_box.removeWidget(row)
+            self._rows_box.insertWidget(index, row)
+            row.set_divider(index > 0)
         self.empty.setVisible(not names and not overview.error)
-        self._columns = 0  # lay out again
-        self._reflow()
-
-    def _reflow(self) -> None:
-        width = self._scroll.viewport().width() - 2 * theme.space(2)
-        spacing = self._grid.horizontalSpacing()
-        columns = max(1, (width + spacing) // (CARD_MIN_WIDTH + spacing))
-        columns = min(columns, max(1, len(self.cards)))
-        if columns == self._columns:
-            return
-        self._columns = columns
-        for card in self.cards.values():
-            self._grid.removeWidget(card)
-        for index, card in enumerate(self.cards.values()):
-            self._grid.addWidget(
-                card, index // columns, index % columns, Qt.AlignmentFlag.AlignTop
-            )
-        for column in range(self._grid.columnCount()):
-            self._grid.setColumnStretch(column, 1 if column < columns else 0)
-
-    def columns(self) -> int:
-        return self._columns
 
     @Slot(object)
     def _hover(self, playlist: str | None) -> None:
-        """A card or a monitor is pointed at: highlight its playlist in both."""
+        """A row or a monitor is pointed at: highlight its playlist in both."""
         self.monitors_view.set_highlight(playlist)
-        for name, card in self.cards.items():
-            card.set_highlighted(name == playlist)
+        for name, row in self.rows.items():
+            row.set_highlighted(name == playlist)
 
     @Slot(str, str)
     def _send(self, playlist: str, command: str) -> None:
-        card = self.cards.get(playlist)
-        if card is not None:
-            card.show_message(None)
+        row = self.rows.get(playlist)
+        if row is not None:
+            row.show_message(None)
         request = Request(command=cast(Command, command), target=playlist)
         self._client.run(request, _ReplyTo(self, playlist))
 
@@ -644,9 +662,9 @@ class LayoutWindow(Window):
         thumbnail = self.loader.get(path)
         if thumbnail is None:
             return
-        for card in self.cards.values():
-            if card.view().current == path:  # only where it is still current
-                card.set_thumbnail(thumbnail)
+        for row in self.rows.values():
+            if row.view().current == path:  # only where it is still current
+                row.set_thumbnail(thumbnail)
         self.monitors_view.set_image(path, thumbnail.pixmap)
 
     # -- the schedule (status) ---------------------------------------------------
@@ -686,9 +704,9 @@ class LayoutWindow(Window):
     def _refresh_details(self) -> None:
         paused = self._overview.paused if self._overview else None
         any_counting = False
-        for card in self.cards.values():
-            view = card.view()
-            card.set_details(self._details.get(view.name), self._left(view))
+        for row in self.rows.values():
+            view = row.view()
+            row.set_details(self._details.get(view.name), self._left(view))
             any_counting |= counting(view, paused) and view.name in self._details
         if any_counting and not self._countdown.isActive():
             self._countdown.start()
@@ -700,19 +718,6 @@ class LayoutWindow(Window):
         """Redraw the time left (the countdown timer calls it every second)."""
         self._refresh_details()
 
-    # -- window ------------------------------------------------------------------
-
     def _set_banner(self, text: str | None) -> None:
         self.banner.setText(text or "")
         self.banner.setVisible(bool(text))
-
-    def resizeEvent(self, event: QResizeEvent) -> None:  # pylint: disable=invalid-name
-        super().resizeEvent(event)
-        self._reflow()
-
-    def closeEvent(self, event: QCloseEvent) -> None:  # pylint: disable=invalid-name
-        super().closeEvent(event)
-        if event.isAccepted():
-            self._closed = True
-            self._countdown.stop()
-            self.loader.close()

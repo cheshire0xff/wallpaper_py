@@ -1,89 +1,321 @@
 """
-A placeholder for the layout and library windows: it shows the live
-`Overview` and the latest change, which proves the UI process's event flow
-end to end. The real windows replace it (Phase 4 / 5).
+The main window: a sidebar (Home, Library, Settings, and the app-wide
+status at its bottom) and the selected page (docs/plan.md, Phase 4, "One
+window"; docs/design/).
+
+`open_page` shows the window on a page and brings it to the front: the
+UI process calls it at start and for each "show" request on its socket
+(`wallpaper ui <page>`, the tray's entries). Pages stay alive while the
+window is open, so switching pages keeps unsaved settings; closing with
+unsaved settings asks Save / Discard / Cancel on the Settings page.
+
+The tones come from the application's palette (theme.derive_tones), set
+on the window as palette roles, and are derived again when the palette
+changes (the system switching light / dark).
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal, Slot
-from PySide6.QtGui import QCloseEvent, QFontDatabase
-from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
+from typing import Literal
 
-from ...core.service import Change
-from ...protocol import MonitorView, Overview
+from PySide6.QtCore import QEvent, QRectF, Qt, Signal, Slot
+from PySide6.QtGui import (
+    QCloseEvent,
+    QFont,
+    QPainter,
+    QPaintEvent,
+)
+from PySide6.QtWidgets import (
+    QButtonGroup,
+    QHBoxLayout,
+    QLabel,
+    QSizePolicy,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
+)
+
+from ...protocol import Overview
+from . import theme
 from .client import Client
+from .home import HomePage
+from .launcher import PageName
+from .library import LibraryPage
+from .settings import SettingsPage
 
-TITLES = {"layout": "Layout", "library": "Library"}
+NAVIGATION: tuple[tuple[PageName, str, str], ...] = (  # page, label, icon
+    ("home", "Home", "house"),
+    ("library", "Library", "images"),
+    ("settings", "Settings", "sliders-horizontal"),
+)
+SIDEBAR_WIDTH = 220
+TITLE = "wallpaper_py"
+
+StatusKind = Literal["connecting", "ok", "paused", "error"]
 
 
-def describe_overview(overview: Overview | None) -> str:
-    """The overview as plain text, one block per playlist."""
+def status_of(overview: Overview | None) -> tuple[str, StatusKind]:
+    """The sidebar's status line for an overview, and its kind (the dot)."""
     if overview is None:
-        return "Connecting to wallpaper_py..."
+        return "Connecting…", "connecting"
     if overview.error:
-        return f"Error: {overview.error}"
-    lines: list[str] = []
-    for playlist in overview.playlists:
-        monitors = " + ".join(_monitor(m) for m in playlist.monitors)
-        lines.append(f"{playlist.name} · {monitors}")
-        current = playlist.current.name if playlist.current else "-"
-        star = " ★" if playlist.favourite else ""
-        lines.append(f"    {current}{star}")
-    lines.append(f"Paused: {overview.paused}" if overview.paused else "Rotating")
-    return "\n".join(lines)
+        return "Config error", "error"
+    if overview.paused:
+        return f"Rotation paused: {overview.paused}", "paused"
+    return "Rotation active", "ok"
 
 
-def _monitor(monitor: MonitorView) -> str:
-    if monitor.attached is None:
-        return f"{monitor.name} (not found)"
-    return monitor.name if monitor.attached else f"{monitor.name} (off)"
+class NavButton(theme.PaintedButton):
+    """
+    A sidebar item: icon and label. The selected one: an accent bar on its
+    left edge, a faint accent fill, the icon in the accent, a bold label.
+    """
+
+    def __init__(
+        self, page: PageName, text: str, icon_name: str, parent: QWidget | None = None
+    ) -> None:
+        super().__init__(text, parent, checkable=True)
+        self.page: PageName = page
+        self._icon_name = icon_name
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setFixedHeight(theme.space(5))
+
+    def paintEvent(self, event: QPaintEvent) -> None:  # pylint: disable=invalid-name
+        del event
+        tones = theme.tones()
+        selected = self.isChecked()
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        rect = QRectF(self.rect())
+        if selected or self.underMouse():
+            painter.setBrush(tones.accent_fill if selected else tones.hover)
+            painter.drawRoundedRect(rect, theme.RADIUS_SMALL, theme.RADIUS_SMALL)
+        if selected:
+            painter.setBrush(tones.accent)
+            edge = QRectF(0, (rect.height() - 20) / 2, 3, 20)
+            painter.drawRoundedRect(edge, 1.5, 1.5)
+        size = theme.ICON_SIZE
+        icon = theme.tinted_pixmap(
+            self._icon_name,
+            tones.accent if selected else tones.text,
+            size,
+            self.devicePixelRatioF(),
+        )
+        left = 14
+        painter.drawPixmap(round(left), round((rect.height() - size) / 2), icon)
+        font = QFont(self.font())
+        if selected:
+            font.setWeight(QFont.Weight.DemiBold)
+        painter.setFont(font)
+        painter.setPen(tones.text)
+        text = rect.adjusted(left + size + 12, 0, 0, 0)
+        flags = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        painter.drawText(text, int(flags), self.text())
+        self.focus_ring(painter)
+        painter.end()
 
 
-class Window(QWidget):
-    """A top-level window of the UI process; `closed` once it has closed."""
+class StatusDot(QWidget):
+    """The small round mark before the status: ok, error, or muted."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.kind: StatusKind = "connecting"
+        self.setFixedSize(8, 8)
+
+    def set_kind(self, kind: StatusKind) -> None:
+        self.kind = kind
+        self.update()
+
+    def paintEvent(self, event: QPaintEvent) -> None:  # pylint: disable=invalid-name
+        del event
+        tones = theme.tones()
+        color = {"ok": tones.ok, "error": tones.error}.get(self.kind, tones.muted)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(color)
+        painter.drawEllipse(QRectF(self.rect()))
+        painter.end()
+
+
+class Sidebar(QWidget):
+    """The app's name, a `NavButton` per page, and the status at the bottom."""
+
+    page_chosen = Signal(str)  # PageName
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setFixedWidth(SIDEBAR_WIDTH)
+        self.setAccessibleName("Pages")
+        name = QLabel(TITLE, self)
+        name.setFont(theme.scaled_font(name.font(), 1.25, bold=True))
+        name.setContentsMargins(theme.space(1.5), 4, 0, theme.space(2))
+        self._group = QButtonGroup(self)
+        self._group.setExclusive(True)
+        self.buttons: dict[PageName, NavButton] = {}
+        self.dot = StatusDot(self)
+        self.status = theme.muted("", self)
+        self.status.setFont(theme.scaled_font(self.font(), 0.86))
+
+        layout = QVBoxLayout(self)
+        margin = theme.space(1.5)
+        layout.setContentsMargins(margin, margin, margin, margin)
+        layout.setSpacing(4)
+        layout.addWidget(name)
+        for page, text, icon_name in NAVIGATION:
+            button = NavButton(page, text, icon_name, self)
+            button.clicked.connect(self._clicked)
+            self._group.addButton(button)
+            self.buttons[page] = button
+            layout.addWidget(button)
+        layout.addStretch(1)
+        status = QHBoxLayout()
+        status.setContentsMargins(margin, theme.space(), margin, theme.space())
+        status.setSpacing(theme.space())
+        status.addWidget(self.dot)
+        status.addWidget(self.status, 1)
+        layout.addLayout(status)
+
+    def set_current(self, page: PageName) -> None:
+        self.buttons[page].setChecked(True)
+
+    def current(self) -> PageName:
+        return next(p for p, b in self.buttons.items() if b.isChecked())
+
+    def set_status(self, text: str, kind: StatusKind, detail: str = "") -> None:
+        self.status.setText(text)
+        self.status.setToolTip(detail)
+        self.status.setAccessibleName(f"{text}: {detail}" if detail else text)
+        self.dot.set_kind(kind)
+
+    @Slot()
+    def _clicked(self) -> None:
+        button = self.sender()
+        assert isinstance(button, NavButton)
+        self.page_chosen.emit(button.page)
+
+
+class MainWindow(QWidget):
+    """See the module docstring. `closed` once it has closed."""
+
+    # pylint: disable=too-many-instance-attributes
 
     closed = Signal()
 
-    def closeEvent(self, event: QCloseEvent) -> None:  # pylint: disable=invalid-name
-        super().closeEvent(event)
-        if event.isAccepted():  # a window may refuse (e.g. unsaved changes)
-            self.closed.emit()
-
-
-class PlaceholderWindow(Window):
-    def __init__(self, kind: str, client: Client) -> None:
+    def __init__(
+        self,
+        client: Client,
+        *,
+        home: HomePage | None = None,
+        library: LibraryPage | None = None,
+        settings: SettingsPage | None = None,
+    ) -> None:
         super().__init__()
-        self.setWindowTitle(f"wallpaper_py · {TITLES.get(kind, kind)}")
-        self.resize(480, 320)
+        self.setWindowTitle(f"{TITLE}[*]")  # [*]: "*" while settings are unsaved
+        self.resize(1200, 800)
+        self.setMinimumSize(880, 560)
+        self._applied: theme.Tones | None = None
+        self.home = home if home is not None else HomePage(client)
+        self.library = library if library is not None else LibraryPage()
+        self.settings = settings if settings is not None else SettingsPage(client)
+        self.pages: dict[PageName, QWidget] = {
+            "home": self.home,
+            "library": self.library,
+            "settings": self.settings,
+        }
+        self.sidebar = Sidebar(self)
+        self.stack = QStackedWidget(self)
+        for page in self.pages.values():
+            self.stack.addWidget(page)
 
-        heading = QLabel(f"{TITLES.get(kind, kind)}: coming soon. Live state:")
-        self.overview_label = QLabel()
-        self.overview_label.setFont(
-            QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
-        )
-        self.overview_label.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
-        )
-        self.change_label = QLabel("")
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
+        body.addWidget(self.sidebar)
+        body.addWidget(theme.Divider(self, Qt.Orientation.Vertical))
+        body.addWidget(self.stack, 1)
         layout = QVBoxLayout(self)
-        layout.addWidget(heading)
-        layout.addWidget(self.overview_label, 1)
-        layout.addWidget(self.change_label)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(theme.Divider(self))  # under the title area
+        layout.addLayout(body, 1)
 
-        self.show_overview(client.overview)
-        client.overview_changed.connect(self.show_overview)
-        client.changed.connect(self.show_change)
-        client.failed.connect(self.show_error)
+        self.setAutoFillBackground(True)
+        self._apply_tones()
+        self.show_page("home")
+        self.sidebar.page_chosen.connect(self.show_page)
+        self.settings.modified.connect(self._modified)
+        client.overview_changed.connect(self._show_status)
+        client.failed.connect(self._show_failure)
+        self._show_status(client.overview)
 
-    @Slot(object)
-    def show_overview(self, overview: Overview | None) -> None:
-        self.overview_label.setText(describe_overview(overview))
-
-    @Slot(object)
-    def show_change(self, change: Change) -> None:
-        self.change_label.setText(f"Last change: {change.describe()}")
+    # -- pages -----------------------------------------------------------------
 
     @Slot(str)
-    def show_error(self, message: str) -> None:
-        self.overview_label.setText(f"Error: {message}")
+    def show_page(self, page: str) -> None:
+        name: PageName = page if page in self.pages else "home"
+        self.stack.setCurrentWidget(self.pages[name])
+        self.sidebar.set_current(name)
+
+    @Slot(str)
+    def open_page(self, page: str) -> None:
+        """Show the window on `page` and bring it to the front."""
+        self.show_page(page)
+        if self.isMinimized():
+            self.showNormal()
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def current_page(self) -> PageName:
+        return self.sidebar.current()
+
+    # -- state -------------------------------------------------------------------
+
+    @Slot(object)
+    def _show_status(self, overview: Overview | None) -> None:
+        text, kind = status_of(overview)
+        detail = overview.error if overview is not None and overview.error else ""
+        self.sidebar.set_status(text, kind, detail or "")
+
+    @Slot(str)
+    def _show_failure(self, message: str) -> None:
+        self.sidebar.set_status("Not connected", "error", message)
+
+    @Slot(bool)
+    def _modified(self, modified: bool) -> None:
+        self.setWindowModified(modified)
+
+    # -- tones -------------------------------------------------------------------
+
+    def _apply_tones(self) -> None:
+        derived = theme.tones()
+        if derived == self._applied:  # e.g. the change our own setPalette made
+            return
+        self._applied = derived
+        self.setPalette(theme.window_palette(derived))
+        self.update()
+
+    def applied_tones(self) -> theme.Tones | None:
+        """The tones the window was last drawn with."""
+        return self._applied
+
+    def changeEvent(self, event: QEvent) -> None:  # pylint: disable=invalid-name
+        super().changeEvent(event)
+        if theme.palette_changed(event):
+            self._apply_tones()
+
+    # -- closing -----------------------------------------------------------------
+
+    def closeEvent(self, event: QCloseEvent) -> None:  # pylint: disable=invalid-name
+        if self.settings.dirty():
+            self.show_page("settings")  # the question is about what is shown
+            if not self.settings.confirm_close():
+                event.ignore()
+                return
+        super().closeEvent(event)
+        if event.isAccepted():
+            self.home.shutdown()
+            self.closed.emit()

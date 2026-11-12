@@ -1,5 +1,6 @@
 """
-The monitors drawn to scale in their real arrangement, on the backdrop.
+The monitors drawn to scale in their real arrangement, on the panel tone
+behind images (theme.Tones.panel).
 
 `arrange()` is the geometry, kept free of widgets so it is easy to test:
 it scales the whole desktop (positions may be negative: a monitor left of
@@ -13,8 +14,9 @@ playlist, and under each its name, resolution and playlist ("no playlist"
 for one no playlist drives). No outlines, except on hover: pointing at a
 monitor (`hovered`) or at a playlist's card highlights that playlist's
 monitors in the accent (`set_highlight`), so the accent only ever means
-"what you point at". Made clickable (`set_clickable`, the settings window),
-a click on a monitor emits `clicked` with its id.
+"what you point at". Made clickable (`set_clickable`, the settings page),
+a click on a monitor emits `clicked` with its id. Its height follows its
+width within limits (`set_heights`: Home draws it larger than Settings).
 """
 
 from __future__ import annotations
@@ -26,7 +28,6 @@ from pathlib import Path
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, Signal, Slot
 from PySide6.QtGui import (
     QColor,
-    QFont,
     QMouseEvent,
     QPainter,
     QPainterPath,
@@ -44,8 +45,10 @@ DEFAULT_SIZE = (1920, 1080)  # for a detached monitor never seen attached
 DETACHED_GAP = 0.15  # between the arrangement and detached ones, x its height
 MARGIN = theme.space(2)
 LABEL_HEIGHT = 40  # two lines under each monitor
+COMPACT_LABEL_HEIGHT = 22  # one line (`MonitorsView.set_compact`)
 MIN_HEIGHT = 220
 MAX_HEIGHT = 400
+HEIGHT_RATIO = 0.3  # of the width
 INSET = 3  # px between neighbouring monitors, so they read as separate
 HIGHLIGHT_WIDTH = 2  # px, the hover outline
 
@@ -89,13 +92,14 @@ def arrange(
     width: float,
     height: float,
     last_sizes: Mapping[str, tuple[int, int]] | None = None,
+    label_height: float = LABEL_HEIGHT,
 ) -> list[Placed]:
     """
     Every monitor's box in an area of `width` x `height`: the attached ones
     as on the desktop, the detached ones in a row to the right, all scaled
     by one factor (aspect ratios kept) and centred, inside a MARGIN and
-    with LABEL_HEIGHT under the bottom row for its labels. `last_sizes`: by
-    id, for detached ones.
+    with `label_height` under the bottom row for its labels. `last_sizes`:
+    by id, for detached ones.
     """
     desktop = _desktop_boxes(monitors, last_sizes or {})
     if not desktop:
@@ -105,7 +109,7 @@ def arrange(
         MARGIN,
         MARGIN,
         max(width - 2 * MARGIN, 1.0),
-        max(height - 2 * MARGIN - LABEL_HEIGHT, 1.0),
+        max(height - 2 * MARGIN - label_height, 1.0),
     )
     scale = min(room.width / bounds.width, room.height / bounds.height)
     x = room.x + (room.width - bounds.width * scale) / 2 - bounds.x * scale
@@ -168,6 +172,8 @@ def caption(monitor: DesktopMonitor, playlist: str | None) -> tuple[str, str]:
 class MonitorsView(QWidget):
     """The arrangement, painted; redrawn on resize and on each overview."""
 
+    # pylint: disable=too-many-instance-attributes
+
     hovered = Signal(object)  # the playlist under the pointer, or None
     clicked = Signal(str)  # a monitor's id (only while clickable)
 
@@ -181,17 +187,35 @@ class MonitorsView(QWidget):
         self.setMouseTracking(True)
         self._images: dict[Path, QPixmap] = {}
         self._last_sizes: dict[str, tuple[int, int]] = {}
+        self._heights = (MIN_HEIGHT, MAX_HEIGHT, HEIGHT_RATIO)
+        self._compact = False
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setFixedHeight(MIN_HEIGHT)
         self.setAccessibleName("Monitors")
 
+    def set_compact(self, compact: bool) -> None:
+        """One caption line per monitor: "PLX2783H · konachan" (no size)."""
+        self._compact = compact
+        self.update()
+
+    def _label_height(self) -> float:
+        return COMPACT_LABEL_HEIGHT if self._compact else LABEL_HEIGHT
+
+    def set_heights(self, least: int, most: int, ratio: float) -> None:
+        """Its height: `ratio` of its width, from `least` to `most` px."""
+        self._heights = (least, most, ratio)
+        self._fit_height(self.width())
+
+    def _fit_height(self, width: int) -> None:
+        least, most, ratio = self._heights
+        height = max(least, min(most, round(width * ratio)))
+        if height != self.height():
+            self.setFixedHeight(height)
+
     def resizeEvent(self, event: QResizeEvent) -> None:  # pylint: disable=invalid-name
         super().resizeEvent(event)
         # Taller as the window widens; the drawing itself redraws in paintEvent.
-        width = event.size().width()
-        height = max(MIN_HEIGHT, min(MAX_HEIGHT, round(width * 0.32)))
-        if height != self.height():
-            self.setFixedHeight(height)
+        self._fit_height(event.size().width())
 
     def show_overview(self, overview: Overview) -> None:
         self._overview = overview
@@ -290,6 +314,7 @@ class MonitorsView(QWidget):
             self.width(),
             self.height(),
             self._last_sizes,
+            self._label_height(),
         )
 
     def paintEvent(self, event: QPaintEvent) -> None:  # pylint: disable=invalid-name
@@ -297,10 +322,11 @@ class MonitorsView(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        tones = theme.tones()
         area = QRectF(self.rect())
         backdrop = QPainterPath()
         backdrop.addRoundedRect(area, theme.RADIUS, theme.RADIUS)
-        painter.fillPath(backdrop, theme.BACKDROP)
+        painter.fillPath(backdrop, tones.panel)
 
         placed = self.placed()
         by_monitor = playlists_by_monitor(self._overview)
@@ -310,7 +336,6 @@ class MonitorsView(QWidget):
             for member in playlist.monitors
             if member.id is not None and playlist.current is not None
         }
-        outline = _on_backdrop(theme.accent(self.palette()))
         for item in placed:
             image = images.get(item.monitor.id)
             lit = self._highlight is not None and (
@@ -320,7 +345,7 @@ class MonitorsView(QWidget):
                 painter,
                 item,
                 self._images.get(image) if image is not None else None,
-                outline if lit else None,
+                tones.panel_accent if lit else None,
             )
         boxes = [p.box for p in placed]
         for item in placed:
@@ -342,7 +367,8 @@ class MonitorsView(QWidget):
         painter.save()
         if not item.attached:
             painter.setOpacity(0.45)
-        painter.fillRect(rect, theme.BACKDROP_RAISED)
+        tones = theme.tones()
+        painter.fillRect(rect, tones.panel_raised)
         if pixmap is not None and item.attached:
             painter.save()
             painter.setClipRect(rect)
@@ -350,7 +376,7 @@ class MonitorsView(QWidget):
             painter.restore()
         if not item.attached:
             painter.setOpacity(1.0)
-            painter.setPen(theme.BACKDROP_TEXT)
+            painter.setPen(tones.panel_text)
             painter.drawText(rect, int(Qt.AlignmentFlag.AlignCenter), "off")
         if outline is not None:
             painter.setOpacity(1.0)
@@ -367,26 +393,18 @@ class MonitorsView(QWidget):
         playlist: str | None,
         boxes: Sequence[Box],
     ) -> None:
-        box = item.box
-        below = Box(box.x, box.bottom, box.width, LABEL_HEIGHT)
-        # A monitor right below (a stacked arrangement): the label goes
-        # inside, at the bottom, on a dark band instead.
-        inside = any(b is not box and below.intersects(b) for b in boxes)
-        if inside:
-            below = Box(box.x, box.bottom - LABEL_HEIGHT, box.width, LABEL_HEIGHT)
-            band = QRectF(below.x, below.y, below.width, below.height).adjusted(
-                INSET, 0, -INSET, -INSET
-            )
-            painter.fillRect(band, _translucent_backdrop())
+        tones = theme.tones()
+        below = self._caption_area(painter, item.box, boxes)
+        if self._compact:
+            self._paint_compact_caption(painter, item, below, playlist)
+            return
         name, detail = caption(item.monitor, playlist)
         rect = QRectF(below.x, below.y + 4, below.width, below.height - 4)
-        bold = QFont(painter.font())
-        bold.setBold(True)
         painter.save()
         if not item.attached:
             painter.setOpacity(0.6)
-        painter.setFont(bold)
-        painter.setPen(theme.BACKDROP_TEXT)
+        painter.setFont(theme.scaled_font(self.font(), 0.93, bold=True))
+        painter.setPen(tones.panel_text)
         flags = int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
         metrics = painter.fontMetrics()
         painter.drawText(
@@ -394,8 +412,8 @@ class MonitorsView(QWidget):
             flags,
             metrics.elidedText(name, Qt.TextElideMode.ElideRight, int(rect.width())),
         )
-        painter.setFont(self.font())
-        painter.setPen(theme.BACKDROP_TEXT_DIM)
+        painter.setFont(theme.scaled_font(self.font(), 0.86))
+        painter.setPen(tones.panel_muted)
         rect.setTop(rect.top() + metrics.height())
         metrics = painter.fontMetrics()
         painter.drawText(
@@ -405,21 +423,40 @@ class MonitorsView(QWidget):
         )
         painter.restore()
 
+    def _caption_area(self, painter: QPainter, box: Box, boxes: Sequence[Box]) -> Box:
+        """
+        Under the monitor; if another monitor is right below (a stacked
+        arrangement), inside it at the bottom, on a dark band.
+        """
+        label = self._label_height()
+        below = Box(box.x, box.bottom, box.width, label)
+        if any(b is not box and below.intersects(b) for b in boxes):
+            below = Box(box.x, box.bottom - label, box.width, label)
+            band = QRectF(below.x, below.y, below.width, below.height).adjusted(
+                INSET, 0, -INSET, -INSET
+            )
+            painter.fillRect(band, theme.with_alpha(theme.tones().panel, 0.75))
+        return below
 
-def _on_backdrop(accent: QColor) -> QColor:
-    """The accent, lightened if it is too dark to see on the dark backdrop."""
-    color = QColor(accent)
-    for _ in range(8):
-        if color.lightnessF() >= 0.55:
-            break
-        color = color.lighter(125)
-    return color
-
-
-def _translucent_backdrop() -> QColor:
-    color = QColor(theme.BACKDROP)
-    color.setAlphaF(0.75)
-    return color
+    def _paint_compact_caption(
+        self, painter: QPainter, item: Placed, below: Box, playlist: str | None
+    ) -> None:
+        """One line: "PLX2783H · konachan", or the name alone if that is too wide."""
+        rect = QRectF(below.x, below.y + 4, below.width, below.height - 4)
+        painter.save()
+        if not item.attached:
+            painter.setOpacity(0.6)
+        painter.setFont(theme.scaled_font(self.font(), 0.86))
+        painter.setPen(theme.tones().panel_text)
+        metrics = painter.fontMetrics()
+        text = f"{item.monitor.name} · {playlist or 'no playlist'}"
+        if metrics.horizontalAdvance(text) > rect.width():
+            text = metrics.elidedText(
+                item.monitor.name, Qt.TextElideMode.ElideRight, int(rect.width())
+            )
+        flags = int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
+        painter.drawText(rect, flags, text)
+        painter.restore()
 
 
 def _cover(rect: QRectF, pixmap: QPixmap) -> QRectF:

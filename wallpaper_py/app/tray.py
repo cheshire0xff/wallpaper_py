@@ -15,9 +15,9 @@ actions.
     ...
     ───
     Paused: idle              (only while paused)
-    Open layout               (in the UI process, started if needed)
-    Open library
-    Settings…
+    Open wallpaper_py         (the window on Home, in the UI process,
+    Library                    started if needed; on Library)
+    Settings…                 (on Settings)
     Reload config             (the `reload` command; errors and warnings notify)
     Open config folder
     [ ] Start at login
@@ -58,7 +58,7 @@ from ..protocol import (
     Request,
 )
 from .icon import IconState, app_icon
-from .ui.launcher import WindowKind
+from .ui.launcher import PageName
 from .worker import ServiceHost
 
 log = logging.getLogger(__name__)
@@ -72,7 +72,7 @@ class MenuActions(Protocol):
 
     def run(self, request: Request) -> None: ...
     def open_image(self, image: Path) -> None: ...
-    def open_window(self, window: WindowKind) -> None: ...
+    def open_window(self, page: PageName) -> None: ...
     def reload(self) -> None: ...
     def open_config_folder(self) -> None: ...
     def set_autostart(self, enabled: bool) -> None: ...
@@ -89,8 +89,9 @@ class AppItem(Enum):
 
 
 # What an item asks for, stored on its QAction: a command, an image to
-# open, a window to open, or an app item. Items without data do nothing.
-MenuItem = Request | Path | WindowKind | AppItem
+# open, a page to open the window on, or an app item. Items without data do
+# nothing.
+MenuItem = Request | Path | PageName | AppItem
 
 
 def activate(action: QAction, actions: MenuActions) -> None:
@@ -101,7 +102,7 @@ def activate(action: QAction, actions: MenuActions) -> None:
             actions.run(item)
         case Path():
             actions.open_image(item)
-        case "layout" | "library" | "settings":
+        case "home" | "library" | "settings":
             actions.open_window(item)
         case AppItem.RELOAD:
             actions.reload()
@@ -137,8 +138,8 @@ def fill_menu(menu: QMenu, overview: Overview | None, autostart: bool) -> QActio
             item.setEnabled(False)
         if overview.paused:
             menu.addAction(f"Paused: {overview.paused}").setEnabled(False)
-    _add(menu, "Open layout", "layout")
-    _add(menu, "Open library", "library")
+    _add(menu, f"Open {APP_TITLE}", "home")
+    _add(menu, "Library", "library")
     _add(menu, "Settings…", "settings")
     _add(menu, "Reload config", AppItem.RELOAD)
     _add(menu, "Open config folder", AppItem.CONFIG_FOLDER)
@@ -241,7 +242,7 @@ class Tray(QObject):
         config_folder: Path,
         quit_app: Callable[[], None],
         *,
-        open_window: Callable[[WindowKind], None],
+        open_window: Callable[[PageName], None],
     ) -> None:
         super().__init__()
         self._host = host
@@ -299,8 +300,8 @@ class Tray(QObject):
     def open_image(self, image: Path) -> None:
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(image)))
 
-    def open_window(self, window: WindowKind) -> None:
-        self._open_window(window)
+    def open_window(self, page: PageName) -> None:
+        self._open_window(page)
 
     def reload(self) -> None:
         self._reloading = True
@@ -357,7 +358,7 @@ class Tray(QObject):
 
     @Slot(QSystemTrayIcon.ActivationReason)
     def _activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
-        # Left click opens the menu too (until the layout window exists).
+        # Left click opens the menu too (it has *Open wallpaper_py*).
         if reason is QSystemTrayIcon.ActivationReason.Trigger:
             self.menu.popup(QCursor.pos())
 

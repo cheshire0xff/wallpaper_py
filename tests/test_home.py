@@ -1,6 +1,6 @@
 """
-The layout window: the monitor arrangement to scale, the playlist cards'
-text, and the buttons, all through a fake Client (never a real app).
+Home: the monitor arrangement to scale, the playlist rows' text, hover,
+and the buttons, all through a fake Client (never a real app).
 """
 
 from __future__ import annotations
@@ -23,8 +23,8 @@ from wallpaper_py.app.ui.arrangement import (
     caption,
     playlists_by_monitor,
 )
-from wallpaper_py.app.ui.layout import (
-    LayoutWindow,
+from wallpaper_py.app.ui.home import (
+    HomePage,
     chip_text,
     details_text,
     format_duration,
@@ -192,7 +192,7 @@ def test_monitors_view_draws_every_monitor(qtbot: QtBot) -> None:
     view.grab()
 
 
-# -- card text -----------------------------------------------------------------
+# -- row text ------------------------------------------------------------------
 
 
 def test_formats() -> None:
@@ -200,17 +200,21 @@ def test_formats() -> None:
     assert format_size(12_300) == "12 KB"
     assert format_size(4_200_000) == "4.2 MB"
     assert format_size(1_100_000_000) == "1.1 GB"
-    assert format_duration(30) == "< 1 min"
-    assert format_duration(754) == "13 min"
-    assert format_duration(3600) == "1 h"
-    assert format_duration(3900) == "1 h 05 min"
-    assert format_duration(2 * 86400 + 3 * 3600) == "2 d 3 h"
+    # As the config writes durations; seconds only under 10 minutes.
+    assert format_duration(30) == "30s"
+    assert format_duration(350) == "5m50s"
+    assert format_duration(300) == "5m"
+    assert format_duration(754) == "13m"
+    assert format_duration(3600) == "1h"
+    assert format_duration(3900) == "1h5m"
+    assert format_duration(2 * 86400 + 3 * 3600) == "2d3h"
+    assert format_duration(-5) == "0s"
 
 
-def test_card_text_normal() -> None:
+def test_row_text_normal() -> None:
     assert chip_text(KONACHAN) is None
     assert details_text(KONACHAN, details(KONACHAN), THUMBNAIL, 754.0) == (
-        "3840×2160 · 4.2 MB · shuffle, 30 min · next in 13 min"
+        "3840×2160 · 4.2 MB · shuffle, every 30m · next in 13m"
     )
     # Before the image and the schedule have arrived.
     assert details_text(KONACHAN, None, None, None) == ""
@@ -220,29 +224,29 @@ def test_card_text_normal() -> None:
     )
 
 
-def test_card_text_held() -> None:
+def test_row_text_held() -> None:
     held = KONACHAN.model_copy(update={"held": True})
     assert chip_text(held) == "Held"
     assert schedule_text(held, details(held), 754.0) == (
-        "shuffle, 30 min · 13 min left once resumed"
+        "shuffle, every 30m · 13m left once resumed"
     )
 
 
-def test_card_text_manual() -> None:
+def test_row_text_manual() -> None:
     assert chip_text(FANTASY) == "Manual"
     assert details_text(FANTASY, details(FANTASY), THUMBNAIL, None) == (
         "3840×2160 · 4.2 MB · shuffle · manual"
     )
 
 
-def test_card_text_without_a_monitor() -> None:
+def test_row_text_without_a_monitor() -> None:
     off = FANTASY.model_copy(update={"manual": False})
     assert schedule_text(off, details(off), 60.0) == (
-        "shuffle, 30 min · 1 min left once a monitor is on"
+        "shuffle, every 30m · 1m left once a monitor is on"
     )
 
 
-# -- the window ----------------------------------------------------------------
+# -- the page ------------------------------------------------------------------
 
 
 class FakeClient(BaseFakeClient):
@@ -286,26 +290,26 @@ def fixture_clock() -> Clock:
     return Clock()
 
 
-@pytest.fixture(name="window")
-def fixture_window(
-    qtbot: QtBot, client: FakeClient, clock: Clock
-) -> Iterator[LayoutWindow]:
+@pytest.fixture(name="page")
+def fixture_page(qtbot: QtBot, client: FakeClient, clock: Clock) -> Iterator[HomePage]:
     loader = ThumbnailLoader(QSize(480, 270), fake_decode)
-    window = LayoutWindow(client, loader, clock)
-    qtbot.addWidget(window)
-    window.show()
-    yield window
+    page = HomePage(client, loader, clock)
+    qtbot.addWidget(page)
+    page.resize(1000, 800)
+    page.show()
+    yield page
     loader.close()
 
 
 def test_window_draws_the_overview(
-    qtbot: QtBot, window: LayoutWindow, client: FakeClient
+    qtbot: QtBot, page: HomePage, client: FakeClient
 ) -> None:
-    assert window.banner.text() == "Connecting to wallpaper_py…"
+    assert page.banner.text() == "Connecting to wallpaper_py…"
     client.publish(OVERVIEW)
-    assert window.banner.isHidden()
-    assert list(window.cards) == ["konachan", "fantasy"]
-    konachan, fantasy = window.cards["konachan"], window.cards["fantasy"]
+    assert page.banner.isHidden()
+    assert list(page.rows) == ["konachan", "fantasy"]
+    assert page.monitors_heading.text() == "Monitors (4)"
+    konachan, fantasy = page.rows["konachan"], page.rows["fantasy"]
     assert konachan.title.text() == "konachan"
     assert konachan.monitors.text() == "AW3225QF + PLX2783H"
     assert not konachan.link.isHidden()  # a mirrored group
@@ -316,7 +320,7 @@ def test_window_draws_the_overview(
     assert fantasy.chip.text() == "Manual" and not fantasy.chip.isHidden()
     assert fantasy.hold_button.isHidden()  # hold doesn't apply to manual
     assert not konachan.hold_button.isHidden()
-    assert {p.monitor.id for p in window.monitors_view.placed()} == {
+    assert {p.monitor.id for p in page.monitors_view.placed()} == {
         "aw",
         "plx",
         "zero",
@@ -330,55 +334,52 @@ def test_window_draws_the_overview(
     statuses = [r for r, _ in client.calls if r.command == "status"]
     assert statuses == [Request(command="status")]
     client.answer_status(OVERVIEW)
-    assert konachan.details.text().endswith("shuffle, 30 min · next in 13 min")
+    assert konachan.details.text().endswith("shuffle, every 30m · next in 13m")
     assert fantasy.details.text().endswith("shuffle · manual")
 
 
 def test_the_countdown_runs_only_while_counting(
-    window: LayoutWindow, client: FakeClient, clock: Clock
+    page: HomePage, client: FakeClient, clock: Clock
 ) -> None:
     client.publish(OVERVIEW)
     client.answer_status(OVERVIEW)
-    card = window.cards["konachan"]
-    assert card.details.text().endswith("next in 13 min")
+    row = page.rows["konachan"]
+    assert row.details.text().endswith("next in 13m")
     clock.now += 600
-    window.refresh_schedule()
-    assert card.details.text().endswith("next in 3 min")
-    # Paused (locked / idle): it stands still, and the window says why.
+    page.refresh_schedule()
+    assert row.details.text().endswith("next in 2m34s")
+    # Paused (locked / idle): it stands still (the sidebar says why).
     client.publish(OVERVIEW.model_copy(update={"paused": "idle"}))
     client.answer_status(OVERVIEW)
-    assert window.banner.text() == "Rotation paused: idle"
     clock.now += 600
-    window.refresh_schedule()
-    assert card.details.text().endswith("next in 13 min")
+    page.refresh_schedule()
+    assert row.details.text().endswith("next in 13m")
 
 
-def test_status_is_asked_once_at_a_time(
-    window: LayoutWindow, client: FakeClient
-) -> None:
+def test_status_is_asked_once_at_a_time(page: HomePage, client: FakeClient) -> None:
     client.publish(OVERVIEW)
     client.publish(OVERVIEW)
     assert len([r for r, _ in client.calls if r.command == "status"]) == 1
     client.answer_status(OVERVIEW)  # then once more, for the newer overview
     assert len([r for r, _ in client.calls if r.command == "status"]) == 1
-    assert window.cards["konachan"].details.text()
+    assert page.rows["konachan"].details.text()
 
 
-def test_hover_highlights_a_playlist_in_the_drawing_and_its_card(
-    qtbot: QtBot, window: LayoutWindow, client: FakeClient
+def test_hover_highlights_a_playlist_in_the_drawing_and_its_row(
+    qtbot: QtBot, page: HomePage, client: FakeClient
 ) -> None:
     client.publish(OVERVIEW)
-    view = window.monitors_view
-    konachan, fantasy = window.cards["konachan"], window.cards["fantasy"]
+    view = page.monitors_view
+    konachan, fantasy = page.rows["konachan"], page.rows["fantasy"]
     assert view.highlight() is None and not konachan.highlighted()
-    # Pointing at a card outlines its monitors.
+    # Pointing at a row outlines its monitors.
     konachan.hovered.emit("konachan")
     assert view.highlight() == "konachan"
     assert konachan.highlighted() and not fantasy.highlighted()
     view.grab()  # paints the outline without error
     konachan.hovered.emit(None)
     assert view.highlight() is None and not konachan.highlighted()
-    # Pointing at a monitor highlights its card; one in no playlist, nothing.
+    # Pointing at a monitor highlights its row; one in no playlist, nothing.
     boxes = {p.monitor.id: p.box for p in view.placed()}
 
     def centre(monitor_id: str) -> QPoint:
@@ -393,18 +394,18 @@ def test_hover_highlights_a_playlist_in_the_drawing_and_its_card(
     assert not konachan.highlighted()
 
 
-def test_buttons_send_commands(window: LayoutWindow, client: FakeClient) -> None:
+def test_buttons_send_commands(page: HomePage, client: FakeClient) -> None:
     held_fav = KONACHAN.model_copy(update={"favourite": True, "held": True})
     client.publish(
         Overview(playlists=(KONACHAN, held_fav.model_copy(update={"name": "other"})))
     )
-    card, other = window.cards["konachan"], window.cards["other"]
+    row, other = page.rows["konachan"], page.rows["other"]
     for button in (
-        card.prev_button,
-        card.next_button,
-        card.fav_button,
-        card.remove_button,
-        card.hold_button,
+        row.prev_button,
+        row.next_button,
+        row.fav_button,
+        row.remove_button,
+        row.hold_button,
         other.fav_button,
         other.hold_button,
     ):
@@ -418,18 +419,18 @@ def test_buttons_send_commands(window: LayoutWindow, client: FakeClient) -> None
         Request(command="unfav", target="other"),  # it is a favourite
         Request(command="resume", target="other"),  # it is held
     ]
-    assert card.prev_button.toolTip() == "Previous"
-    assert card.prev_button.accessibleName() == "Previous"
+    assert row.prev_button.toolTip() == "Previous"
+    assert row.prev_button.accessibleName() == "Previous"
     assert other.fav_button.accessibleName() == "Remove from favourites"
 
 
 def test_toggles_follow_the_overview_not_the_click(
-    window: LayoutWindow, client: FakeClient
+    page: HomePage, client: FakeClient
 ) -> None:
     client.publish(Overview(playlists=(KONACHAN,)))
-    card = window.cards["konachan"]
-    card.fav_button.click()
-    card.hold_button.click()
+    row = page.rows["konachan"]
+    row.fav_button.click()
+    row.hold_button.click()
     request, on_reply = client.calls[-2]
     assert request == Request(command="fav", target="konachan")
     on_reply(
@@ -441,82 +442,90 @@ def test_toggles_follow_the_overview_not_the_click(
             changed=True,
         )
     )
-    assert not card.fav_button.is_on() and not card.hold_button.is_on()
+    assert not row.fav_button.is_on() and not row.hold_button.is_on()
     on = KONACHAN.model_copy(update={"favourite": True, "held": True})
     client.publish(Overview(playlists=(on,)))
-    assert card.fav_button.is_on() and card.hold_button.is_on()
-    assert card.chip.text() == "Held"
+    assert row.fav_button.is_on() and row.hold_button.is_on()
+    assert row.chip.text() == "Held"
     client.publish(Overview(playlists=(KONACHAN,)))
-    assert not card.fav_button.is_on() and not card.hold_button.is_on()
+    assert not row.fav_button.is_on() and not row.hold_button.is_on()
 
 
-def test_nothing_shown_yet(window: LayoutWindow, client: FakeClient) -> None:
+def test_nothing_shown_yet(page: HomePage, client: FakeClient) -> None:
     empty = KONACHAN.model_copy(update={"current": None})
     client.publish(Overview(playlists=(empty,)))
-    card = window.cards["konachan"]
-    assert card.file.text() == "Nothing shown yet"
-    assert not card.fav_button.isEnabled() and not card.remove_button.isEnabled()
-    assert card.next_button.isEnabled()
+    row = page.rows["konachan"]
+    assert row.file.text() == "Nothing shown yet"
+    assert not row.fav_button.isEnabled() and not row.remove_button.isEnabled()
+    assert row.next_button.isEnabled()
 
 
-def test_errors_show_in_the_card(window: LayoutWindow, client: FakeClient) -> None:
+def test_errors_show_in_the_row(page: HomePage, client: FakeClient) -> None:
     client.publish(OVERVIEW)
-    card = window.cards["fantasy"]
-    card.next_button.click()
+    row = page.rows["fantasy"]
+    row.next_button.click()
     _, on_reply = client.calls[-1]
     on_reply(ErrorReply.make("not_attached", "None of fantasy's monitors is attached"))
-    assert card.message.text() == "None of fantasy's monitors is attached"
-    assert not card.message.isHidden() and not card.message_icon.isHidden()
-    card.prev_button.click()  # a new command clears it
-    assert card.message.isHidden()
+    assert row.message.text() == "None of fantasy's monitors is attached"
+    assert not row.message.isHidden() and not row.message_icon.isHidden()
+    row.prev_button.click()  # a new command clears it
+    assert row.message.isHidden()
     _, on_reply = client.calls[-1]
     on_reply(PrevResult(playlist="fantasy", change=None))
-    assert card.message.text() == "Nothing earlier in the history"
-    assert card.message_icon.isHidden()  # a note, not an error
-    card.next_button.click()
+    assert row.message.text() == "Nothing earlier in the history"
+    assert row.message_icon.isHidden()  # a note, not an error
+    row.next_button.click()
     _, on_reply = client.calls[-1]
     change = Change("fantasy", Path("/p/fantasy/8.png"), "next", ("ZeroMOD",))
     on_reply(NextResult(playlist="fantasy", change=change))
-    assert card.message.isHidden()
+    assert row.message.isHidden()
 
 
-def test_config_error_and_unreachable_app(
-    window: LayoutWindow, client: FakeClient
-) -> None:
+def test_config_error_and_unreachable_app(page: HomePage, client: FakeClient) -> None:
     client.publish(Overview(error="No config file"))
-    assert window.banner.text() == "Error: No config file"
-    assert not window.cards and window.empty.isHidden()
+    assert page.banner.text() == "Error: No config file"
+    assert not page.rows and page.empty.isHidden()
     assert not client.calls  # no status while the service is down
     client.failed.emit("could not start wallpaper_py")
-    assert window.banner.text() == "Error: could not start wallpaper_py"
+    assert page.banner.text() == "Error: could not start wallpaper_py"
 
 
-def test_a_reply_after_closing_is_ignored(
-    window: LayoutWindow, client: FakeClient
-) -> None:
+def test_a_reply_after_closing_is_ignored(page: HomePage, client: FakeClient) -> None:
     client.publish(OVERVIEW)
-    window.cards["konachan"].next_button.click()
-    window.close()
+    page.rows["konachan"].next_button.click()
+    page.shutdown()  # the window closed
     for _, on_reply in client.calls:
         on_reply(ErrorReply.make("unreachable", "gone"))  # no error
+    client.publish(OVERVIEW)  # nor from a late overview
 
 
-def test_cards_reflow_with_the_width(
-    qtbot: QtBot, window: LayoutWindow, client: FakeClient
+def test_rows_follow_the_config_order_with_dividers_between(
+    page: HomePage, client: FakeClient
 ) -> None:
-    three = OVERVIEW.model_copy(
-        update={
-            "playlists": (
-                *OVERVIEW.playlists,
-                KONACHAN.model_copy(update={"name": "third"}),
-            )
-        }
+    third = KONACHAN.model_copy(update={"name": "third"})
+    client.publish(
+        OVERVIEW.model_copy(update={"playlists": (third, *OVERVIEW.playlists)})
     )
-    client.publish(three)
-    window.resize(1400, 800)
-    qtbot.waitUntil(lambda: window.columns() == 3)
-    window.resize(500, 800)
-    qtbot.waitUntil(lambda: window.columns() == 1)
-    # A playlist gone from the config: its card goes too.
+    assert list(page.rows) == ["third", "konachan", "fantasy"]
+    assert [r.divider() for r in page.rows.values()] == [False, True, True]
+    # A playlist gone from the config: its row goes too.
     client.publish(OVERVIEW)
-    assert list(window.cards) == ["konachan", "fantasy"]
+    assert list(page.rows) == ["konachan", "fantasy"]
+    assert [r.divider() for r in page.rows.values()] == [False, True]
+
+
+def test_a_highlighted_row_gets_a_faint_fill(
+    page: HomePage, client: FakeClient
+) -> None:
+    client.publish(OVERVIEW)
+    row = page.rows["konachan"]
+    point = (row.width() // 2, 4)  # above the text, beside the image
+
+    def colour() -> str:
+        return str(row.grab().toImage().pixelColor(*point).name())
+
+    plain = colour()
+    row.set_highlighted(True)
+    assert colour() != plain
+    row.set_highlighted(False)
+    assert colour() == plain

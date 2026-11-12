@@ -30,7 +30,7 @@ from PySide6.QtGui import QImage, QImageIOHandler, QImageReader, QPixmap
 
 log = logging.getLogger(__name__)
 
-CACHE_ENTRIES = 64  # the layout window shows one image per playlist
+CACHE_ENTRIES = 64  # Home shows one image per playlist
 THREADS = 2
 
 

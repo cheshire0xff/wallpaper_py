@@ -33,8 +33,8 @@ C:\path\to\wallpaper_py\.venv\Scripts\pythonw.exe -m wallpaper_py tray
 ```
 
 plus `--config <path>` if you started the app with a config file other
-than the default. Only the tray app starts at login; the windows (layout,
-library, settings) start when you open them.
+than the default. Only the tray app starts at login; the window (Home,
+Library, Settings) starts when you open it.
 
 **Windows**: the entry is the value `wallpaper_py` under
 

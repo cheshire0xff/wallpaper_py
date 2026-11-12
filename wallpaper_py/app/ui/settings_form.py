@@ -1,27 +1,30 @@
 """
-The settings window's form (settings.py): one `PlaylistEditor` per
-playlist, the `Problem` shown under a field, and the texts the window
-derives from the settings as edited (monitors, the drawing, why Save is
-off). Widgets only report edits; the window owns the settings.
+The Settings page's form (settings.py), as rows without boxes
+(docs/design/settings.png): each `SettingRow` has its name and a muted
+one-line description on the left and its control on the right, all
+controls in one column; fields are borderless and filled.
+
+One `PlaylistEditor` per playlist: open, it shows its heading (*Delete
+playlist*) and its rows; closed, a clickable summary ("ZeroMOD · sorted ·
+every 10m · fill") that asks to open it. Also the `Problem` shown under a
+field, and the texts the page derives from the settings as edited
+(monitors, the summary, the drawing, what changed, why Save is off).
+Widgets only report edits; the page owns the settings.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
-from PySide6.QtCore import QEvent, Qt, Signal, Slot
+from PySide6.QtCore import QEvent, QPoint, QRectF, Qt, Signal, Slot
 from PySide6.QtGui import QPainter, QPaintEvent, QPalette
 from PySide6.QtWidgets import (
-    QCheckBox,
     QComboBox,
-    QFormLayout,
-    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMenu,
-    QPushButton,
-    QToolButton,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -46,17 +49,23 @@ from ...protocol import DesktopMonitor, MonitorView, Overview, PlaylistView
 from . import theme
 
 UID = "uid"  # Qt property: the playlist a menu is about
+EVERY, MANUALLY = "every", MANUAL  # the Changes row's choices
 
-ORDERS: tuple[tuple[str, Order], ...] = (
-    ("Shuffle: every image once before any repeats", Order.SHUFFLE),
-    ("Sorted: natural order, 2 before 10", Order.SORTED),
+ORDERS: tuple[tuple[str, Order, str], ...] = (  # label, value, description
+    ("Shuffle", Order.SHUFFLE, "Shuffle shows every image once before any repeats"),
+    ("Sorted", Order.SORTED, "Sorted goes in natural order: 2 before 10"),
 )
-MODES: tuple[tuple[str, ImageMode | None], ...] = (
-    ("Fill: cover the screen, cropping", ImageMode.FILL),
-    ("Fit: the whole image, letterboxed", ImageMode.FIT),
-    ("Stretch: to the screen's shape", ImageMode.STRETCH),
-    ("As is: the system's own mode", None),
+MODES: tuple[tuple[str, ImageMode | None, str], ...] = (  # label, value, tooltip
+    ("Fill", ImageMode.FILL, "Cover the screen, cropping"),
+    ("Fit", ImageMode.FIT, "The whole image, letterboxed"),
+    ("Stretch", ImageMode.STRETCH, "To the screen's shape"),
+    ("As is", None, "The system's own mode"),
 )
+CHANGES = (("Every", EVERY), ("Manually", MANUALLY))
+CHANGES_HELP = {
+    EVERY: "Active time: pauses while locked, idle or asleep",
+    MANUALLY: "Only next, previous or pick change it",
+}
 FIELD_NAMES = {
     NAME: "name",
     DIRECTORY: "folder",
@@ -96,61 +105,182 @@ class Problem(QWidget):
             self.setAccessibleDescription(message or "")
 
     def _tint(self) -> None:
-        color = self.palette().color(QPalette.ColorRole.WindowText)
+        color = theme.tones().error
+        palette = QPalette()  # only this role; the rest is inherited
+        palette.setColor(QPalette.ColorRole.WindowText, color)
+        self._text.setPalette(palette)
         ratio = self.devicePixelRatioF()
         self._icon.setPixmap(theme.tinted_pixmap("circle-alert", color, 16, ratio))
 
     def changeEvent(self, event: QEvent) -> None:  # pylint: disable=invalid-name
         super().changeEvent(event)
-        if event.type() == QEvent.Type.PaletteChange:
+        if theme.palette_changed(event):
             self._tint()
 
 
-def stacked(parent: QWidget, *parts: QWidget | QHBoxLayout) -> QWidget:
-    """Widgets (or a row) above each other: a field and its problem."""
-    box = QWidget(parent)
-    layout = QVBoxLayout(box)
-    layout.setContentsMargins(0, 0, 0, 0)
-    layout.setSpacing(theme.space(0.5))
-    for part in parts:
-        if isinstance(part, QHBoxLayout):
-            layout.addLayout(part)
-        else:
-            layout.addWidget(part)
+def borderless(field: QLineEdit | QComboBox) -> QLineEdit | QComboBox:
+    """A field as the design has it: no frame, the filled Base / Button tone."""
+    field.setFrame(False)
+    field.setFixedHeight(theme.FIELD_HEIGHT)
+    if isinstance(field, QLineEdit):
+        field.setTextMargins(theme.space(0.5), 0, theme.space(0.5), 0)
+    return field
+
+
+def line_edit(text: str, name: str, parent: QWidget) -> QLineEdit:
+    edit = QLineEdit(text, parent)
+    edit.setAccessibleName(name)
+    borderless(edit)
+    return edit
+
+
+def combo(parent: QWidget, name: str) -> QComboBox:
+    box = QComboBox(parent)
+    box.setAccessibleName(name)
+    borderless(box)
     return box
 
 
-def row(*widgets: QWidget, stretch: bool = False) -> QHBoxLayout:
-    """Widgets side by side; line edits take the room."""
+def hint(text: str, parent: QWidget) -> QLabel:
+    return theme.muted(text, parent, wrap=True)
+
+
+def select(box: QComboBox, value: object) -> None:
+    index = box.findData(value)
+    box.setCurrentIndex(max(index, 0))
+
+
+class SettingRow(QWidget):
+    """
+    One setting: its name and a muted one-line description on the left; its
+    control (a widget or a row of them) in the control column on the right,
+    with the field's `Problem` under it.
+    """
+
+    def __init__(  # pylint: disable=too-many-arguments
+        self,
+        name: str,
+        description: str,
+        control: QWidget | QHBoxLayout,
+        problem: Problem | None = None,
+        *,
+        parent: QWidget | None = None,
+        indent: int = 0,
+    ) -> None:
+        super().__init__(parent)
+        self.label = QLabel(name, self)
+        self.description = theme.muted(description, self)
+        self.description.setVisible(bool(description))
+        labels = QVBoxLayout()
+        labels.setSpacing(2)
+        labels.addWidget(self.label)
+        labels.addWidget(self.description)
+
+        column = QWidget(self)
+        column.setFixedWidth(theme.CONTROL_WIDTH)
+        column_layout = QVBoxLayout(column)
+        column_layout.setContentsMargins(0, 0, 0, 0)
+        column_layout.setSpacing(theme.space(0.5))
+        if isinstance(control, QHBoxLayout):
+            column_layout.addLayout(control)
+        else:
+            column_layout.addWidget(control)
+        if problem is not None:
+            column_layout.addWidget(problem)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(indent, theme.space(1.25), 0, theme.space(1.25))
+        layout.setSpacing(theme.space(3))
+        layout.addLayout(labels, 1)
+        layout.addWidget(column)
+        self.setMinimumHeight(theme.space(7))
+
+    def set_description(self, text: str) -> None:
+        self.description.setText(text)
+        self.description.setVisible(bool(text))
+
+
+def control_row(*widgets: QWidget) -> QHBoxLayout:
+    """Widgets side by side in the control column; fields take the room."""
     layout = QHBoxLayout()
-    layout.setSpacing(theme.space())
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(theme.space(1.5))
     for widget in widgets:
-        layout.addWidget(widget, 1 if isinstance(widget, QLineEdit) else 0)
-    if stretch:
-        layout.addStretch(1)
+        stretch = 1 if isinstance(widget, (QLineEdit, QComboBox, QLabel)) else 0
+        layout.addWidget(widget, stretch)
     return layout
 
 
-def hint(text: str, parent: QWidget) -> QLabel:
-    label = QLabel(text, parent)
-    label.setWordWrap(True)
-    label.setForegroundRole(QPalette.ColorRole.PlaceholderText)
-    return label
+class PlaylistSummary(theme.PaintedButton):
+    """A closed playlist: its name, a muted summary, a chevron; a click opens it."""
 
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__("", parent)
+        self.summary = ""
+        self.problem = False
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setFixedHeight(theme.space(7))
 
-def select(combo: QComboBox, value: object) -> None:
-    index = combo.findData(value)
-    combo.setCurrentIndex(max(index, 0))
+    def set_summary(self, name: str, summary: str, problem: bool) -> None:
+        self.setText(name)
+        self.summary = summary
+        self.problem = problem
+        note = " (has a problem)" if problem else ""
+        self.setAccessibleName(f"{name}: {summary}{note}. Open")
+        self.update()
+
+    def paintEvent(self, event: QPaintEvent) -> None:  # pylint: disable=invalid-name
+        del event
+        tones = theme.tones()
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(self.rect())
+        if self.underMouse() or self.hasFocus():
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(tones.hover)
+            painter.drawRoundedRect(rect, theme.RADIUS_SMALL, theme.RADIUS_SMALL)
+        flags = int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        painter.setFont(theme.scaled_font(self.font(), 1.15, bold=True))
+        painter.setPen(tones.text)
+        name = painter.fontMetrics().elidedText(
+            self.text(), Qt.TextElideMode.ElideRight, int(rect.width() / 3)
+        )
+        painter.drawText(rect, flags, name)
+        left = painter.fontMetrics().horizontalAdvance(name) + theme.space(2)
+        right = self._paint_icons(painter, tones)
+        painter.setFont(theme.scaled_font(self.font(), 0.93))
+        painter.setPen(tones.muted)
+        summary = QRectF(left, 0, max(right - left, 0), rect.height())
+        text = painter.fontMetrics().elidedText(
+            self.summary, Qt.TextElideMode.ElideRight, int(summary.width())
+        )
+        painter.drawText(summary, flags, text)
+        painter.end()
+
+    def _paint_icons(self, painter: QPainter, tones: theme.Tones) -> float:
+        """The chevron (and the alert) at the right; returns where they start."""
+        size, ratio = theme.SMALL_ICON, self.devicePixelRatioF()
+        middle = round((self.height() - size) / 2)
+        x = round(self.width() - size - theme.space(0.5))
+        chevron = theme.tinted_pixmap("chevron-down", tones.text, size, ratio)
+        painter.drawPixmap(QPoint(x, middle), chevron)
+        if self.problem:
+            x -= size + theme.space()
+            alert = theme.tinted_pixmap("circle-alert", tones.error, size, ratio)
+            painter.drawPixmap(QPoint(x, middle), alert)
+        return x - theme.space()
 
 
 # -- one playlist ------------------------------------------------------------------
 
 
-class PlaylistEditor(QFrame):
+class PlaylistEditor(QWidget):
     """
-    One playlist's fields. `edited` on every change; the window collects
-    the values (`settings`) and shows problems (`show_problems`). Monitors
-    are set by the window (`set_monitors`): they change through menus.
+    One playlist's fields, under a thin divider. `edited` on every change;
+    the page collects the values (`settings`) and shows problems
+    (`show_problems`) and the summary (`set_summary`). Monitors are set by
+    the page (`set_monitors`): they change through menus. Closed, only the
+    summary shows; `open_requested` asks the page to open it.
     """
 
     # pylint: disable=too-many-instance-attributes
@@ -158,88 +288,144 @@ class PlaylistEditor(QFrame):
     edited = Signal()
     delete_requested = Signal(int)  # uid
     browse_requested = Signal(int)  # uid
+    open_requested = Signal(int)  # uid
 
     def __init__(self, playlist: PlaylistSettings, parent: QWidget | None = None):
         super().__init__(parent)
         self.uid = playlist.uid
         self.origin = playlist.origin
         self._monitors = playlist.monitors
+        self._expanded = True
 
-        self.name_edit = QLineEdit(playlist.name, self)
-        self.name_edit.setAccessibleName("Playlist name")
-        self.delete_button = theme.IconButton("trash-2", "Delete this playlist", self)
-        self.directory_edit = QLineEdit(playlist.directory, self)
-        self.directory_edit.setAccessibleName("Folder")
+        self.summary = PlaylistSummary(self)
+        self.heading = theme.heading(playlist.name, self)
+        self.delete_button = theme.TextButton("Delete playlist", self)
+        self.name_edit = line_edit(playlist.name, "Playlist name", self)
+        self.directory_edit = line_edit(playlist.directory, "Folder", self)
         self.directory_edit.setPlaceholderText("The folder with its images")
-        self.browse_button = QPushButton("Browse…", self)
-        self.order_combo = QComboBox(self)
-        for text, order in ORDERS:
+        self.directory_edit.setCursorPosition(0)  # the start of the path shows
+        self.browse_button = theme.TextButton("Browse…", self)
+        self.order_combo = combo(self, "Order")
+        for text, order, description in ORDERS:
             self.order_combo.addItem(text, order)
+            self.order_combo.setItemData(
+                self.order_combo.count() - 1, description, Qt.ItemDataRole.ToolTipRole
+            )
         select(self.order_combo, playlist.order)
-        self.interval_edit = QLineEdit(self)
-        self.interval_edit.setAccessibleName("Interval")
-        self.interval_edit.setPlaceholderText("e.g. 30m, 1h30m, 1d")
-        self.interval_edit.setText(
-            NEW_INTERVAL if playlist.manual else playlist.interval
+        self.changes_combo = combo(self, "Changes")
+        for text, value in CHANGES:
+            self.changes_combo.addItem(text, value)
+        select(self.changes_combo, MANUALLY if playlist.manual else EVERY)
+        self.interval_edit = line_edit(
+            NEW_INTERVAL if playlist.manual else playlist.interval,
+            "Interval, in active time",
+            self,
         )
-        self.manual_check = QCheckBox("Manual: only next / prev / pick", self)
-        self.manual_check.setChecked(playlist.manual)
-        self.interval_edit.setEnabled(not playlist.manual)
-        self.mode_combo = QComboBox(self)
-        for text, mode in MODES:
+        self.interval_edit.setPlaceholderText("e.g. 30m")
+        self.interval_edit.setFixedWidth(theme.space(14))
+        self.interval_edit.setVisible(not playlist.manual)
+        self.mode_combo = combo(self, "Mode")
+        for text, mode, description in MODES:
             self.mode_combo.addItem(text, mode)
+            self.mode_combo.setItemData(
+                self.mode_combo.count() - 1, description, Qt.ItemDataRole.ToolTipRole
+            )
         select(self.mode_combo, playlist.mode)
         self.monitors_label = QLabel(self)
         self.monitors_label.setWordWrap(True)
-        self.monitors_button = QToolButton(self)
-        self.monitors_button.setText("Choose…")
-        self.monitors_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        self.monitors_menu = QMenu(self.monitors_button)
+        self.monitors_button = theme.TextButton("Choose…", self)
+        self.monitors_menu = QMenu(self)
         self.monitors_menu.setProperty(UID, self.uid)
-        self.monitors_button.setMenu(self.monitors_menu)
         self.problems = {
             key: Problem(self) for key in (NAME, DIRECTORY, INTERVAL, MONITORS)
         }
         self._build()
 
-        self.name_edit.textChanged.connect(self._changed)
+        self.name_edit.textChanged.connect(self._name_changed)
         self.directory_edit.textChanged.connect(self._changed)
         self.interval_edit.textChanged.connect(self._changed)
-        self.order_combo.currentIndexChanged.connect(self._changed)
+        self.order_combo.currentIndexChanged.connect(self._order_changed)
         self.mode_combo.currentIndexChanged.connect(self._changed)
-        self.manual_check.toggled.connect(self._manual_toggled)
+        self.changes_combo.currentIndexChanged.connect(self._changes_changed)
         self.delete_button.clicked.connect(self._delete)
         self.browse_button.clicked.connect(self._browse)
+        self.monitors_button.clicked.connect(self._show_monitors_menu)
+        self.summary.clicked.connect(self._open)
 
     def _build(self) -> None:
-        form = QFormLayout()
-        form.setHorizontalSpacing(theme.space(1.5))
-        form.setVerticalSpacing(theme.space())
-        form.addRow("Name", stacked(self, self.name_edit, self.problems[NAME]))
-        folder = row(self.directory_edit, self.browse_button)
-        form.addRow("Folder", stacked(self, folder, self.problems[DIRECTORY]))
-        form.addRow("Order", self.order_combo)
-        interval = row(self.interval_edit, self.manual_check)
-        form.addRow("Interval", stacked(self, interval, self.problems[INTERVAL]))
-        form.addRow("Mode", self.mode_combo)
-        monitors = row(self.monitors_label, self.monitors_button)
-        monitors.setStretch(0, 1)
-        form.addRow("Monitors", stacked(self, monitors, self.problems[MONITORS]))
+        indent = theme.space(3)
+        self.order_row = SettingRow(
+            "Order", "", self.order_combo, parent=self, indent=indent
+        )
+        self.changes_row = SettingRow(
+            "Changes",
+            "",
+            control_row(self.changes_combo, self.interval_edit),
+            self.problems[INTERVAL],
+            parent=self,
+            indent=indent,
+        )
+        rows = [
+            SettingRow(
+                "Name",
+                "",
+                self.name_edit,
+                self.problems[NAME],
+                parent=self,
+                indent=indent,
+            ),
+            SettingRow(
+                "Folder",
+                "Scanned with its subfolders",
+                control_row(self.directory_edit, self.browse_button),
+                self.problems[DIRECTORY],
+                parent=self,
+                indent=indent,
+            ),
+            self.order_row,
+            self.changes_row,
+            SettingRow(
+                "Mode",
+                "How an image fits its monitor",
+                self.mode_combo,
+                parent=self,
+                indent=indent,
+            ),
+            SettingRow(
+                "Monitors",
+                "Two or more show the same image (mirrored)",
+                control_row(self.monitors_label, self.monitors_button),
+                self.problems[MONITORS],
+                parent=self,
+                indent=indent,
+            ),
+        ]
+        self._describe()
 
         top = QHBoxLayout()
-        top.addStretch(1)
+        top.setContentsMargins(0, theme.space(2), 0, theme.space(0.5))
+        top.addWidget(self.heading, 1)
         top.addWidget(self.delete_button)
+        self.details = QWidget(self)
+        details = QVBoxLayout(self.details)
+        details.setContentsMargins(0, 0, 0, theme.space())
+        details.setSpacing(0)
+        details.addLayout(top)
+        for row in rows:
+            details.addWidget(row)
+
         layout = QVBoxLayout(self)
-        margin = theme.space(1.5)
-        layout.setContentsMargins(margin, theme.space(), margin, margin)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        layout.addLayout(top)
-        layout.addLayout(form)
+        layout.addWidget(theme.Divider(self))
+        layout.addWidget(self.summary)
+        layout.addWidget(self.details)
+        self.summary.setVisible(False)
 
     # -- values ------------------------------------------------------------------
 
     def settings(self) -> PlaylistSettings:
-        manual = self.manual_check.isChecked()
+        manual = self.changes_combo.currentData() == MANUALLY
         return PlaylistSettings(
             uid=self.uid,
             origin=self.origin,
@@ -254,11 +440,33 @@ class PlaylistEditor(QFrame):
     def set_monitors(self, selectors: tuple[str, ...], text: str) -> None:
         self._monitors = selectors
         self.monitors_label.setText(text)
-        self.monitors_button.setAccessibleName(f"Monitors: {text}")
+        self.monitors_button.setAccessibleName(f"Choose the monitors: {text}")
 
     def show_problems(self, problems: Mapping[str, str]) -> None:
         for key, problem in self.problems.items():
             problem.set_problem(problems.get(key))
+
+    def set_summary(self, summary: str, problem: bool) -> None:
+        self.summary.set_summary(self.name_edit.text() or "(no name)", summary, problem)
+
+    def set_expanded(self, expanded: bool) -> None:
+        """Open (the heading and the rows) or closed (the summary row)."""
+        self._expanded = expanded
+        self.details.setVisible(expanded)
+        self.summary.setVisible(not expanded)
+
+    def expanded(self) -> bool:
+        return self._expanded
+
+    def manual(self) -> bool:
+        return bool(self.changes_combo.currentData() == MANUALLY)
+
+    def _describe(self) -> None:
+        order = self.order_combo.currentIndex()
+        self.order_row.set_description(ORDERS[max(order, 0)][2])
+        self.changes_row.set_description(
+            CHANGES_HELP[MANUALLY if self.manual() else EVERY]
+        )
 
     # -- slots -------------------------------------------------------------------
 
@@ -266,9 +474,22 @@ class PlaylistEditor(QFrame):
     def _changed(self) -> None:
         self.edited.emit()
 
-    @Slot(bool)
-    def _manual_toggled(self, manual: bool) -> None:
-        self.interval_edit.setEnabled(not manual)
+    @Slot(str)
+    def _name_changed(self, name: str) -> None:
+        self.heading.setText(name or "(no name)")
+        self.edited.emit()
+
+    @Slot(int)
+    def _order_changed(self, index: int) -> None:
+        del index
+        self._describe()
+        self.edited.emit()
+
+    @Slot(int)
+    def _changes_changed(self, index: int) -> None:
+        del index
+        self.interval_edit.setVisible(not self.manual())
+        self._describe()
         self.edited.emit()
 
     @Slot()
@@ -279,15 +500,14 @@ class PlaylistEditor(QFrame):
     def _browse(self) -> None:
         self.browse_requested.emit(self.uid)
 
-    def paintEvent(self, event: QPaintEvent) -> None:  # pylint: disable=invalid-name
-        del event
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setPen(self.palette().color(QPalette.ColorRole.Mid))
-        painter.setBrush(self.palette().color(QPalette.ColorRole.Base))
-        rect = self.rect().toRectF().adjusted(0.5, 0.5, -0.5, -0.5)
-        painter.drawRoundedRect(rect, theme.RADIUS, theme.RADIUS)
-        painter.end()
+    @Slot()
+    def _open(self) -> None:
+        self.open_requested.emit(self.uid)
+
+    @Slot()
+    def _show_monitors_menu(self) -> None:
+        button = self.monitors_button
+        self.monitors_menu.popup(button.mapToGlobal(QPoint(0, button.height())))
 
 
 # -- texts ---------------------------------------------------------------------------
@@ -305,6 +525,64 @@ def monitors_text(selectors: Sequence[str], listed: Sequence[DesktopMonitor]) ->
         else:
             parts.append(monitor.name)
     return " + ".join(parts) or "None"
+
+
+def summary_text(playlist: PlaylistSettings, listed: Sequence[DesktopMonitor]) -> str:
+    """A closed playlist's row: "ZeroMOD · sorted · every 10m · fill"."""
+    monitors = monitors_text(playlist.monitors, listed)
+    if not playlist.monitors:
+        monitors = "no monitor"
+    if playlist.manual:
+        changes = "manually"
+    else:
+        changes = f"every {playlist.interval}" if playlist.interval else "no interval"
+    mode = next(label for label, value, _ in MODES if value == playlist.mode)
+    return " · ".join((monitors, playlist.order.value, changes, mode.lower()))
+
+
+_PLAYLIST_FIELDS = (
+    ("name", "name"),
+    ("folder", "directory"),
+    ("monitors", "monitors"),
+    ("order", "order"),
+    ("interval", "interval"),
+    ("mode", "mode"),
+)
+_GENERAL_FIELDS = (
+    ("pausing while locked", "pause_when_locked"),
+    ("the idle pause", "pause_when_idle"),
+    ("the favourites file", "favourites_file"),
+    ("the to-remove file", "to_remove_file"),
+)
+MAX_CHANGES = 3  # named in the status line; the rest are counted
+
+
+def change_summary(base: Settings, edited: Settings) -> str:
+    """What differs, for the status line: "interval of konachan, new playlist strip"."""
+    parts: list[str] = []
+    before = {p.uid: p for p in base.playlists}
+    for playlist in edited.playlists:
+        old = before.pop(playlist.uid, None)
+        if old is None:
+            parts.append(f"new playlist {playlist.name or '(no name)'}")
+            continue
+        fields = [
+            label
+            for label, key in _PLAYLIST_FIELDS
+            if getattr(old, key) != getattr(playlist, key)
+        ]
+        if fields:
+            parts.append(f"{', '.join(fields)} of {old.name}")
+    parts += [f"deleted {p.name}" for p in before.values()]
+    parts += [
+        label
+        for label, key in _GENERAL_FIELDS
+        if getattr(base, key) != getattr(edited, key)
+    ]
+    if len(parts) > MAX_CHANGES:
+        more = len(parts) - MAX_CHANGES
+        parts = [*parts[:MAX_CHANGES], f"{more} more"]
+    return ", ".join(parts)
 
 
 def drawing(settings: Settings, listed: Sequence[DesktopMonitor]) -> Overview:

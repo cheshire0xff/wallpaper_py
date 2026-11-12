@@ -54,9 +54,9 @@ from .protocol import (
     StatusResult,
 )
 
-# The windows `wallpaper ui` opens (app/ui/launcher.py WINDOWS; not
-# imported from there, which would load Qt for every command).
-WINDOWS = ("layout", "library", "settings")
+# The pages `wallpaper ui` opens the window on (app/ui/launcher.py
+# PAGE_NAMES; not imported from there, which would load Qt for every command).
+PAGES = ("home", "library", "settings")
 
 BackendFactory = Callable[[], Backend]
 PresenceFactory = Callable[[], Presence]
@@ -307,14 +307,14 @@ def cmd_app(ctx: Context, args: argparse.Namespace) -> int:
 
 
 def cmd_ui(ctx: Context, args: argparse.Namespace) -> int:
-    """`ui [layout|library|settings]`: the windows, in their own process."""
+    """`ui [home|library|settings]`: the window, in its own process."""
     # pylint: disable=import-outside-toplevel
     from .app.processes import setup_logging
     from .app.ui.process import UiOptions, run_ui
 
     setup_logging(paths.ui_log_file())
     try:
-        return run_ui(UiOptions(ctx.config, args.window))
+        return run_ui(UiOptions(ctx.config, args.page))
     except WallpaperError as err:  # started by the tray, nobody sees stderr
         logging.getLogger(__name__).error("%s", err)
         raise
@@ -416,10 +416,10 @@ def build_parser() -> argparse.ArgumentParser:
         app_parser.set_defaults(handler=cmd_app)
 
     ui_parser = sub.add_parser(
-        "ui", help="open a window (in the running UI process, or start one)"
+        "ui", help="open the window on a page (in the running UI process, or start one)"
     )
     ui_parser.add_argument(
-        "window", nargs="?", choices=WINDOWS, default="layout", help="default: layout"
+        "page", nargs="?", choices=PAGES, default="home", help="default: home"
     )
     ui_parser.set_defaults(handler=cmd_ui)
 

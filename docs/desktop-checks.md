@@ -21,10 +21,10 @@ Status: **ok** (with the date, when known) all steps seen working;
 | [5. CLI and the app](#5-cli-and-the-app) | ok, except step 3 | todo | todo |
 | [6. Tray](#6-tray) | ok, except step 2 and a broken config (step 3) | todo | todo |
 | [7. Start at login](#7-start-at-login) | todo | todo | todo |
-| [8. Windows (UI process)](#8-windows-ui-process) | ok 2026-11-11 | todo | todo |
+| [8.1 The window: opening, pages, closing](#81-opening-pages-and-closing) | todo (one window since Phase 4 step 4; as separate windows: ok 2026-11-11) | todo | todo |
+| [8.2 The window: Home](#82-home) | todo (rows and panel are new; as the layout window: ok 2026-11-11, except *Remove* and steps 4, 5, 6) | todo | todo |
+| [8.3 The window: Settings](#83-settings) | steps 1, 2 ok 2026-11-12 (step 1 also on a copy of the real config; file handling unchanged since); 3-11 todo | todo | todo |
 | [9. Pick, hold and manual](#9-pick-hold-and-manual) | ok 2026-11-11, except waiting past an interval (steps 3, 6) | todo | todo |
-| [10. Layout window](#10-layout-window) | ok 2026-11-11, except *Remove* (step 3) and steps 4, 5, 7 | todo | todo |
-| [11. Settings window](#11-settings-window) | steps 1, 2, 4 ok 2026-11-12 (step 1 also on a copy of the real config); 3, 5-9 todo | todo | todo |
 
 ## 1. Monitors and `set`
 
@@ -89,19 +89,141 @@ monitor.
 2. Untick it: the entry is gone (Windows: the HKCU Run key; Linux:
    `~/.config/autostart`).
 
-## 8. Windows (UI process)
+## 8. The window (UI process)
+
+One window with a sidebar (Home, Library, Settings), in a process of its
+own. What the tests can't see: the real desktop, real images, the
+system's theme, the real tray and focus. The logic is tested with fakes
+(`tests/test_window.py`: pages, the sidebar, closing with unsaved
+settings, the tones; `test_home.py`, `test_settings.py`,
+`test_ui_process.py`, `test_thumbnails.py`, `test_theme.py`,
+`test_config_edit.py`). Compare the look with the mockups in
+[design/](design/README.md) (dark mode; light mode only has to be usable).
+
+### 8.1 Opening, pages and closing
 
 1. Quit the app, run `wallpaper ui`: the app starts (tray icon appears),
-   then the window fills with the live state.
-2. With the window open, tray *Open layout*: the same window comes to the
-   front, also when minimised or behind another app. No second window.
-3. Tray *Open library*: a second window in the same UI process.
-4. Close both windows: the UI process exits; the tray app keeps running.
-5. With no UI process, tray *Open layout*: one starts and its window comes
-   to the front.
-6. With a window open, tray *Quit*: the window closes too.
-7. With a window open, `wallpaper next`: the window updates (the layout
-   window's card shows the new image; see section 10).
+   then the window opens on Home and fills with the live state. The
+   sidebar's status says "Rotation active" with a green dot.
+2. With the window open, tray *Open wallpaper_py*: the same window comes
+   to the front on Home, also when minimised or behind another app. No
+   second window. Tray *Library* and *Settings…*: the same window, on that
+   page.
+3. `wallpaper ui settings` (and `ui library`) while the window is open:
+   it comes to the front on that page; no second window or process.
+4. Close the window: the UI process exits; the tray app keeps running.
+5. With no UI process, tray *Open wallpaper_py*: one starts and its window
+   comes to the front; *Settings…* the same, on Settings.
+6. With the window open, tray *Quit*: the window closes too.
+7. With the window open, `wallpaper next`: Home updates (the row shows the
+   new image).
+8. Lock the session (or wait past `pause_when_idle`) with the window open:
+   the sidebar says "Rotation paused: …" (grey dot), then "Rotation
+   active" again.
+9. Switch the system between light and dark mode (Settings >
+   Personalisation > Colours) with the window open: the window follows
+   (page, sidebar, its thin line, fields, icons, the selected item's
+   accent); in light mode the monitor drawing and thumbnails stay on a dark
+   panel, in dark mode on a panel a little lighter than the page.
+10. The look against [design/](design/README.md): the sidebar the page's
+    colour with only a thin lighter line beside it (and under the title
+    bar); the selected page with an accent bar, a faint accent fill and a
+    bold label; hovering an item gives a faint fill. Tab and arrow keys
+    reach every item, with a visible focus outline only from the keyboard.
+
+### 8.2 Home
+
+1. *Monitors (N)* matches the real arrangement: the PLX2783H left of the
+   AW3225QF (it sits at -1920,0), sizes to scale, each showing its current
+   image, with no outline; under each: its name, resolution (e.g.
+   3840×2160) and playlist. A monitor in no playlist says "no playlist".
+   Resize the window: the drawing rescales and nothing is cut off. Hover a
+   playlist's row: a faint fill on the row and an accent outline on its
+   monitors; hover a monitor: its playlist's row gets the fill; move away:
+   both go.
+2. Each playlist row: the thumbnail (letterboxed), name, monitors (a link
+   icon for the mirrored group), the image's file name, then "dimensions ·
+   file size · order, every 25m · next in 21m"; dimensions and size match
+   the file (e.g. in Explorer's properties). The time left counts down
+   (with seconds under 10 minutes), and the row shows the new image when
+   it changes. Thin lines between rows, no boxes.
+3. Each button, with its tooltip: *Previous* and *Next* change the
+   wallpaper on the real monitors; *Favourite* turns the star accent and
+   filled on a faint accent fill (and favourites.txt has the image), a
+   second click clears it; *Remove* lists the image in to-remove.txt and
+   moves on; *Hold* turns the pin accent, shows the *Held* chip and "…
+   left once resumed", and a second click resumes. Toggling in the tray
+   shows in the window too.
+4. The manual playlist (ZeroMOD): a *Manual* chip, no hold button,
+   "manual" instead of the time left.
+5. An error shows in the row, not as a dialog: e.g. *Next* on a playlist
+   whose monitors are all off.
+6. Thumbnails never stall the window: with a playlist of large images
+   (4K PNGs), press *Next* repeatedly and move / resize the window
+   meanwhile; it stays responsive, and each row ends on its current image.
+7. Switch a monitor off (e.g. OLED refresh) with the window open: within a
+   few seconds it is drawn dimmed, marked "off", to the right of the
+   others, at its usual size; the others are drawn where Windows now puts
+   them (it may move them). Switched on, it returns to its real position.
+
+### 8.3 Settings
+
+The Settings page (`wallpaper ui settings`, tray *Settings…*). Back up
+config.toml first (copy it next to itself).
+
+1. **Round trip keeps your comments.** Open Settings, change nothing,
+   close the window: config.toml is byte for byte the same (compare with
+   the backup, e.g. `fc /b config.toml config.backup.toml`). Then change
+   one interval and Save: a diff against the backup shows that one line
+   changed, its comment still in the same column; every other comment and
+   blank line as it was. Revert it the same way (or by hand).
+2. **Assigning a monitor to another playlist.** Click the PLX2783H in the
+   drawing and choose *fantasy*: the caption under it and both playlists'
+   *Monitors* lines (and fantasy's summary row) change; Save. The tray's
+   sections and Home show the PLX2783H under fantasy within a few seconds,
+   and it gets fantasy's current image; the AW3225QF keeps konachan's. The
+   file's `monitors` lines are the only ones changed. Move it back.
+3. **A conflicting hand edit is detected.** With an unsaved change in the
+   page, edit config.toml in an editor (add a comment) and save it there.
+   Then Save in the page: it says the file changed on disk and writes
+   nothing (your comment is still there); *Load the file again* shows the
+   file as it is now.
+4. **Unsaved changes stay and are asked about.** Change an interval, go to
+   Home and Library and back: the change is still there (the title shows
+   "*"). Close the window from Home: it switches to Settings and asks Save
+   / Discard / Cancel: *Cancel* keeps the window open on Settings with the
+   change; *Discard* closes without writing; *Save* writes, then closes.
+   With nothing changed, it closes without asking.
+5. Validation shows next to the field, not as a dialog, and *Save* says why
+   it is off (hover it, or the line beside it): an interval like `30`, a
+   folder that doesn't exist, a name with a space, a playlist with no
+   monitor. A closed playlist with a problem shows an alert in its summary
+   row. With valid changes, the line says what changed ("Changes: interval
+   of konachan. Not saved yet.").
+6. **Rows and one open playlist.** Settings as rows without boxes: name
+   and a one-line description on the left, the control on the right, all
+   controls in one column; fields filled, without a border. One playlist
+   is open; the others are a summary row ("ZeroMOD · sorted · manually ·
+   fill") that opens on click (and the open one closes). *+ Add playlist*
+   and *New playlist…* (from a monitor's menu) open the new one. *Browse…*,
+   *Delete playlist*, *Choose…* (the monitors menu) are accent text.
+7. **Changes.** Set a playlist to *Manually*: the duration field goes; Save:
+   the file says `interval = "manual"` and the tray shows *(manual)*. Back
+   to *Every*: the duration shows again.
+8. Switch the ZeroMOD off (OLED refresh) with the page open: it is drawn
+   dimmed and stays in fantasy. If Windows stops listing it, fantasy's
+   *Monitors* line says "ZeroMOD (not connected)" and saving other changes
+   keeps it in the file.
+9. *About*: the version shows the git commit; each *Open folder* opens
+   Explorer at the right place (the nearest existing folder for ones not
+   created yet, e.g. the thumbnail cache); *Copy path* puts the path on the
+   clipboard.
+10. `wallpaper reload` after a hand edit: "Config reloaded" (plus any
+    warnings); with a broken file, the error, and the tray's *Reload
+    config* notifies the same error once.
+11. With the app started on a custom config (`wallpaper -c other.toml
+    tray`), plain `wallpaper next` and `wallpaper ui settings` (no `-c`)
+    reach it, and the page edits other.toml.
 
 ## 9. Pick, hold and manual
 
@@ -132,97 +254,3 @@ on the right monitors, the real tray menu, and a real quit and restart.
    says *(manual)*, there is no *Hold* item, and it never changes by itself
    (leave it well past its old interval, also across an app restart).
    `wallpaper hold <it>` says why it can't be held; `next` and `pick` work.
-
-## 10. Layout window
-
-`wallpaper ui layout` (or tray *Open layout*). What the tests can't see:
-the real arrangement, real images, the system's theme. The logic (scaling,
-card text, which command each button sends, toggles following the app,
-thumbnails off the UI thread) is tested with fakes (`tests/test_layout.py`,
-`test_thumbnails.py`, `test_theme.py`).
-
-1. *Monitors* matches the real arrangement: the PLX2783H left of the
-   AW3225QF (it sits at -1920,0), sizes to scale, each showing its current
-   image, with no outline; under each: its name, resolution (e.g.
-   3840×2160) and playlist. A monitor in no playlist says
-   "no playlist". Resize the window: the drawing rescales, nothing is cut
-   off, and the cards rearrange into fewer or more columns. Hover a card:
-   its monitors get an accent outline; hover a monitor: its playlist's card
-   gets an accent edge; move away: both go.
-2. Each playlist card: the thumbnail (letterboxed, on the dark backdrop),
-   name, monitors (a link icon for the mirrored group), the image's file
-   name, then "dimensions · file size · order, interval · next in …";
-   dimensions and size match the file (e.g. in Explorer's properties). The
-   time left counts down, and the card shows the new image when it
-   changes.
-3. Each button, with its tooltip: *Previous* and *Next* change the
-   wallpaper on the real monitors; *Favourite* fills the star with the
-   accent (and favourites.txt has the image), a second click clears it;
-   *Remove* lists the image in to-remove.txt and moves on; *Hold* fills the
-   pin, shows the *Held* chip and "… left once resumed", and a second
-   click resumes. Toggling in the tray shows in the window too.
-4. The manual playlist (ZeroMOD): a *Manual* chip, no hold button, "manual"
-   instead of the time left.
-5. An error shows in the card, not as a dialog: e.g. *Next* on a playlist
-   whose monitors are all off.
-6. Switch the system between light and dark mode (Settings > Personalisation
-   > Colours) with the window open: the window and its icons follow;
-   the monitor drawing and thumbnails stay on the dark backdrop.
-7. Thumbnails never stall the window: with a playlist of large images
-   (4K PNGs), press *Next* repeatedly and move / resize the window
-   meanwhile; it stays responsive, and each card ends on its current image.
-8. Switch a monitor off (e.g. OLED refresh) with the window open: within a
-   few seconds it is drawn dimmed, marked "off", to the right of
-   the others, at its usual size; the others are drawn where Windows now
-   puts them (it may move them). Switched on, it returns to its real
-   position.
-
-## 11. Settings window
-
-`wallpaper ui settings` (or tray *Settings…*). The logic is tested with
-fakes and a temporary config (`tests/test_config_edit.py`: the file round
-trip, each kind of edit, validation, selectors, conflicts;
-`tests/test_settings.py`: the window's Save / Revert / close flow, the
-monitor menus, the About page, and one save that the app really reloads).
-These steps confirm it on your own config and desktop. Back up
-config.toml first (copy it next to itself).
-
-1. **Round trip keeps your comments.** Open the window, change nothing,
-   close it: config.toml is byte for byte the same (compare with the
-   backup, e.g. `fc /b config.toml config.backup.toml`). Then change one
-   interval and Save: a diff against the backup shows that one line
-   changed, its comment still in the same column; every other comment and
-   blank line as it was. Revert it the same way (or by hand).
-2. **Assigning a monitor to another playlist.** Click the PLX2783H in the
-   drawing and choose *fantasy*: the caption under it and both playlists'
-   *Monitors* lines change; Save. The tray's sections and the layout
-   window (if open) show the PLX2783H under fantasy within a few seconds,
-   and it gets fantasy's current image; the AW3225QF keeps konachan's. The
-   file's `monitors` lines are the only ones changed. Move it back.
-3. **A conflicting hand edit is detected.** With an unsaved change in the
-   window, edit config.toml in an editor (add a comment) and save it
-   there. Then Save in the window: it says the file changed on disk and
-   writes nothing (your comment is still there); *Load the file again*
-   shows the file as it is now.
-4. **Closing with unsaved changes asks** Save / Discard / Cancel: *Cancel*
-   keeps the window open with the change; *Discard* closes without writing;
-   *Save* writes, then closes. With nothing changed, it closes without
-   asking.
-5. Validation shows next to the field, not as a dialog, and *Save* says why
-   it is off (hover it, or the line beside it): an interval like `30`, a
-   folder that doesn't exist, a name with a space, a playlist with no
-   monitor.
-6. Switch the ZeroMOD off (OLED refresh) with the window open: it is drawn
-   dimmed and stays in fantasy. If Windows stops listing it, fantasy's
-   *Monitors* line says "ZeroMOD (not connected)" and saving other changes
-   keeps it in the file.
-7. *About*: the version shows the git commit; each *Open folder* opens
-   Explorer at the right place (the nearest existing folder for ones not
-   created yet, e.g. the thumbnail cache); *Copy path* puts the path on the
-   clipboard.
-8. `wallpaper reload` after a hand edit: "Config reloaded" (plus any
-   warnings); with a broken file, the error, and the tray's *Reload config*
-   notifies the same error once.
-9. With the app started on a custom config (`wallpaper -c other.toml
-   tray`), plain `wallpaper next` and `wallpaper ui settings` (no `-c`)
-   reach it, and the settings window edits other.toml.

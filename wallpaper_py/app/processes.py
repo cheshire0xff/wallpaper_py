@@ -4,7 +4,7 @@ lines that start them, starting one detached, logging, Ctrl+C.
 
 Two long-lived processes exist: the app (`wallpaper tray` / `run`: the
 service, the tray, the command socket) and, on demand, the UI process
-(`wallpaper ui`: the windows). Each starts the other when needed: the tray
+(`wallpaper ui`: the window). Each starts the other when needed: the tray
 opens windows, the UI process starts the app if it isn't running.
 
 No Qt at import time except in `quit_on_interrupt`, so the CLI can use the
@@ -54,9 +54,9 @@ def autostart_command(config_path: Path) -> list[str]:
     return [*_python_command(config_path), "tray"]
 
 
-def ui_command(config_path: Path, window: str) -> list[str]:
-    """How the tray starts the UI process showing `window`."""
-    return [*_python_command(config_path), "ui", window]
+def ui_command(config_path: Path, page: str) -> list[str]:
+    """How the tray starts the UI process, its window on `page`."""
+    return [*_python_command(config_path), "ui", page]
 
 
 def start_detached(command: Sequence[str]) -> None:

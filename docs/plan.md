@@ -154,13 +154,13 @@ nothing while closed):
 
 - The always-running app = service thread + tray + command socket, as
   now; it stays small.
-- The windows (layout, library, settings) run in **their own process**,
-  `wallpaper ui [layout|library|settings]`, started on demand and exiting when its
-  last window closes, which gives all its memory back.
-- Starting: the tray's "Open layout / Open library" (or the CLI) first
-  asks a running UI process to show that window (its own small socket,
-  same pattern as the CLI auto-start); if none answers, it starts one.
-  One UI process at most.
+- The window (since step 4 one main window with the pages Home, Library
+  and Settings; at first three windows) runs in **its own process**,
+  `wallpaper ui [home|library|settings]`, started on demand and exiting
+  when the window closes, which gives all its memory back.
+- Starting: the tray's entries (or the CLI) first ask a running UI
+  process to show that page (its own small socket, same pattern as the CLI
+  auto-start); if none answers, they start one. One UI process at most.
 - The UI process is a client of the app's socket like any other: commands
   with replies, plus `subscribe` for events. If the app isn't running, the
   UI starts it (same auto-start as the CLI); if the app quits, the UI
@@ -351,6 +351,9 @@ Order for the rest of the phase, one session each:
    library stats per playlist. The stats come from a new `stats` command
    (the service has the scan, the deck and the marks); not read from the
    database directly, so its layout stays private to the service.
+4. **One window with a sidebar** (Home, Library, Settings), as in the
+   mockups (docs/design/): replaces the three windows. **Done** (awaiting
+   review and the desktop checks, section 8).
 
 Pick, hold and manual mode, implemented (decisions made while building it):
 
@@ -494,6 +497,69 @@ Settings window, implemented (decisions made while building it):
   on the UI thread would stall it); stats later, with `stats`.
 - Not done: images in the settings window's drawing (the layout window
   has them), per-playlist `sound` (Phase 7), reordering playlists.
+
+One window, implemented (decisions made while building it):
+
+- **Names**: the layout window became `HomePage` (`PlaylistCard` ->
+  `PlaylistRow`), the settings window `SettingsPage`, the library
+  placeholder `LibraryPage`; `MainWindow` (window.py) holds them in a
+  `QStackedWidget` beside its `Sidebar`. The UI socket's request names a
+  `page` ("home", "library", "settings"), the CLI `wallpaper ui [page]`
+  (default home), the tray *Open wallpaper_py* / *Library* / *Settings…*.
+  The UI process has exactly one window now: it is created at start and
+  `MainWindow.open_page` shows a page and brings the window to the front;
+  its closing quits the process.
+- **Tones** (`theme.derive_tones`, from the application's palette): dark
+  mode: the page is the palette's Window colour `darker(122)` (Windows 11's
+  #202020 gives #1a1a1a, as in the mockup); lines, panels and fields are
+  the page mixed towards the text colour (9 %, 4 %, 7 %); muted text 24 %
+  towards the page; hover and accent fills are the text / accent at 6 % /
+  14 % alpha. The accent is lightened until readable on dark (Windows'
+  #0078d4 becomes about #40acff; the mockup's #60cdff is Windows' own
+  light accent, which Qt doesn't expose). Light mode: the page is the
+  Window colour, the panel behind images the old dark `BACKDROP`.
+  The status dot's green / red are the only fixed colours besides the
+  backdrop (the palette has no such roles), one pair per mode.
+- **Applying them without stylesheets**: the window sets *only* Window,
+  Base, Button (both the field tone) and PlaceholderText on its palette,
+  from an empty `QPalette()`. Copying the application's palette instead
+  marks every role as set, and the window then never hears of a palette
+  change (found while testing). Everything drawn here (sidebar items,
+  rows, tabs, text buttons, dividers, the panel, chips, the summary rows)
+  reads `theme.tones()` while painting. Fields are `setFrame(False)` with
+  the Base / Button tone; Save gets the accent through its Button /
+  ButtonText roles (its disabled look stays the plain field tone). With
+  Qt's windows11 style this gives the borderless filled fields of the
+  mockup; Fusion (tests, offscreen) draws the combo boxes with a slight
+  bevel.
+- **Text size**: Qt's default font on Windows is 9 pt (12 px); Windows 11's
+  body text (and the mockup's) is 14 px. The UI process raises its font to
+  at least 10.5 pt (`theme.body_font`), so a larger system font is kept.
+- **Home**: rows, not cards (no columns to reflow any more); a hovered row
+  gets a faint fill (the old accent edge is gone); toggles that are on are
+  the accent icon, filled, on a faint accent fill. Durations are written
+  as the config writes them ("every 25m", "next in 21m", "5m50s left once
+  resumed": seconds under 10 minutes). The paused state moved from Home's
+  banner to the sidebar's status line; errors still show on the page.
+- **Settings**: `SettingRow` (name, description, control column 360 px
+  wide); `PlaylistEditor` open or a `PlaylistSummary` row (a closed
+  playlist with a problem shows an alert there); one open at a time
+  (`SettingsPage.open_uid`, kept across revert / save, a new playlist
+  opens). The interval became a *Changes* row: *Every* + duration, or
+  *Manually* (the duration hidden; it writes `interval = "manual"`, as the
+  old checkbox did). Order's description follows the choice. The
+  *Monitors* row keeps its menu as an accent *Choose…* button (the
+  screenshot shows only the text; the menu is the keyboard way to change
+  monitors). The status line in the footer says what changed ("Changes:
+  interval of konachan. Not saved yet.", `change_summary`) or why Save is
+  off. The drawing here is smaller, with one-line captions ("PLX2783H ·
+  konachan"). Sub-tabs are our own `theme.Tabs` (QTabWidget can't be
+  made to look like the mockup without a stylesheet).
+- **Closing** with unsaved settings: `MainWindow.closeEvent` shows the
+  Settings page, then `SettingsPage.confirm_close` asks Save / Discard /
+  Cancel (unchanged logic); the window title carries "*" while modified.
+- Not done: a left click on the tray icon still opens the menu (it could
+  open the window now); the Library page is a placeholder (Phase 5).
 
 ## Phase 5: library window
 

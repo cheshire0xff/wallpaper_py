@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QMenu
 
 from wallpaper_py.app.icon import IconState, app_icon
 from wallpaper_py.app.tray import Tray, activate, fill_menu, icon_state, tooltip
-from wallpaper_py.app.ui.launcher import WindowKind
+from wallpaper_py.app.ui.launcher import PageName
 from wallpaper_py.app.worker import ServiceHost, ServiceSettings
 from wallpaper_py.protocol import (
     CommandRequest,
@@ -63,8 +63,8 @@ class Actions:
     def open_image(self, image: Path) -> None:
         self.calls.append(image)
 
-    def open_window(self, window: WindowKind) -> None:
-        self.calls.append(("window", window))
+    def open_window(self, page: PageName) -> None:
+        self.calls.append(("page", page))
 
     def reload(self) -> None:
         self.calls.append("reload")
@@ -123,8 +123,8 @@ def test_flat_sections(menu: QMenu) -> None:
         ("Remove (list and skip)", False),
         # no Hold: a manual playlist never rotates
         ("Paused: idle", False),
-        ("Open layout", True),
-        ("Open library", True),
+        ("Open wallpaper_py", True),
+        ("Library", True),
         ("Settings…", True),
         ("Reload config", True),
         ("Open config folder", True),
@@ -188,8 +188,9 @@ def test_app_items(menu: QMenu) -> None:
     autostart = fill(menu, Overview(), actions)
     assert autostart.isChecked()
     for text in (
-        "Open layout",
-        "Open library",
+        "Open wallpaper_py",
+        "Library",
+        "Settings…",
         "Reload config",
         "Open config folder",
         "Start at login",
@@ -197,8 +198,9 @@ def test_app_items(menu: QMenu) -> None:
     ):
         find(menu, text).trigger()
     assert actions.calls == [
-        ("window", "layout"),
-        ("window", "library"),
+        ("page", "home"),
+        ("page", "library"),
+        ("page", "settings"),
         "reload",
         "folder",
         ("autostart", False),
@@ -245,14 +247,14 @@ def test_tray_follows_the_overview(tmp_path: Path) -> None:
     )
     autostart = FakeAutostart()
     quits: list[bool] = []
-    windows: list[WindowKind] = []
+    pages: list[PageName] = []
     tray = Tray(
         host,
         autostart,
         ["py", "tray"],
         tmp_path,
         lambda: quits.append(True),
-        open_window=windows.append,
+        open_window=pages.append,
     )
     assert items(tray.menu)[0].text() == "Starting..."
 
@@ -263,8 +265,10 @@ def test_tray_follows_the_overview(tmp_path: Path) -> None:
     assert autostart.command == ["py", "tray"]
     find(tray.menu, "Start at login").trigger()
     assert autostart.command is None
-    find(tray.menu, "Open library").trigger()
-    assert windows == ["library"]
+    find(tray.menu, "Open wallpaper_py").trigger()
+    find(tray.menu, "Library").trigger()
+    find(tray.menu, "Settings…").trigger()
+    assert pages == ["home", "library", "settings"]
     find(tray.menu, "Quit").trigger()
     assert quits == [True]
 

@@ -1,17 +1,17 @@
 """
-Opening a window: show it in the UI process that runs, else start one.
+Opening the window on a page: in the UI process that runs, else start one.
 
 The UI process listens on its own small socket (`UiServer`, next to the
 app's, name from `ipc.server_name(data_dir, "ui")`) for one kind of
-request, "show this window":
+request, "show the window on this page":
 
-    -> {"v": 2, "window": "layout", "config": "C:/.../config.toml"}
+    -> {"v": 2, "page": "home", "config": "C:/.../config.toml"}
     <- {"error": null}
 
 `config` is left out when the user named none: then any config will do.
 Named, it must be the one the windows use (the app's).
 `WindowOpener` asks it from the tray without blocking, and starts
-`wallpaper ui <window>` if nothing answers; `show_in_running_ui` asks it
+`wallpaper ui <page>` if nothing answers; `show_in_running_ui` asks it
 from a starting UI process (blocking, before its event loop runs), which
 exits if another one answered. At most one UI process runs: it holds
 `paths.ui_lock()` while it listens.
@@ -35,14 +35,14 @@ from ..processes import start_detached
 
 log = logging.getLogger(__name__)
 
-WindowKind = Literal["layout", "library", "settings"]
-WINDOWS: tuple[WindowKind, ...] = get_args(WindowKind)
+PageName = Literal["home", "library", "settings"]  # the main window's pages
+PAGE_NAMES: tuple[PageName, ...] = get_args(PageName)
 SHOW_TIMEOUT_S = 5.0
 
 
 class ShowRequest(Strict):
     v: int = PROTOCOL
-    window: WindowKind
+    page: PageName
     # The UI process refuses another config than its own; None: any.
     config: Path | None = None
 
@@ -62,12 +62,12 @@ def ui_server_name(data_dir: Path) -> str:
 
 class UiServer(ipc.LineServer):
     """
-    In the UI process: `show_requested(window)` for each valid request.
+    In the UI process: `show_requested(page)` for each valid request.
     Its config is the one it was started with, if any, else the app's once
     the first overview says which (`follow`); until then, any is accepted.
     """
 
-    show_requested = Signal(str)  # WindowKind
+    show_requested = Signal(str)  # PageName
 
     def __init__(
         self, name: str, config_path: Path | None, parent: QObject | None = None
@@ -98,7 +98,7 @@ class UiServer(ipc.LineServer):
                 f"{request.config}; close them to use another config",
             )
             return
-        self.show_requested.emit(request.window)
+        self.show_requested.emit(request.page)
         self._answer(connection_id, None)
 
     def _answer(self, connection_id: int, error: str | None) -> None:
@@ -110,7 +110,7 @@ class UiServer(ipc.LineServer):
 
 def show_in_running_ui(name: str, request: ShowRequest) -> bool:
     """
-    Blocking: True if a running UI process showed the window, False if
+    Blocking: True if a running UI process showed the page, False if
     none runs. Raises WallpaperError if it refused or did not answer.
     """
     allow_foreground()
@@ -134,9 +134,9 @@ def _decode(line: bytes) -> ShowReply:
 
 class WindowOpener(QObject):
     """
-    For the tray: `open(window)` asks the running UI process to show it, or
-    starts one (`command(window)`) if none answers. Never blocks; problems
-    are reported through `failed`.
+    For the tray: `open(page)` asks the running UI process to show the
+    window on that page, or starts one (`command(page)`) if none answers.
+    Never blocks; problems are reported through `failed`.
     """
 
     failed = Signal(str)  # message
@@ -145,7 +145,7 @@ class WindowOpener(QObject):
         self,
         name: str,
         config_path: Path,
-        command: Callable[[WindowKind], Sequence[str]],
+        command: Callable[[PageName], Sequence[str]],
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -153,7 +153,7 @@ class WindowOpener(QObject):
         self._config_path = config_path
         self._command = command
 
-    def open(self, window: WindowKind) -> None:
+    def open(self, page: PageName) -> None:
         allow_foreground()  # now, while the click still counts
 
         def answered(line: bytes) -> None:
@@ -166,11 +166,11 @@ class WindowOpener(QObject):
 
         def not_answered(not_running: bool, message: str) -> None:
             if not_running:
-                self._start(window)
+                self._start(page)
             else:
                 self._report(f"The open windows don't answer: {message}")
 
-        request = ShowRequest(window=window, config=self._config_path)
+        request = ShowRequest(page=page, config=self._config_path)
         ipc.LineRequest(
             self._name,
             ipc.encode(request),
@@ -180,11 +180,11 @@ class WindowOpener(QObject):
             parent=self,
         )
 
-    def _start(self, window: WindowKind) -> None:
+    def _start(self, page: PageName) -> None:
         try:
-            start_detached(self._command(window))
+            start_detached(self._command(page))
         except OSError as err:
-            self._report(f"Cannot open the {window} window: {err}")
+            self._report(f"Cannot open the window ({page}): {err}")
 
     def _report(self, message: str) -> None:
         log.warning("%s", message)

@@ -17,18 +17,22 @@ app/                          PySide6 (Qt only here); two processes
   tray.py        tray icon and menu, drawn from an Overview
   icon.py        the icon, drawn in code
   ui/            the UI process (`wallpaper ui`), on demand
-    process.py   run_ui: single instance, windows, quits with the app / last window
-    launcher.py  its own socket: "show this window" (UiServer, WindowOpener)
-    client.py    Client: all a window may use (commands, events); SocketClient
-    window.py    Window (the base), and the placeholder still used for the library
-    layout.py    the layout window: monitors, then a card per playlist
-    settings.py  the settings window: edits config.toml (playlists, monitors,
-                 general), then asks the app to reload; About page in about.py
-    settings_form.py  its form: PlaylistEditor, field problems, derived texts
+    process.py   run_ui: single instance, the window, quits with the app / window
+    launcher.py  its own socket: "show this page" (UiServer, WindowOpener)
+    client.py    Client: all the pages may use (commands, events); SocketClient
+    window.py    MainWindow: the sidebar (NavButton per page, the app's status)
+                 and the pages; asks before closing with unsaved settings
+    home.py      Home: the monitors on a panel, then a row per playlist
+    library.py   Library: a placeholder until Phase 5
+    settings.py  Settings: edits config.toml (playlists, monitors, general),
+                 then asks the app to reload; About tab in about.py
+    settings_form.py  its rows: SettingRow, PlaylistEditor (open or a summary
+                 row), field problems, derived texts
     arrangement.py  the monitors drawn to scale (arrange(): pure geometry)
     thumbnails.py   ThumbnailLoader: image details and thumbnails, off the UI thread
-    theme.py     the shared look: spacing, radii, backdrop, tinted icons,
-                 IconButton, ImageView
+    theme.py     the shared look: tones derived from the palette, spacing,
+                 tinted icons, painted widgets (IconButton, TextButton, Tabs,
+                 Divider, Panel, Chip, ImageView)
     icons/       bundled Lucide SVGs (ISC licence alongside), package data
 commands.py                   runs a Request on the service -> a reply model (+ the
                               change made); overview(). Qt-free
@@ -114,8 +118,7 @@ Threads: the `PlaylistService` lives on a worker `QThread`, which creates
 everything it uses there (the command socket, COM via
 `backends.thread_scope()`, the backend, the SQLite connection, the 5 s tick
 `QTimer`). A change renders for ~200 ms, which must never happen on the UI
-thread. The UI thread holds only UI (tray, screen watcher, later the
-windows) and `ServiceHost`, a thin proxy: tray actions, extra ticks and
+thread. The UI thread holds only UI (tray, screen watcher) and `ServiceHost`, a thin proxy: tray actions, extra ticks and
 reload reach the worker as queued signals; replies, changes and the
 `Overview` come back the same way. Socket requests need no hop: the socket
 lives on the service thread and calls `ServiceWorker.execute` directly, the
@@ -160,42 +163,53 @@ in a different process from the server (tests use child processes,
 Config errors don't stop the app: it shows the error in the tray and
 answers commands with it until *Reload config* succeeds.
 
-UI process (`wallpaper ui [layout|library|settings]`, `app/ui/`): the windows run in
-a process of their own, started on demand and ended when its last window
-closes, so whatever they hold (later: thumbnails) is given back; the app
-never holds it. At most one runs: it listens on its own small socket
-(`UiServer`, "show this window") while holding `ui.lock`. The tray's *Open
-layout / Open library* ask that socket without blocking (`WindowOpener`)
-and start `wallpaper ui <window>` detached if nothing answers; a starting
-UI process asks it too and exits if another one answered. The UI process is
-a client of the app's socket like the CLI: it subscribes (starting the app
-first if none runs, as the CLI does) and quits when the subscription ends,
-i.e. when the app quits. Windows depend only on `Client` (`run` a command
+UI process (`wallpaper ui [home|library|settings]`, `app/ui/`): one main
+window with a sidebar (Home, Library, Settings) runs in a process of its
+own, started on demand and ended when the window closes, so whatever it
+holds (later: thumbnails) is given back; the app never holds it. At most
+one runs: it listens on its own small socket (`UiServer`, "show this
+page") while holding `ui.lock`. The tray's *Open wallpaper_py*, *Library*
+and *Settings…* ask that socket without blocking (`WindowOpener`) and
+start `wallpaper ui <page>` detached if nothing answers; a starting UI
+process asks it too and exits if another one answered. A running window
+comes to the front on the page asked for. The UI process is a client of
+the app's socket like the CLI: it subscribes (starting the app first if
+none runs, as the CLI does) and quits when the subscription ends, i.e.
+when the app quits. The pages depend only on `Client` (`run` a command
 with a reply callback; `overview_changed`, `changed`, `failed`), never on
-the service or `ServiceWorker`; reading state for the later windows (SQLite
+the service or `ServiceWorker`; reading state for the library (SQLite
 read-only, the .txt files) is planned in Phase 5. The UI process logs to
 `ui.log` next to the app's log.
 
-The layout window redraws from `overview_changed` (which carries each
-monitor's id, name and geometry, attached or not) and asks `status` once
-per new overview for the schedule, counting the time left down itself in
-between; it never polls. Toggles show the overview's state, never the
-click. Images are read from the files, not the socket: `ThumbnailLoader`
-reads the header (dimensions) and decodes at a reduced size on a thread
-pool of its own, caches by path and drops results for images no longer
-shown. The look follows the system (native style, palette colours, light /
-dark) except the dark backdrop behind images; icons are Lucide SVGs tinted
-from the palette and re-tinted when it changes (`theme.py`).
+The pages live as long as the window, so switching pages keeps unsaved
+settings; closing the window with them asks Save / Discard / Cancel on the
+Settings page. The look follows the system (native style, the palette,
+light / dark): the tones (page, sidebar line, panels behind images,
+filled fields, accent fills) are derived from the application's palette
+(`theme.derive_tones`), set on the window as palette roles (Window, Base,
+Button, PlaceholderText; nothing else, so a palette change still reaches
+it) and derived again when the palette changes; widgets painted here
+(sidebar items, rows, tabs, text buttons) read them when they paint. No
+stylesheets. In light mode the panels behind images stay dark. Icons are
+Lucide SVGs tinted from the tones and re-tinted when they change.
 
-The settings window edits the config file the app runs (the overview
-names it), as an editor would: the file stays the source of truth and the
+Home redraws from `overview_changed` (which carries each monitor's id,
+name and geometry, attached or not) and asks `status` once per new
+overview for the schedule, counting the time left down itself in between;
+it never polls. Toggles show the overview's state, never the click.
+Images are read from the files, not the socket: `ThumbnailLoader` reads
+the header (dimensions) and decodes at a reduced size on a thread pool of
+its own, caches by path and drops results for images no longer shown.
+
+The Settings page edits the config file the app runs (the overview names
+it), as an editor would: the file stays the source of truth and the
 app the only writer of state. `core/config_edit.py` writes back only what
 changed (tomlkit), so a file with no change stays byte for byte the same
 and hand-written comments survive; the new text must pass the core's own
 parser, and the write (atomic) is refused if the file changed on disk since
-it was read. Then the window sends `reload`, a command like the others:
+it was read. Then the page sends `reload`, a command like the others:
 the app reopens its service on the file, publishes the new overview (every
-window follows it) and replies with the warnings or the error.
+page follows it) and replies with the warnings or the error.
 
 ## Playlist service
 

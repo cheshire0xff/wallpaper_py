@@ -1,5 +1,5 @@
 """
-The settings window's About page: the version (with the git commit when
+The Settings page's About tab: the version (with the git commit when
 run from a checkout), and where everything is kept, each location with
 *Open folder* and *Copy path* (todo.md, "Settings / about").
 
@@ -16,18 +16,13 @@ from importlib import metadata
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QUrl, Slot
-from PySide6.QtGui import QDesktopServices, QFont, QGuiApplication, QPalette
-from PySide6.QtWidgets import (
-    QGridLayout,
-    QLabel,
-    QPushButton,
-    QVBoxLayout,
-    QWidget,
-)
+from PySide6.QtGui import QDesktopServices, QGuiApplication
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from ...core import paths
 from ...core.config import Config
 from . import theme
+from .settings_form import SettingRow
 
 _PATH = "path"  # Qt property on the buttons: the location they act on
 OpenUrl = Callable[[QUrl], object]  # QDesktopServices.openUrl
@@ -98,7 +93,7 @@ def existing_folder(path: Path) -> Path:
 
 
 class AboutPage(QWidget):
-    """Version and data locations; `set_locations` fills it."""
+    """Version and data locations, as rows; `set_locations` fills it."""
 
     def __init__(
         self,
@@ -110,38 +105,32 @@ class AboutPage(QWidget):
         self._open_url = open_url
         self.locations: list[Location] = []
 
-        title = QLabel("wallpaper_py", self)
-        font = QFont(title.font())
-        font.setBold(True)
-        font.setPointSizeF(font.pointSizeF() * 1.3)
-        title.setFont(font)
-        self.version = QLabel(f"Version {version}", self)
+        self.version = QLabel(version, self)
         self.version.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
-        heading = QLabel("Data locations", self)
-        bold = QFont(heading.font())
-        bold.setBold(True)
-        heading.setFont(bold)
-        self._grid_widget = QWidget(self)
-        self._grid = QGridLayout(self._grid_widget)
-        self._grid.setContentsMargins(0, 0, 0, 0)
-        self._grid.setHorizontalSpacing(theme.space(1.5))
-        self._grid.setVerticalSpacing(theme.space())
-        self._grid.setColumnStretch(1, 1)
-        later = QLabel("Library statistics per playlist come in a later version.", self)
-        later.setForegroundRole(QPalette.ColorRole.PlaceholderText)
+        self.version.setAccessibleName(f"Version {version}")
+        self._rows = QVBoxLayout()
+        self._rows.setContentsMargins(0, 0, 0, 0)
+        self._rows.setSpacing(0)
 
         layout = QVBoxLayout(self)
-        margin = theme.space(2)
-        layout.setContentsMargins(margin, margin, margin, margin)
-        layout.setSpacing(theme.space())
-        layout.addWidget(title)
-        layout.addWidget(self.version)
+        layout.setContentsMargins(0, theme.space(2), 0, theme.space(2))
+        layout.setSpacing(0)
+        layout.addWidget(theme.heading("wallpaper_py", self))
+        layout.addWidget(SettingRow("Version", "", self.version, parent=self))
         layout.addSpacing(theme.space())
-        layout.addWidget(heading)
-        layout.addWidget(self._grid_widget)
+        layout.addWidget(theme.Divider(self))
+        data = theme.heading("Data locations", self)
+        data.setContentsMargins(0, theme.space(2), 0, theme.space(0.5))
+        layout.addWidget(data)
+        layout.addLayout(self._rows)
         layout.addSpacing(theme.space())
+        layout.addWidget(theme.Divider(self))
+        later = theme.muted(
+            "Library statistics per playlist come in a later version.", self
+        )
+        later.setContentsMargins(0, theme.space(2), 0, 0)
         layout.addWidget(later)
         layout.addStretch(1)
 
@@ -149,28 +138,31 @@ class AboutPage(QWidget):
         if list(locations) == self.locations:
             return
         self.locations = list(locations)
-        while (item := self._grid.takeAt(0)) is not None:
+        while (item := self._rows.takeAt(0)) is not None:
             if (widget := item.widget()) is not None:
+                widget.hide()  # now: it is deleted later
                 widget.deleteLater()
-        for row, location in enumerate(self.locations):
-            label = QLabel(location.label, self._grid_widget)
-            path = QLabel(str(location.path), self._grid_widget)
-            path.setWordWrap(True)
-            path.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            path.setAccessibleName(f"{location.label}: {location.path}")
-            open_button = QPushButton("Open folder", self._grid_widget)
+        for location in self.locations:
+            open_button = theme.TextButton("Open folder", self)
             open_button.setAccessibleName(f"Open the folder of: {location.label}")
             open_button.setProperty(_PATH, str(location.path))
             open_button.clicked.connect(self._open_folder)
-            copy_button = QPushButton("Copy path", self._grid_widget)
+            copy_button = theme.TextButton("Copy path", self)
             copy_button.setAccessibleName(f"Copy the path of: {location.label}")
             copy_button.setProperty(_PATH, str(location.path))
             copy_button.clicked.connect(self._copy_path)
-            top = Qt.AlignmentFlag.AlignTop
-            self._grid.addWidget(label, row, 0, top)
-            self._grid.addWidget(path, row, 1, top)
-            self._grid.addWidget(open_button, row, 2, top)
-            self._grid.addWidget(copy_button, row, 3, top)
+            buttons = QHBoxLayout()
+            buttons.setSpacing(theme.space(2))
+            buttons.addWidget(open_button)
+            buttons.addWidget(copy_button)
+            buttons.addStretch(1)
+            row = SettingRow(location.label, str(location.path), buttons, parent=self)
+            row.description.setWordWrap(True)
+            row.description.setTextInteractionFlags(
+                Qt.TextInteractionFlag.TextSelectableByMouse
+            )
+            row.description.setAccessibleName(f"{location.label}: {location.path}")
+            self._rows.addWidget(row)
 
     def _sender_path(self) -> Path:
         return Path(str(self.sender().property(_PATH)))

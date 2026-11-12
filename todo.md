@@ -12,6 +12,7 @@ so I need to pass it first through my lib management script to delete it properl
 1. Way to go to next and previous wallpaper, per monitor(if mirrored then just change all mirrored monitors)
 
 1. Investiage if this is still the preffered way to manage monitors and wallpapers on windows.
+1. wallpaper cli next prev and status etc should not launch tray, just a non ui service and it should close when command ends. In standalone mode. Maybe just drop standalone mode or make it opt in with a flag?
 
 ## Library window
 

@@ -1,8 +1,8 @@
 """
-The settings window, through a fake Client (never a real app): it edits
-the file the app runs, Save / Revert / close-with-changes, problems next to
+The Settings page, through a fake Client (never a real app): it edits the
+file the app runs, Save / Revert / close-with-changes, problems next to
 their fields, conflicts with hand edits, monitors from the drawing's menu,
-and the About page.
+one playlist open at a time, the Changes row, and the About tab.
 """
 
 from __future__ import annotations
@@ -20,8 +20,9 @@ from pytestqt.qtbot import QtBot
 from wallpaper_py.app import ipc
 from wallpaper_py.app.ui.about import existing_folder, version_text
 from wallpaper_py.app.ui.client import ReplyCallback, SocketClient
-from wallpaper_py.app.ui.settings import Choice, Dialogs, SettingsWindow
-from wallpaper_py.app.ui.settings_form import PlaylistEditor
+from wallpaper_py.app.ui.settings import Choice, Dialogs, SettingsPage
+from wallpaper_py.app.ui import theme
+from wallpaper_py.app.ui.settings_form import PlaylistEditor, change_summary
 from wallpaper_py.core import paths
 from wallpaper_py.core.config_edit import DIRECTORY, IDLE, INTERVAL, MONITORS, NAME
 from wallpaper_py.protocol import (
@@ -110,15 +111,15 @@ def fixture_opened() -> list[QUrl]:
 @pytest.fixture(name="window")
 def fixture_window(
     qtbot: QtBot, client: FakeClient, dialogs: FakeDialogs, opened: list[QUrl]
-) -> Iterator[SettingsWindow]:
-    window = SettingsWindow(
+) -> Iterator[SettingsPage]:
+    window = SettingsPage(
         client, dialogs.dialogs(), version="1.0 (abc1234)", open_url=opened.append
     )
     qtbot.addWidget(window)
     yield window
 
 
-def editor(window: SettingsWindow, name: str) -> PlaylistEditor:
+def editor(window: SettingsPage, name: str) -> PlaylistEditor:
     return next(e for e in window.editors.values() if e.name_edit.text() == name)
 
 
@@ -141,7 +142,7 @@ def reloads(client: FakeClient) -> list[ReplyCallback]:
 # -- loading -------------------------------------------------------------------------
 
 
-def test_edits_the_file_the_app_runs(window: SettingsWindow, config: Path) -> None:
+def test_edits_the_file_the_app_runs(window: SettingsPage, config: Path) -> None:
     assert window.path == config  # from the overview, not the default config
     assert config != paths.config_file()
     assert [e.name_edit.text() for e in window.editors.values()] == [
@@ -153,20 +154,21 @@ def test_edits_the_file_the_app_runs(window: SettingsWindow, config: Path) -> No
     assert konachan.interval_edit.text() == "30m"
     assert konachan.monitors_label.text() == "AW3225QF + PLX2783H"
     fantasy = editor(window, "fantasy")
-    assert fantasy.manual_check.isChecked() and not fantasy.interval_edit.isEnabled()
+    assert fantasy.changes_combo.currentText() == "Manually"
+    assert fantasy.interval_edit.isHidden()
     assert fantasy.monitors_label.text() == "ZeroMOD (off)"
     assert window.locked_check.isChecked() and window.idle_edit.text() == "5m"
     # Nothing changed: nothing to save or revert.
     assert not window.save_button.isEnabled() and not window.revert_button.isEnabled()
     assert window.save_button.toolTip() == "Nothing changed"
-    assert not window.isWindowModified()
+    assert not window.dirty() and window.status.text() == ""
 
 
 def test_waits_for_the_app_to_say_which_file(
     qtbot: QtBot, dialogs: FakeDialogs, config: Path
 ) -> None:
     client = FakeClient()
-    window = SettingsWindow(client, dialogs.dialogs(), version="1")
+    window = SettingsPage(client, dialogs.dialogs(), version="1")
     qtbot.addWidget(window)
     assert window.banner.text() == "Connecting to wallpaper_py…"
     assert not window.editors and not window.add_button.isEnabled()
@@ -181,7 +183,7 @@ def test_a_missing_or_unreadable_file_is_explained(
     client = FakeClient()
     missing = tmp_path / "none.toml"
     client.publish(Overview(config=missing, error=f"No config file at {missing}"))
-    window = SettingsWindow(client, dialogs.dialogs(), version="1")
+    window = SettingsPage(client, dialogs.dialogs(), version="1")
     qtbot.addWidget(window)
     assert "There is no config file at" in window.banner.text()
     assert not window.banner_button.isHidden() and not window.editors
@@ -209,11 +211,13 @@ def test_a_missing_or_unreadable_file_is_explained(
 
 
 def test_save_writes_only_the_change_then_reloads(
-    window: SettingsWindow, client: FakeClient, config: Path
+    qtbot: QtBot, window: SettingsPage, client: FakeClient, config: Path
 ) -> None:
     before = config.read_text(encoding="utf-8")
-    editor(window, "konachan").interval_edit.setText("1h")
-    assert window.isWindowModified()
+    with qtbot.waitSignal(window.modified) as modified:
+        editor(window, "konachan").interval_edit.setText("1h")
+    assert modified.args == [True]
+    assert window.status.text() == "Changes: interval of konachan. Not saved yet."
     assert window.save_button.isEnabled() and window.revert_button.isEnabled()
     window.save_button.click()
     after = config.read_text(encoding="utf-8")
@@ -239,7 +243,7 @@ def test_save_writes_only_the_change_then_reloads(
 
 
 def test_the_apps_error_after_a_save_shows(
-    window: SettingsWindow, client: FakeClient
+    window: SettingsPage, client: FakeClient
 ) -> None:
     editor(window, "konachan").interval_edit.setText("1h")
     window.save_button.click()
@@ -249,7 +253,7 @@ def test_the_apps_error_after_a_save_shows(
     assert window.banner.text() == "The app can't use the config: still bad"
 
 
-def test_revert(window: SettingsWindow, config: Path) -> None:
+def test_revert(window: SettingsPage, config: Path) -> None:
     konachan = editor(window, "konachan")
     konachan.name_edit.setText("anime")
     window.locked_check.setChecked(False)
@@ -264,7 +268,7 @@ def test_revert(window: SettingsWindow, config: Path) -> None:
 
 
 def test_problems_show_at_their_fields_and_keep_save_off(
-    window: SettingsWindow, config: Path
+    window: SettingsPage, config: Path
 ) -> None:
     before = config.read_bytes()
     konachan = editor(window, "konachan")
@@ -302,14 +306,14 @@ def test_problems_show_at_their_fields_and_keep_save_off(
 
 
 def test_a_hand_edit_meanwhile_is_not_overwritten(
-    window: SettingsWindow, config: Path
+    window: SettingsPage, config: Path
 ) -> None:
     editor(window, "konachan").interval_edit.setText("1h")
     hand_edited = config.read_text(encoding="utf-8") + "# added by hand\n"
     config.write_bytes(hand_edited.encode())
     window.save_button.click()
     assert config.read_text(encoding="utf-8") == hand_edited  # untouched
-    assert "changed on disk since this window read it" in window.banner.text()
+    assert "changed on disk since it was read here" in window.banner.text()
     assert not window.banner_button.isHidden()
     assert window.dirty()  # the edits are still here
 
@@ -324,7 +328,7 @@ def test_a_hand_edit_meanwhile_is_not_overwritten(
 
 @pytest.mark.parametrize("answer", ["cancel", "discard", "save"])
 def test_closing_with_unsaved_changes_asks(
-    window: SettingsWindow,
+    window: SettingsPage,
     dialogs: FakeDialogs,
     config: Path,
     client: FakeClient,
@@ -333,32 +337,123 @@ def test_closing_with_unsaved_changes_asks(
     before = config.read_text(encoding="utf-8")
     editor(window, "konachan").interval_edit.setText("1h")
     dialogs.unsaved_answer = answer
-    window.show()
-    closed = window.close()
+    assert window.confirm_close() == (answer != "cancel")
     assert dialogs.asked == 1
-    assert closed == (answer != "cancel")
     written = config.read_text(encoding="utf-8")
     assert (written != before) == (answer == "save")
     assert bool(reloads(client)) == (answer == "save")
 
 
 def test_closing_unchanged_or_unsavable(
-    window: SettingsWindow, dialogs: FakeDialogs
+    window: SettingsPage, dialogs: FakeDialogs
 ) -> None:
-    window.show()
-    assert window.close() and dialogs.asked == 0  # nothing changed: no question
-    window.show()
+    assert window.confirm_close() and dialogs.asked == 0  # nothing changed
     editor(window, "konachan").interval_edit.setText("x")
     dialogs.unsaved_answer = "save"
-    assert not window.close()  # can't be saved: it stays open, and says why
+    assert not window.confirm_close()  # can't be saved: it stays, and says why
     assert window.status.text().startswith("Can't save yet.")
+
+
+# -- playlists open and closed, the Changes row ---------------------------------------
+
+
+def test_one_playlist_is_open_the_others_a_summary(window: SettingsPage) -> None:
+    konachan, fantasy = editor(window, "konachan"), editor(window, "fantasy")
+    assert konachan.expanded() and not fantasy.expanded()
+    assert konachan.summary.isHidden() and not konachan.details.isHidden()
+    assert not fantasy.summary.isHidden() and fantasy.details.isHidden()
+    assert fantasy.summary.text() == "fantasy"
+    assert fantasy.summary.summary == "ZeroMOD (off) · sorted · manually · fill"
+    assert fantasy.summary.accessibleName().startswith("fantasy: ZeroMOD (off)")
+    assert konachan.summary.summary == (
+        "AW3225QF + PLX2783H · shuffle · every 30m · fill"
+    )
+
+    fantasy.summary.click()  # opens it, closes the other
+    assert fantasy.expanded() and not konachan.expanded()
+    assert window.open_uid == fantasy.uid
+    # The summary follows the edits, and marks a problem.
+    konachan.interval_edit.setText("1h")
+    konachan.mode_combo.setCurrentIndex(konachan.mode_combo.findText("As is"))
+    assert konachan.summary.summary == (
+        "AW3225QF + PLX2783H · shuffle · every 1h · as is"
+    )
+    assert not konachan.summary.problem
+    konachan.directory_edit.setText("missing")
+    assert konachan.summary.problem
+    assert "has a problem" in konachan.summary.accessibleName()
+    # Revert rebuilds the form; the open one stays open.
+    window.revert_button.click()
+    assert editor(window, "fantasy").expanded()
+    assert not editor(window, "konachan").expanded()
+
+
+def test_new_playlist_opens_and_deleting_the_open_one_opens_the_first(
+    window: SettingsPage,
+) -> None:
+    window.tabs.set_current_index(1)  # General
+    window.add_button.click()
+    new = editor(window, "playlist")
+    assert new.expanded() and window.tabs.current_index() == 0
+    assert not editor(window, "konachan").expanded()
+    new.delete_button.click()
+    assert editor(window, "konachan").expanded()
+
+
+def test_changes_every_or_manually(window: SettingsPage, config: Path) -> None:
+    konachan = editor(window, "konachan")
+    row = konachan.changes_row
+    assert konachan.changes_combo.currentText() == "Every"
+    assert not konachan.interval_edit.isHidden()
+    assert row.description.text() == "Active time: pauses while locked, idle or asleep"
+    before = config.read_text(encoding="utf-8")
+    konachan.changes_combo.setCurrentIndex(konachan.changes_combo.findText("Manually"))
+    assert konachan.interval_edit.isHidden()  # Manually: no duration
+    assert row.description.text() == "Only next, previous or pick change it"
+    assert konachan.settings().manual
+    window.save_button.click()
+    assert changes(before, config.read_text(encoding="utf-8")) == [
+        '- interval = "30m"                     # active time since the last change',
+        '+ interval = "manual"                  # active time since the last change',
+    ]
+    # And back: the duration shows again (the default for a new one).
+    konachan = editor(window, "konachan")
+    assert konachan.interval_edit.isHidden()
+    konachan.changes_combo.setCurrentIndex(konachan.changes_combo.findText("Every"))
+    assert not konachan.interval_edit.isHidden()
+    assert konachan.settings().interval == "30m"
+
+
+def test_order_description_follows_the_choice(window: SettingsPage) -> None:
+    konachan = editor(window, "konachan")
+    assert konachan.order_row.description.text().startswith("Shuffle shows")
+    konachan.order_combo.setCurrentIndex(konachan.order_combo.findText("Sorted"))
+    assert konachan.order_row.description.text().startswith("Sorted goes")
+
+
+def test_the_status_line_says_what_changed(window: SettingsPage) -> None:
+    base = window.edited()
+    assert base is not None
+    editor(window, "konachan").interval_edit.setText("1h")
+    editor(window, "konachan").mode_combo.setCurrentIndex(1)
+    window.locked_check.setChecked(False)
+    assert window.status.text() == (
+        "Changes: interval, mode of konachan, pausing while locked. Not saved yet."
+    )
+    window.add_button.click()
+    editor(window, "fantasy").delete_button.click()
+    edited = window.edited()
+    assert edited is not None
+    assert change_summary(base, edited) == (
+        "interval, mode of konachan, new playlist playlist, deleted fantasy, 1 more"
+    )
 
 
 # -- monitors ------------------------------------------------------------------------
 
 
 def test_a_monitor_moves_to_another_playlist(
-    window: SettingsWindow, config: Path
+    window: SettingsPage, config: Path
 ) -> None:
     before = config.read_text(encoding="utf-8")
     menu = window.monitor_menu(PLX.id)
@@ -383,7 +478,7 @@ def test_a_monitor_moves_to_another_playlist(
 
 
 def test_no_playlist_and_new_playlist(
-    window: SettingsWindow, dialogs: FakeDialogs, config: Path
+    window: SettingsPage, dialogs: FakeDialogs, config: Path
 ) -> None:
     menu = window.monitor_menu(ZERO.id)
     assert menu is not None
@@ -420,7 +515,7 @@ def test_no_playlist_and_new_playlist(
 
 
 def test_a_monitor_not_connected_stays_until_removed(
-    window: SettingsWindow, client: FakeClient
+    window: SettingsPage, client: FakeClient
 ) -> None:
     client.publish(Overview(monitors=(AW, PLX), config=window.path))  # no ZeroMOD
     fantasy = editor(window, "fantasy")
@@ -445,7 +540,7 @@ def test_a_monitor_not_connected_stays_until_removed(
 
 
 def test_add_playlist_button(
-    window: SettingsWindow, dialogs: FakeDialogs, config: Path
+    window: SettingsPage, dialogs: FakeDialogs, config: Path
 ) -> None:
     window.add_button.click()
     new = editor(window, "playlist")
@@ -465,7 +560,7 @@ def test_add_playlist_button(
 
 
 def test_general_settings(
-    window: SettingsWindow, dialogs: FakeDialogs, config: Path
+    window: SettingsPage, dialogs: FakeDialogs, config: Path
 ) -> None:
     before = config.read_text(encoding="utf-8")
     window.idle_check.setChecked(False)
@@ -486,10 +581,10 @@ def test_general_settings(
 
 
 def test_about_lists_the_data_locations(
-    window: SettingsWindow, config: Path, opened: list[QUrl]
+    window: SettingsPage, config: Path, opened: list[QUrl]
 ) -> None:
     about = window.about
-    assert about.version.text() == "Version 1.0 (abc1234)"
+    assert about.version.text() == "1.0 (abc1234)"
     assert [(l.label, l.path) for l in about.locations] == [
         ("Config file", config),
         ("State database", paths.state_db()),
@@ -500,9 +595,7 @@ def test_about_lists_the_data_locations(
         ("Rendered wallpapers", paths.render_dir()),
         ("Thumbnail cache", paths.thumbnail_dir()),
     ]
-    buttons = {
-        b.accessibleName(): b for b in about.findChildren(type(window.save_button))
-    }
+    buttons = {b.accessibleName(): b for b in about.findChildren(theme.TextButton)}
     buttons["Copy the path of: State database"].click()
     assert QGuiApplication.clipboard().text() == str(paths.state_db())
     buttons["Open the folder of: Config file"].click()
@@ -540,7 +633,7 @@ def test_edits_and_reloads_the_running_apps_config(
     try:
         with qtbot.waitSignal(host.overview_changed):
             host.start()
-        window = SettingsWindow(client, dialogs.dialogs(), version="1")
+        window = SettingsPage(client, dialogs.dialogs(), version="1")
         qtbot.addWidget(window)
         with qtbot.waitSignal(client.overview_changed):
             client.start()

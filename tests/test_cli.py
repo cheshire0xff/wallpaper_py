@@ -7,7 +7,7 @@ import pytest
 from PIL import Image
 
 from wallpaper_py import cli
-from wallpaper_py.app.ui.launcher import WINDOWS
+from wallpaper_py.app.ui.launcher import PAGE_NAMES
 from wallpaper_py.commands import execute, open_service
 from wallpaper_py.core import paths
 from wallpaper_py.core.backend import Backend
@@ -330,11 +330,11 @@ def test_reply_texts() -> None:
     )
 
 
-def test_ui_windows_match_the_launcher() -> None:
-    assert cli.WINDOWS == WINDOWS
+def test_ui_pages_match_the_launcher() -> None:
+    assert cli.PAGES == PAGE_NAMES
     args = cli.build_parser().parse_args(["ui"])
-    assert args.window == "layout"
-    assert cli.build_parser().parse_args(["ui", "library"]).window == "library"
+    assert args.page == "home"
+    assert cli.build_parser().parse_args(["ui", "library"]).page == "library"
 
 
 def test_reload_and_which_config_is_sent(capsys: pytest.CaptureFixture[str]) -> None:

@@ -19,7 +19,7 @@ the receiving thread's event loop, so the sender never waits.
 |---|---|
 | **app**, UI thread (main thread, Qt event loop) | `QApplication`, `Tray`, `WindowOpener`, `ScreenWatcher`, and `ServiceHost`, the thin proxy to the service thread |
 | **app**, service thread (`QThread` "playlist-service") | `ServiceWorker` and everything it creates on that thread: the `CommandServer` (socket), the tick `QTimer`, COM (`backends.thread_scope`), the backend, the SQLite `Store`, the `PlaylistService` |
-| **UI process** (`wallpaper ui`, on demand), UI thread | `QApplication`, `UiServer` (its own socket), `SocketClient` (the app's socket), `Windows` and the windows: `LayoutWindow` (with its `PlaylistCard`s, `MonitorsView` and `ThumbnailLoader`), `SettingsWindow` (with its `PlaylistEditor`s, a `MonitorsView` and the `AboutPage`), `PlaceholderWindow` for the library |
+| **UI process** (`wallpaper ui`, on demand), UI thread | `QApplication`, `UiServer` (its own socket), `SocketClient` (the app's socket), and the one `MainWindow`: its `Sidebar` and its pages, `HomePage` (with its `PlaylistRow`s, `MonitorsView` and `ThumbnailLoader`), `LibraryPage` (a placeholder until Phase 5), `SettingsPage` (with its `PlaylistEditor`s, a `MonitorsView` and the `AboutPage`) |
 | **UI process**, thumbnail threads (the `ThumbnailLoader`'s own `QThreadPool`, 2 threads) | nothing that lives there: each job reads one image file into a `QImage` and emits it back |
 | **CLI** (a separate process) | `ipc.send`: blocking client, no event loop |
 
@@ -30,7 +30,7 @@ Nothing there may block on a client (`waitFor*()`) or spin a nested event
 loop. The UI thread never waits on it (except once, at shutdown).
 
 The UI process is a client like the CLI: commands and a subscription over
-the app's socket. Its windows use only the `Client` interface
+the app's socket. Its window and pages use only the `Client` interface
 (`Client.run`, `Client.overview_changed`, `Client.changed`,
 `Client.failed`), never the service or a socket.
 
@@ -48,7 +48,7 @@ flowchart LR
     subgraph UIP["UI process"]
         uiserver["UiServer<br/>its own socket"]
         client["SocketClient"]
-        windows["Windows<br/>LayoutWindow, SettingsWindow"]
+        windows["MainWindow<br/>HomePage, SettingsPage"]
         thumbs["ThumbnailLoader<br/>thread pool"]
     end
     subgraph UI["app: UI thread"]
@@ -66,7 +66,7 @@ flowchart LR
 
     send ==>|"request / reply"| server
     client ==>|"subscribe: events<br/>commands: request / reply"| server
-    opener ==>|"show window / ok"| uiserver
+    opener ==>|"show page / ok"| uiserver
     uiserver -->|"show_requested"| windows
     client -->|"overview_changed, changed"| windows
     windows -->|"run (also reload)"| client
@@ -127,12 +127,12 @@ Inside the UI thread (direct):
 | `ServiceHost.overview_changed` | `Tray.show_overview` (redraws the menu) |
 | tray menu items (playlist commands, including the *Hold* toggle) | `Tray.run` -> `ServiceHost.submit` (reply callback: `Tray._replied`) |
 | *Reload config* | `Tray.reload` -> `ServiceHost.reload`, the `reload` command (reply callback: `Tray._reloaded`: the error or the warnings, one notification) |
-| *Open layout* / *Open library* / *Settings…* | `Tray.open_window` -> `WindowOpener.open` |
+| *Open wallpaper_py* / *Library* / *Settings…* (the page: home, library, settings) | `Tray.open_window` -> `WindowOpener.open` |
 | `WindowOpener.failed` | `Tray.notify` |
 
 `ServiceWorker.start` creates the `CommandServer` once, before opening the
 service. `reload` is a command like the others (from the socket, the
-tray's *Reload config* or the settings window), run by
+tray's *Reload config* or the Settings page), run by
 `ServiceWorker.execute` itself rather than by `commands.execute`: it only
 closes and reopens the service, then ticks (which publishes the new
 overview) and replies with the warnings or the config error. The socket
@@ -144,23 +144,34 @@ service, which also ends every subscription.
 
 | Signal | Slot |
 |---|---|
-| `UiServer.show_requested` | `Windows.show` (creates the window or raises it) |
-| `SocketClient.overview_changed` | `UiServer.follow` (without --config, the windows use the app's config, which the overview names) |
-| `SocketClient.overview_changed`, `SocketClient.failed` | `LayoutWindow.show_overview`, `LayoutWindow.show_error` |
-| `SocketClient.overview_changed`, `SocketClient.failed` | `SettingsWindow.show_overview` (the first one names the file to edit; the monitors for the drawing), `SettingsWindow.show_error` |
-| `SocketClient.overview_changed`, `SocketClient.changed`, `SocketClient.failed` | the library placeholder (`PlaceholderWindow.show_overview`, `PlaceholderWindow.show_change`, `PlaceholderWindow.show_error`) |
-| `PlaylistCard.hovered`, `MonitorsView.hovered` (the pointer: a playlist, or None) | `LayoutWindow._hover` -> `MonitorsView.set_highlight`, `PlaylistCard.set_highlighted` |
-| `PlaylistCard.requested` (a button: playlist, command) | `LayoutWindow._send` -> `Client.run` (reply: `LayoutWindow.replied`) |
-| the layout window's countdown `QTimer` (every second, only while a playlist counts down) | `LayoutWindow.refresh_schedule` |
-| `ThumbnailLoader.loaded` (an image is ready) | `LayoutWindow._thumbnail_loaded` (the cards and `MonitorsView` that still show it) |
-| `PlaylistEditor.edited`, and the *General* tab's fields | `SettingsWindow._edited` -> `SettingsWindow._refresh` (problems, Save / Revert, the drawing) |
-| `MonitorsView.clicked` (a monitor's id; the settings window's drawing is clickable) | `SettingsWindow._monitor_clicked` -> `SettingsWindow.monitor_menu` (pops up) |
-| a playlist's *Monitors* menu `QMenu.aboutToShow` | `SettingsWindow._fill_monitors_menu` |
-| `QMenu.triggered` (either menu; the item's data says what) | `SettingsWindow._menu_triggered` -> `SettingsWindow.choose` |
-| `PlaylistEditor.delete_requested`, `PlaylistEditor.browse_requested` | `SettingsWindow._delete_playlist`, `SettingsWindow._browse_folder` |
-| *Save* / *Revert* / *Load the file again* | `SettingsWindow.save` (via `SettingsWindow._save_clicked`), `SettingsWindow.revert`, `SettingsWindow.load_file` |
-| `Windows.all_closed` (the last window closed) | `QApplication.quit` |
+| `UiServer.show_requested` (a page) | `MainWindow.open_page` (shows that page and brings the window to the front) |
+| `SocketClient.overview_changed` | `UiServer.follow` (without --config, the window uses the app's config, which the overview names) |
+| `SocketClient.overview_changed`, `SocketClient.failed` | `MainWindow._show_status`, `MainWindow._show_failure` (the `Sidebar`'s status line) |
+| `SocketClient.overview_changed`, `SocketClient.failed` | `HomePage.show_overview`, `HomePage.show_error` |
+| `SocketClient.overview_changed`, `SocketClient.failed` | `SettingsPage.show_overview` (the first one names the file to edit; the monitors for the drawing), `SettingsPage.show_error` |
+| `Sidebar.page_chosen` (a page's item clicked) | `MainWindow.show_page` |
+| `SettingsPage.modified` (unsaved edits come or go) | `MainWindow._modified` (the "*" in the title) |
+| `PlaylistRow.hovered`, `MonitorsView.hovered` (the pointer: a playlist, or None) | `HomePage._hover` -> `MonitorsView.set_highlight`, `PlaylistRow.set_highlighted` |
+| `PlaylistRow.requested` (a button: playlist, command) | `HomePage._send` -> `Client.run` (reply: `HomePage.replied`) |
+| Home's countdown `QTimer` (every second, only while a playlist counts down) | `HomePage.refresh_schedule` |
+| `ThumbnailLoader.loaded` (an image is ready) | `HomePage._thumbnail_loaded` (the rows and `MonitorsView` that still show it) |
+| `Tabs.current_changed` (Settings' sub-tabs) | `QStackedWidget.setCurrentIndex` |
+| `PlaylistEditor.edited`, and the *General* tab's fields | `SettingsPage._edited` -> `SettingsPage._refresh` (problems, summaries, Save / Revert, the status line, the drawing) |
+| `PlaylistEditor.open_requested` (a closed playlist's summary row clicked) | `SettingsPage.open_playlist` (the others close) |
+| `MonitorsView.clicked` (a monitor's id; the Settings drawing is clickable) | `SettingsPage._monitor_clicked` -> `SettingsPage.monitor_menu` (pops up) |
+| a playlist's *Monitors* menu `QMenu.aboutToShow` | `SettingsPage._fill_monitors_menu` |
+| `QMenu.triggered` (either menu; the item's data says what) | `SettingsPage._menu_triggered` -> `SettingsPage.choose` |
+| `PlaylistEditor.delete_requested`, `PlaylistEditor.browse_requested` | `SettingsPage._delete_playlist`, `SettingsPage._browse_folder` |
+| *Save* / *Revert* / *Load the file again* | `SettingsPage.save` (via `SettingsPage._save_clicked`), `SettingsPage.revert`, `SettingsPage.load_file` |
+| `MainWindow.closed` (the window closed) | `QApplication.quit` |
 | `SocketClient.ended` (the app quit) | `QApplication.quit` |
+
+The pages live as long as the window: switching pages keeps everything,
+unsaved settings included. The tones come from the application's palette
+(`theme.derive_tones`); the window sets them as palette roles, and a
+palette change (the system switching light / dark) reaches
+`MainWindow.changeEvent`, which derives them again; painted widgets read
+them when they paint.
 
 Thumbnail threads -> UI thread (queued): each job emits `_Relay.done`,
 which `ThumbnailLoader._done` receives on the UI thread; it makes the
@@ -254,26 +265,27 @@ sequenceDiagram
 
 (Each change and new overview also goes to subscribers, as in the CLI flow.)
 
-Opening a window (tray *Open layout*, or `wallpaper ui layout`):
+Opening the window on a page (tray *Open wallpaper_py*, *Library* or
+*Settings…*, or `wallpaper ui [home|library|settings]`):
 
 ```mermaid
 sequenceDiagram
     participant O as WindowOpener<br/>app, UI thread
-    participant U as UI process<br/>UiServer, Windows
+    participant U as UI process<br/>UiServer, MainWindow
     participant C as SocketClient<br/>UI process
     participant S as CommandServer<br/>app, service thread
 
-    O->>U: connect to the UI socket, write {"window": "layout"}
+    O->>U: connect to the UI socket, write {"page": "home"}
     alt a UI process runs
-        U->>U: UiServer.show_requested: Windows.show("layout")
+        U->>U: UiServer.show_requested: MainWindow.open_page("home")
         U->>O: {"error": null}, then close
     else nothing listens
-        O->>U: processes.start_detached(processes.ui_command): wallpaper ui layout
+        O->>U: processes.start_detached(processes.ui_command): wallpaper ui home
         U->>U: launcher.show_in_running_ui: none, so take the UI lock, listen
-        U->>U: Windows.show("layout")
+        U->>U: MainWindow.open_page("home")
         C->>S: SocketClient.start: subscribe
         S->>C: the current overview, then events
-        C->>U: SocketClient.overview_changed: the window redraws
+        C->>U: SocketClient.overview_changed: the pages redraw
     end
 ```
 
@@ -283,28 +295,29 @@ process asks first, blocking, before its event loop runs
 Two starting at once: the UI lock (`paths.ui_lock`) keeps one, the other
 asks it for up to 5 s. If the app isn't running, `SocketClient` starts it
 like the CLI does (`processes.autostart_command`, retried for 10 s) and
-shows an error in the window if it doesn't come up.
+shows an error in the window (the sidebar says "Not connected") if it
+doesn't come up.
 
-The layout window, from an overview to a click (all on the UI process's UI
-thread except the thumbnail jobs):
+Home, from an overview to a click (all on the UI process's UI thread
+except the thumbnail jobs):
 
 ```mermaid
 sequenceDiagram
     participant C as SocketClient
-    participant L as LayoutWindow
+    participant L as HomePage
     participant T as ThumbnailLoader<br/>(pool threads)
-    participant P as PlaylistCard
+    participant P as PlaylistRow
 
-    C->>L: overview_changed: LayoutWindow.show_overview
-    L->>P: PlaylistCard.show_view (text, chips, toggles: the overview's state)
+    C->>L: overview_changed: HomePage.show_overview
+    L->>P: PlaylistRow.show_view (text, chips, toggles: the overview's state)
     L->>T: ThumbnailLoader.want(current images)
     L->>C: Client.run(status): the schedule, one request at a time
-    T--)L: ThumbnailLoader.loaded(path): set on the cards still showing it
+    T--)L: ThumbnailLoader.loaded(path): set on the rows still showing it
     C->>L: the StatusResult: order, interval, time left
     Note over L: the countdown QTimer redraws the time left every second
-    P->>L: PlaylistCard.requested(playlist, "fav")
-    L->>C: Client.run(fav), reply to LayoutWindow.replied
-    C->>L: the reply: an error shows in the card
+    P->>L: PlaylistRow.requested(playlist, "fav")
+    L->>C: Client.run(fav), reply to HomePage.replied
+    C->>L: the reply: an error shows in the row
     C->>L: overview_changed: the star is now on
 ```
 
@@ -322,39 +335,41 @@ sequenceDiagram
   images no longer shown off the queue, and drops a result that arrives
   for one anyway. Results are cached by path.
 - A reply that arrives after the window closed is ignored (the callback
-  holds the window weakly); closing the window waits for running jobs
-  (`ThumbnailLoader.close`).
+  holds the page weakly); closing the window waits for running jobs
+  (`HomePage.shutdown` -> `ThumbnailLoader.close`).
 
-Saving in the settings window (the UI process edits config.toml like an
+Saving on the Settings page (the UI process edits config.toml like an
 editor would; the app only reads it again):
 
 ```mermaid
 sequenceDiagram
     participant C as SocketClient
-    participant S as SettingsWindow
+    participant S as SettingsPage
     participant F as config.toml
     participant W as ServiceWorker<br/>app, service thread
 
-    C->>S: overview_changed: SettingsWindow.show_overview (names the app's file)
-    S->>F: SettingsWindow.load_file: read it, as text
-    Note over S: edits: SettingsWindow._refresh validates every change,<br/>renders the new text and checks it with the core's parser
-    S->>F: SettingsWindow.save: still what was read? then write (temp + replace)
-    S->>C: Client.run(reload), reply to SettingsWindow.reloaded
+    C->>S: overview_changed: SettingsPage.show_overview (names the app's file)
+    S->>F: SettingsPage.load_file: read it, as text
+    Note over S: edits: SettingsPage._refresh validates every change,<br/>renders the new text and checks it with the core's parser
+    S->>F: SettingsPage.save: still what was read? then write (temp + replace)
+    S->>C: Client.run(reload), reply to SettingsPage.reloaded
     C->>W: reload: ServiceWorker.execute closes and reopens the service
-    W->>C: overview_changed (every window redraws), then the ReloadResult
+    W->>C: overview_changed (every page redraws), then the ReloadResult
     C->>S: the reply: "Saved; the app is using it", or the config error
 ```
 
 - Only what changed is written (`core.config_edit.render`, tomlkit): no
   change gives the identical file, an edit touches only its own lines, and
   comments stay.
-- The file changed on disk since the window read it (a hand edit): nothing
+- The file changed on disk since the page read it (a hand edit): nothing
   is written; the window says so and offers *Load the file again*
-  (`SettingsWindow.load_file`).
-- The layout window, if open, follows the reload through its overview like
-  after any other change; the settings window doesn't talk to it.
-- Closing with unsaved changes asks Save / Discard / Cancel (in
-  `SettingsWindow.closeEvent`, before `Window.closed`).
+  (`SettingsPage.load_file`).
+- Home follows the reload through its overview like after any other
+  change; the Settings page doesn't talk to it.
+- Closing the window with unsaved settings shows the Settings page and asks
+  Save / Discard / Cancel (`MainWindow.closeEvent` ->
+  `SettingsPage.confirm_close`, before `MainWindow.closed`); Cancel, or a
+  Save that can't happen, keeps the window open.
 
 Shutdown of the app (tray *Quit* or Ctrl+C): `app.quit()` ends the UI event
 loop -> `ServiceHost.shutdown` emits `_stop` (queued) and waits for the
@@ -363,7 +378,7 @@ every subscription), then the service (database, backend) and the COM
 scope, and quits its thread. In the UI process the closed subscription
 emits `SocketClient.ended`, which quits it too.
 
-Shutdown of the UI process: its last window closes -> `Windows.all_closed`
+Shutdown of the UI process: its window closes -> `MainWindow.closed`
 -> `QApplication.quit` -> `UiServer` closes first (no new show requests),
 then the subscription; the lock is released and the process exits, which
 gives its memory back. The app runs on.

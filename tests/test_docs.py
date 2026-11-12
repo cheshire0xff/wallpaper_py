@@ -12,13 +12,12 @@ from wallpaper_py.app.tray import Tray
 from wallpaper_py.app.ui import launcher
 from wallpaper_py.app.ui.arrangement import MonitorsView
 from wallpaper_py.app.ui.client import Client, SocketClient
-from wallpaper_py.app.ui.layout import LayoutWindow, PlaylistCard
+from wallpaper_py.app.ui.home import HomePage, PlaylistRow
 from wallpaper_py.app.ui.launcher import UiServer, WindowOpener
-from wallpaper_py.app.ui.process import Windows
-from wallpaper_py.app.ui.settings import SettingsWindow
+from wallpaper_py.app.ui.settings import SettingsPage
 from wallpaper_py.app.ui.settings_form import PlaylistEditor
 from wallpaper_py.app.ui.thumbnails import ThumbnailLoader
-from wallpaper_py.app.ui.window import PlaceholderWindow
+from wallpaper_py.app.ui.window import MainWindow, Sidebar
 from wallpaper_py.app.worker import ServiceHost, ServiceWorker
 from wallpaper_py.core import paths
 
@@ -31,21 +30,21 @@ OWNERS: dict[str, type | ModuleType] = {
     "cli": cli,
     "Client": Client,
     "CommandServer": CommandServer,
-    "LayoutWindow": LayoutWindow,
+    "HomePage": HomePage,
     "MonitorsView": MonitorsView,
-    "PlaceholderWindow": PlaceholderWindow,
-    "PlaylistCard": PlaylistCard,
+    "MainWindow": MainWindow,
+    "PlaylistRow": PlaylistRow,
     "PlaylistEditor": PlaylistEditor,
     "ScreenWatcher": ScreenWatcher,
     "ServiceHost": ServiceHost,
     "ServiceWorker": ServiceWorker,
-    "SettingsWindow": SettingsWindow,
+    "SettingsPage": SettingsPage,
+    "Sidebar": Sidebar,
     "SocketClient": SocketClient,
     "ThumbnailLoader": ThumbnailLoader,
     "Tray": Tray,
     "UiServer": UiServer,
     "WindowOpener": WindowOpener,
-    "Windows": Windows,
     "commands": commands,
     "ipc": ipc,
     "launcher": launcher,
