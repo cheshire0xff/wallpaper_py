@@ -354,29 +354,6 @@ Order for the rest of the phase, one session each:
 4. **One window with a sidebar** (Home, Library, Settings), as in the
    mockups (docs/design/): replaces the three windows. **Done** (awaiting
    review and the desktop checks, section 8).
-5. **Virtual backend and page renders** (decided after step 4, before
-   Phase 5; the library's 20k-image grid is where they pay off):
-   - A virtual backend that is part of the app, not only of the tests:
-     `--backend virtual` (or an environment variable) takes made-up
-     monitors from a small file (ids, names, sizes, positions, attached
-     or not) and "sets" wallpapers by recording them, never touching the
-     desktop. It runs with its own data dir and socket names, so it never
-     meets a real running app. Much of it exists in `tests/fakes.py`.
-   - End-to-end tests on it: the real app process, the real UI process
-     and the CLI over real sockets (today each process is tested alone
-     against fakes; the wiring between them only by hand). Monitor
-     scenarios become data: the OLED switched off and back, 4K + a
-     vertical monitor, five monitors.
-   - A demo mode from the same pieces: screenshots, the README, working on
-     Linux without KDE.
-   - `scripts/render_pages.py`: every page from fixed demo data, offscreen
-     (no display needed, also on Ubuntu CI), dark and light, at 100 % and
-     150 %, to PNGs. CI uploads them as an artifact on each push, to look
-     at, not pass / fail.
-   - Not now: golden-image tests (comparing renders with approved images).
-     They fail on every intended change of the look, Qt upgrade and font
-     smoothing difference between machines; maybe once the look settles,
-     after Phase 5.
 
 Pick, hold and manual mode, implemented (decisions made while building it):
 
@@ -650,3 +627,28 @@ runs anyway; the UI process may not), on any change the playlist makes:
 scheduled, next / prev / pick. One short bundled sound, through Qt
 Multimedia (`QSoundEffect`); a custom sound file per playlist only if
 missed.
+
+Virtual backend and page renders (nice to have, for testing; not needed
+before anything else):
+
+- A virtual backend that is part of the app, not only of the tests:
+  `--backend virtual` (or an environment variable) takes made-up
+  monitors from a small file (ids, names, sizes, positions, attached
+  or not) and "sets" wallpapers by recording them, never touching the
+  desktop. It runs with its own data dir and socket names, so it never
+  meets a real running app. Much of it exists in `tests/fakes.py`.
+- End-to-end tests on it: the real app process, the real UI process
+  and the CLI over real sockets (today each process is tested alone
+  against fakes; the wiring between them only by hand). Monitor
+  scenarios become data: the OLED switched off and back, 4K + a
+  vertical monitor, five monitors.
+- A demo mode from the same pieces: screenshots, the README, working on
+  Linux without KDE.
+- `scripts/render_pages.py`: every page from fixed demo data, offscreen
+  (no display needed, also on Ubuntu CI), dark and light, at 100 % and
+  150 %, to PNGs. CI uploads them as an artifact on each push, to look
+  at, not pass / fail.
+- Not now: golden-image tests (comparing renders with approved images).
+  They fail on every intended change of the look, Qt upgrade and font
+  smoothing difference between machines; maybe once the look settles,
+  after Phase 5.

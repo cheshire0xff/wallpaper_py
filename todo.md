@@ -56,3 +56,5 @@ the wallpapers.
 1. Library grid: fade in from black when a thumbnail loads (like the phone app).
 1. Sound notification when the wallpaper changes (I have this on Linux already), so I notice new images.
    On / off per playlist (in the config and the settings panel), off by default.
+1. Virtual backend (made-up monitors, nothing set on the real desktop) for end-to-end
+   tests and a demo mode, and page renders uploaded by CI (docs/plan.md, Phase 7).
