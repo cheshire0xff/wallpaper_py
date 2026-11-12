@@ -210,6 +210,42 @@ Look (decided, from a mockup the user approved; it holds for every window):
     name. A toggle that is on is filled with the accent.
 - The title bar is the OS's own.
 
+One window (decided after step 3, from an approved mockup; replaces the
+three separate windows):
+
+- **One main window with a sidebar** on the left: *Home*, *Library*,
+  *Settings*, each an icon (Lucide `house`, `images`, `sliders-horizontal`)
+  and a label. The selected page: an accent bar on its left edge, a faint
+  accent fill, a bold label. App-wide status ("Rotation active" / paused)
+  at the bottom of the sidebar.
+- **Home** is the former layout window (*Monitors* and *Playlists*
+  sections, unchanged). `wallpaper ui [home|library|settings]` and the
+  tray's entries open the window on that page (one *Open wallpaper_py*
+  for Home, plus *Library* and *Settings…*); a running window comes to
+  the front on that page. Still the on-demand UI process; still one at
+  most.
+- **Dark tones** (dark mode is the one that matters; light mode only has
+  to stay usable): the sidebar is the page's colour, set apart only by a
+  thin lighter line (also under the title area); the page a shade darker
+  than Qt's default dark window. Image panels (monitor drawing, grids)
+  are a little *lighter* than the page in dark mode, not a dark well;
+  light mode keeps a dark panel behind images.
+- **Settings as rows, no boxes**: no cards or outlines. Each setting is a
+  row: its name (and a one-line description, muted) on the left, its
+  control on the right, all controls in one column. Fields are a filled
+  background without a border. Sections have a heading and a thin divider
+  between them. One playlist is open at a time; the others collapse to a
+  summary row ("ZeroMOD · sorted · every 10m · fill") that opens on click.
+  Secondary actions are accent-coloured text buttons (*Browse…*, *Delete
+  playlist*, *+ Add playlist*). Save / Revert and the status line sit in a
+  footer bar. Sub-tabs (Playlists, General, About) with an accent
+  underline.
+- **Interval**: a *Changes* row, *Every* + a duration (e.g. `25m`, "of
+  active time"), or *Manually* (the duration hidden); no checkbox.
+- **Library** (Phase 5) follows the same page pattern: tabs with an
+  accent underline, a toolbar (filter field, sort, *Hide removed* switch),
+  the grid on the lighter panel tone, a slim fast-scroll bar.
+
 Manual mode, hold and pick (decided; kept deliberately simple):
 
 - **A playlist is the unit; a mirrored group always mirrors.** No
