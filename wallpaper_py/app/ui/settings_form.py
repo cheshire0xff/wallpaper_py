@@ -123,7 +123,8 @@ def borderless(field: QLineEdit | QComboBox) -> QLineEdit | QComboBox:
     field.setFrame(False)
     field.setFixedHeight(theme.FIELD_HEIGHT)
     if isinstance(field, QLineEdit):
-        field.setTextMargins(theme.space(0.5), 0, theme.space(0.5), 0)
+        padding = theme.FIELD_PADDING
+        field.setTextMargins(padding, 0, padding, 0)
     return field
 
 
@@ -135,7 +136,7 @@ def line_edit(text: str, name: str, parent: QWidget) -> QLineEdit:
 
 
 def combo(parent: QWidget, name: str) -> QComboBox:
-    box = QComboBox(parent)
+    box = theme.FieldCombo(parent)
     box.setAccessibleName(name)
     borderless(box)
     return box
@@ -331,7 +332,7 @@ class PlaylistEditor(QWidget):
                 self.mode_combo.count() - 1, description, Qt.ItemDataRole.ToolTipRole
             )
         select(self.mode_combo, playlist.mode)
-        self.monitors_label = QLabel(self)
+        self.monitors_label = theme.ValueLabel(parent=self)
         self.monitors_label.setWordWrap(True)
         self.monitors_button = theme.TextButton("Choose…", self)
         self.monitors_menu = QMenu(self)

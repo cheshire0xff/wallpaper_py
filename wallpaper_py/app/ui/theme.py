@@ -20,8 +20,10 @@ framework.
 - Icons: bundled Lucide SVGs (`icons/`, ISC licence kept with them),
   tinted when drawn (`tinted_pixmap`, `icon`); a toggle that is on shows
   its icon filled.
-- Widgets: `IconButton` (borderless; on: accent icon on a faint accent
-  fill), `TextButton` (accent text, for secondary actions), `Tabs`
+- Widgets: `FieldCombo` (a drop-down whose text starts where a line
+  edit's does), `ValueLabel` (a read-only value lined up with them),
+  `IconButton` (borderless; on: accent icon on a faint accent fill),
+  `TextButton` (accent text, for secondary actions), `Tabs`
   (sub-tabs with an accent underline), `Divider` (the thin line), `Panel`
   (the lighter panel behind images), `Chip`, `ImageView` (an image
   letterboxed on the panel tone).
@@ -36,7 +38,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from importlib import resources
 
-from PySide6.QtCore import QByteArray, QEvent, QRectF, QSize, Qt, Signal, Slot
+from PySide6.QtCore import QByteArray, QEvent, QRect, QRectF, QSize, Qt, Signal, Slot
 from PySide6.QtGui import (
     QColor,
     QEnterEvent,
@@ -57,9 +59,14 @@ from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QAbstractButton,
     QButtonGroup,
+    QComboBox,
     QHBoxLayout,
     QLabel,
     QSizePolicy,
+    QStyle,
+    QStyleOptionComboBox,
+    QStyleOptionFrame,
+    QStylePainter,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -72,6 +79,10 @@ ICON_SIZE = 20
 SMALL_ICON = 18  # in icon buttons
 BODY_POINTS = 10.5  # Windows 11's body text (14 px); a smaller system font grows
 FIELD_HEIGHT = 34
+FIELD_PADDING = 4  # px before a borderless field's text (its text margin)
+# QLineEdit's own space before its text, inside its text margins (Qt's
+# QLineEditPrivate::horizontalMargin; the same since Qt 4).
+LINE_EDIT_MARGIN = 2
 CONTROL_WIDTH = 360  # the settings' control column
 PAGE_MARGIN = 32  # left / right of a page's content
 PAGE_TOP = 20
@@ -678,6 +689,78 @@ class Panel(QWidget):
         painter.setBrush(tones().panel)
         painter.drawRoundedRect(QRectF(self.rect()), RADIUS, RADIUS)
         painter.end()
+
+
+def field_text_x(widget: QWidget) -> int:
+    """
+    Where a borderless line edit's text starts, in `widget`'s style: the
+    style's line-edit contents, then FIELD_PADDING, then QLineEdit's own
+    margin (Fusion: 0 + 4 + 2; Windows 11: 4 + 4 + 2).
+    """
+    option = QStyleOptionFrame()
+    option.initFrom(widget)
+    option.lineWidth = 0  # borderless
+    option.midLineWidth = 0
+    contents = widget.style().subElementRect(
+        QStyle.SubElement.SE_LineEditContents, option, None
+    )
+    return contents.x() + FIELD_PADDING + LINE_EDIT_MARGIN
+
+
+class FieldCombo(QComboBox):
+    """
+    A drop-down whose text starts at the same x as a borderless line
+    edit's (`field_text_x`), so all values in a column line up: styles put a
+    combo box's label a few pixels from where they put a line edit's text
+    (Windows 11: 7 against 10). The style draws the box and its arrow; the
+    text is drawn here, in the Text colour, as a line edit's is.
+    """
+
+    def paintEvent(self, event: QPaintEvent) -> None:  # pylint: disable=invalid-name
+        del event
+        painter = QStylePainter(self)
+        painter.setPen(self.palette().color(QPalette.ColorRole.Text))
+        option = QStyleOptionComboBox()
+        self.initStyleOption(option)
+        text, option.currentText = option.currentText, ""
+        painter.drawComplexControl(QStyle.ComplexControl.CC_ComboBox, option)
+        painter.drawControl(QStyle.ControlElement.CE_ComboBoxLabel, option)
+        field = self.style().subControlRect(
+            QStyle.ComplexControl.CC_ComboBox,
+            option,
+            QStyle.SubControl.SC_ComboBoxEditField,
+            self,
+        )
+        left = field_text_x(self)
+        area = QRect(left, field.y(), max(field.right() - left, 0), field.height())
+        group = (
+            QPalette.ColorGroup.Active
+            if self.isEnabled()
+            else QPalette.ColorGroup.Disabled
+        )
+        painter.setPen(self.palette().color(group, QPalette.ColorRole.Text))
+        elided = self.fontMetrics().elidedText(
+            text, Qt.TextElideMode.ElideRight, area.width()
+        )
+        flags = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        painter.drawText(area, int(flags), elided)
+        painter.end()
+
+
+class ValueLabel(QLabel):
+    """A read-only value in a column of fields: its text starts where theirs do."""
+
+    def __init__(self, text: str = "", parent: QWidget | None = None) -> None:
+        super().__init__(text, parent)
+        self._align()
+
+    def _align(self) -> None:
+        self.setContentsMargins(field_text_x(self), 0, 0, 0)
+
+    def changeEvent(self, event: QEvent) -> None:  # pylint: disable=invalid-name
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.StyleChange:
+            self._align()
 
 
 class Chip(QLabel):

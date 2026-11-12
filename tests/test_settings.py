@@ -8,13 +8,13 @@ one playlist open at a time, the Changes row, and the About tab.
 from __future__ import annotations
 
 import difflib
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QUrl
 from PySide6.QtGui import QAction, QGuiApplication
-from PySide6.QtWidgets import QMenu
+from PySide6.QtWidgets import QMenu, QStyleFactory, QWidget
 from pytestqt.qtbot import QtBot
 
 from wallpaper_py.app import ipc
@@ -22,7 +22,12 @@ from wallpaper_py.app.ui.about import existing_folder, version_text
 from wallpaper_py.app.ui.client import ReplyCallback, SocketClient
 from wallpaper_py.app.ui.settings import Choice, Dialogs, SettingsPage
 from wallpaper_py.app.ui import theme
-from wallpaper_py.app.ui.settings_form import PlaylistEditor, change_summary
+from wallpaper_py.app.ui.settings_form import (
+    PlaylistEditor,
+    change_summary,
+    combo,
+    line_edit,
+)
 from wallpaper_py.core import paths
 from wallpaper_py.core.config_edit import DIRECTORY, IDLE, INTERVAL, MONITORS, NAME
 from wallpaper_py.protocol import (
@@ -447,6 +452,54 @@ def test_the_status_line_says_what_changed(window: SettingsPage) -> None:
     assert change_summary(base, edited) == (
         "interval, mode of konachan, new playlist playlist, deleted fantasy, 1 more"
     )
+
+
+# -- the control column ---------------------------------------------------------------
+
+
+def text_x(widget: QWidget, show: Callable[[str], None]) -> float:
+    """Where `widget` starts drawing a text (logical px): the first column
+    that differs between it with the text and without."""
+    show("Shuffle")
+    with_text = widget.grab().toImage()
+    show("")
+    without = widget.grab().toImage()
+    for x in range(with_text.width()):
+        for y in range(with_text.height()):
+            if with_text.pixelColor(x, y) != without.pixelColor(x, y):
+                return x / with_text.devicePixelRatio()
+    raise AssertionError("no text drawn")
+
+
+@pytest.mark.parametrize(
+    "style_name",
+    [
+        n
+        for n in ("Fusion", "windows11")
+        if n.lower() in map(str.lower, QStyleFactory.keys())
+    ],
+)
+def test_values_in_the_control_column_start_at_the_same_x(
+    qtbot: QtBot, style_name: str
+) -> None:
+    style = QStyleFactory.create(style_name)
+    parent = QWidget()
+    qtbot.addWidget(parent)
+    edit = line_edit("", "a field", parent)
+    box = combo(parent, "a drop-down")
+    box.addItem("")
+    value = theme.ValueLabel(parent=parent)
+    for widget in (edit, box, value):
+        widget.setStyle(style)
+        widget.resize(theme.CONTROL_WIDTH, theme.FIELD_HEIGHT)
+
+    def show_in_box(text: str) -> None:
+        box.setItemText(0, text)
+
+    edit_x = text_x(edit, edit.setText)
+    assert text_x(box, show_in_box) == pytest.approx(edit_x, abs=1)
+    assert text_x(value, value.setText) == pytest.approx(edit_x, abs=1)
+    assert edit_x == theme.field_text_x(edit)  # where it is meant to start
 
 
 # -- monitors ------------------------------------------------------------------------

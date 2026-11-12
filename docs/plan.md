@@ -531,7 +531,12 @@ One window, implemented (decisions made while building it):
   ButtonText roles (its disabled look stays the plain field tone). With
   Qt's windows11 style this gives the borderless filled fields of the
   mockup; Fusion (tests, offscreen) draws the combo boxes with a slight
-  bevel.
+  bevel. Styles put a combo box's text a few pixels from a line edit's
+  (Windows 11: about 7 px against 10), so the drop-downs are
+  `theme.FieldCombo`: the style draws the box and arrow, the text is
+  drawn at `theme.field_text_x` (the style's line-edit contents + our
+  4 px text margin + QLineEdit's own 2 px), as are read-only values
+  (`theme.ValueLabel`). Polish after desktop review; still no stylesheet.
 - **Text size**: Qt's default font on Windows is 9 pt (12 px); Windows 11's
   body text (and the mockup's) is 14 px. The UI process raises its font to
   at least 10.5 pt (`theme.body_font`), so a larger system font is kept.
@@ -553,7 +558,10 @@ One window, implemented (decisions made while building it):
   monitors). The status line in the footer says what changed ("Changes:
   interval of konachan. Not saved yet.", `change_summary`) or why Save is
   off. The drawing here is smaller, with one-line captions ("PLX2783H ·
-  konachan"). Sub-tabs are our own `theme.Tabs` (QTabWidget can't be
+  konachan"); a monitor too narrow for that gets two lines (the name, then
+  the playlist, each elided; at first the playlist was dropped, which at
+  150 % scaling hid it), and room for two lines is kept only when some
+  caption needs it. Sub-tabs are our own `theme.Tabs` (QTabWidget can't be
   made to look like the mockup without a stylesheet).
 - **Closing** with unsaved settings: `MainWindow.closeEvent` shows the
   Settings page, then `SettingsPage.confirm_close` asks Save / Discard /

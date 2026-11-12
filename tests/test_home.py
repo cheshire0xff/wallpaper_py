@@ -21,6 +21,7 @@ from wallpaper_py.app.ui.arrangement import (
     MonitorsView,
     arrange,
     caption,
+    compact_caption,
     playlists_by_monitor,
 )
 from wallpaper_py.app.ui.home import (
@@ -171,6 +172,101 @@ def test_captions_and_monitors_in_no_playlist() -> None:
     assert caption(AW, "konachan") == ("AW3225QF", "3840×2160 · konachan")
     assert caption(TV, by_monitor.get("tv")) == ("TV", "1920×1080 · no playlist")
     assert caption(ZERO, "fantasy") == ("ZeroMOD", "off · fantasy")
+
+
+def compact_view(qtbot: QtBot, overview: Overview, width: int) -> MonitorsView:
+    """Settings' drawing: compact captions."""
+    view = MonitorsView()
+    qtbot.addWidget(view)
+    view.set_compact(True)
+    view.resize(width, 200)
+    view.set_heights(150, 2000, 0.3)  # taller as it widens: wide enough fits
+    view.show_overview(overview)
+    return view
+
+
+def captions(view: MonitorsView) -> dict[str, tuple[str, ...]]:
+    return {p.monitor.id: view.caption_lines(p) for p in view.placed()}
+
+
+def assert_captions_overlap_no_monitor(view: MonitorsView) -> None:
+    placed = view.placed()
+    for item in placed:
+        area = view.caption_area(item)
+        assert area.width == pytest.approx(item.box.width)  # never beside
+        assert area.bottom <= view.height() + 1e-6
+        for other in placed:
+            if other is not item:
+                assert not area.intersects(other.box), (item.monitor.id, other)
+
+
+def narrowest_one_line(qtbot: QtBot, overview: Overview) -> int:
+    """The narrowest drawing in which every compact caption fits one line
+    (found by trying, so the test doesn't depend on the font)."""
+    for width in range(200, 4000, 10):
+        view = compact_view(qtbot, overview, width)
+        if all(len(lines) == 1 for lines in captions(view).values()):
+            return width
+    raise AssertionError("captions never fit on one line")
+
+
+def test_compact_captions_fit_on_one_line_when_they_can(qtbot: QtBot) -> None:
+    pair = Overview(playlists=(KONACHAN,), monitors=(AW, PLX))
+    view = compact_view(qtbot, pair, narrowest_one_line(qtbot, pair))
+    assert compact_caption(PLX, "konachan") == "PLX2783H · konachan"
+    assert captions(view) == {
+        "aw": ("AW3225QF · konachan",),
+        "plx": ("PLX2783H · konachan",),
+    }
+    assert_captions_overlap_no_monitor(view)
+    view.grab()
+
+
+def test_compact_captions_take_two_lines_when_one_is_too_wide(
+    qtbot: QtBot,
+) -> None:
+    pair = Overview(playlists=(KONACHAN,), monitors=(AW, PLX))
+    width = narrowest_one_line(qtbot, pair)
+    wide = compact_view(qtbot, pair, width)
+    one_line = wide.caption_area(wide.placed()[0]).height
+    view = compact_view(qtbot, pair, width - 10)  # the PLX2783H just too narrow
+    lines = captions(view)
+    # The playlist stays (that is what this drawing is for), on its own line.
+    assert lines["plx"] == ("PLX2783H", "konachan")
+    assert lines["aw"] == ("AW3225QF · konachan",)  # twice as wide: one line
+    # Room for two lines under every monitor, and no overlap.
+    assert view.caption_area(view.placed()[0]).height > one_line
+    assert_captions_overlap_no_monitor(view)
+    view.grab()
+
+
+def test_compact_captions_elide_each_line_and_stay_off_other_monitors(
+    qtbot: QtBot,
+) -> None:
+    long_name = KONACHAN.model_copy(update={"name": "a-rather-long-playlist-name"})
+    top = DesktopMonitor(
+        id="t",
+        name="TopMonitor",
+        geometry=Geometry(x=0, y=-1080, width=1920, height=1080),
+    )
+    bottom = DesktopMonitor(
+        id="b", name="Bottom", geometry=Geometry(x=0, y=0, width=1920, height=1080)
+    )
+    members = (
+        MonitorView(selector="T", name="TopMonitor", attached=True, id="t"),
+        MonitorView(selector="B", name="Bottom", attached=True, id="b"),
+    )
+    stacked = Overview(
+        playlists=(long_name.model_copy(update={"monitors": members}),),
+        monitors=(top, bottom),
+    )
+    view = compact_view(qtbot, stacked, 600)
+    lines = captions(view)
+    name, playlist = lines["t"]  # two lines: each elided, none dropped
+    assert name == "TopMonitor" or (name.startswith("Top") and name.endswith("…"))
+    assert playlist.startswith("a-") and playlist.endswith("…")
+    assert_captions_overlap_no_monitor(view)  # inside the top one: a monitor below
+    view.grab()
 
 
 def test_monitors_view_draws_every_monitor(qtbot: QtBot) -> None:

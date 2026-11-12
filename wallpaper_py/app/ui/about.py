@@ -17,7 +17,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, QUrl, Slot
 from PySide6.QtGui import QDesktopServices, QGuiApplication
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 
 from ...core import paths
 from ...core.config import Config
@@ -105,7 +105,7 @@ class AboutPage(QWidget):
         self._open_url = open_url
         self.locations: list[Location] = []
 
-        self.version = QLabel(version, self)
+        self.version = theme.ValueLabel(version, self)
         self.version.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
         )
