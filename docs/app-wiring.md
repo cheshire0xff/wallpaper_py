@@ -208,13 +208,15 @@ One id, one hop: `connection_id` tells `CommandServer` which socket gets
 the reply. The request runs as soon as the service thread reads it, between
 ticks.
 
-If no app answers, the CLI starts one and then sends: `ipc.send` returns
-None -> `processes.start_detached` runs `processes.autostart_command` (the
-tray app, `pythonw` on Windows), so it outlives the CLI -> `ipc.send` again
-every 0.2 s for up to 10 s; if nothing answers, the CLI prints
-`could not start wallpaper_py; see <log file>`. Two CLIs may both start an
-app: the instance lock keeps the first, the other exits, and both CLIs reach
-the one that runs. `list` and `set` never need the app.
+If no app answers, the CLI runs the command itself and starts nothing
+(`cli.send_to_app`): `ipc.send` returns None -> `InstanceLock.acquire()`
+on the app's lock -> `Context.run_here` (`commands.open_service` +
+`commands.execute`, no tick) -> lock released, the CLI exits. The lock held
+but no answer (an app starting, or another CLI's command): `ipc.send`, then
+the lock, again every 0.2 s for up to 10 s, then
+`wallpaper_py is starting or busy and did not answer`. An app starting
+while a CLI holds the lock waits up to 5 s for it (`runtime.LOCK_WAIT_S`).
+`list` and `set` never need the app.
 
 A tray click goes through `ServiceHost`, so the reply comes back to the UI
 thread:
@@ -294,7 +296,7 @@ process asks first, blocking, before its event loop runs
 (`launcher.show_in_running_ui`); if another UI process answers, it exits.
 Two starting at once: the UI lock (`paths.ui_lock`) keeps one, the other
 asks it for up to 5 s. If the app isn't running, `SocketClient` starts it
-like the CLI does (`processes.autostart_command`, retried for 10 s) and
+(`processes.autostart_command`, detached, retried for 10 s) and
 shows an error in the window (the sidebar says "Not connected") if it
 doesn't come up.
 

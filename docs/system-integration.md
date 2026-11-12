@@ -63,15 +63,15 @@ environment in the same place (`uv sync`) is fine.
 
 - **The app** (`wallpaper tray`, or `wallpaper run` in a terminal): the
   one process that changes wallpapers. It shows the tray icon and listens
-  for commands. Only one runs per user; a second one exits at once (it
+  for commands. Only one runs per user; a second one exits (it
   holds `app.lock` in the state folder).
 - **The windows** (`wallpaper ui …`): a separate process, started when you
   open a window and gone when you close the last one, so it uses no memory
   while closed. At most one runs (`ui.lock`).
 - **The CLI** (`wallpaper next`, `status`, …): sends one command to the
-  app and prints the answer. If the app isn't running, it starts it first
-  (the same command as start at login), so a CLI command may leave the tray
-  icon behind: that is the app, now running.
+  app and prints the answer. If the app isn't running, it runs the command
+  itself and exits; nothing is left running, and nothing rotates until the
+  app is started (`wallpaper tray`, or at login).
 
 They talk over a local socket: a named pipe on Windows, a socket file in
 the temp folder on Linux. Only your user account can connect to it; it is not a

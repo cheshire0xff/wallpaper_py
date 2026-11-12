@@ -5,7 +5,8 @@ lines that start them, starting one detached, logging, Ctrl+C.
 Two long-lived processes exist: the app (`wallpaper tray` / `run`: the
 service, the tray, the command socket) and, on demand, the UI process
 (`wallpaper ui`: the window). Each starts the other when needed: the tray
-opens windows, the UI process starts the app if it isn't running.
+opens windows, the UI process starts the app if it isn't running. (The CLI
+never starts the app: without one, it runs its command itself.)
 
 No Qt at import time except in `quit_on_interrupt`, so the CLI can use the
 rest cheaply.
@@ -48,8 +49,7 @@ def _python_command(config_path: Path) -> list[str]:
 
 def autostart_command(config_path: Path) -> list[str]:
     """
-    How login (and the CLI or the UI process, if no app runs) starts the
-    tray app.
+    How login (and the UI process, if no app runs) starts the tray app.
     """
     return [*_python_command(config_path), "tray"]
 

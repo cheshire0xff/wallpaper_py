@@ -147,13 +147,13 @@ the first is the current overview. The protocol only adds things; clients
 ignore unknown fields. The JSON Schema (`docs/protocol.schema.json`) is
 generated from the models and checked by a test.
 
-CLI: playlist commands always run in the app, sent as one line of JSON
-(`ipc.py`, pydantic models) and run with `commands.execute()`. If no app
-answers, the CLI starts the tray app detached (the autostart command;
-`pythonw` on Windows, a new session elsewhere, so it outlives the CLI) and
-retries for up to 10 s; if it doesn't come up, it points to the log file.
-Two CLIs racing both start an app; the instance lock keeps one and both
-reach it. `list` and `set` don't need the app. A request naming a
+CLI: playlist commands run in the app if it runs, sent as one line of
+JSON (`ipc.py`, pydantic models) and run with `commands.execute()`. If no
+app answers, the CLI takes the app's instance lock and runs the command
+itself (the same `commands.execute()`, no tick first), then exits: it never
+starts the app, so nothing keeps running after a command. The lock keeps
+one writer: two CLIs take turns, and an app starting meanwhile waits up to
+5 s for it. `list` and `set` don't need the app. A request naming a
 different config file than the app's is refused; a request without one
 (the user gave no --config) means whatever config the app runs. The client blocks
 without an event loop; PySide keeps the GIL while it waits, so it must run
@@ -219,8 +219,9 @@ State lives in two places, by design:
   cursor per playlist (ordered by an explicit `position`, not by id, so a
   pick can go between older entries), the shuffle deck, active seconds
   since the last change, the hold flag, and which image each monitor was
-  given. It is the single source of truth. The app is its only writer (CLI
-  commands go through its socket, starting the app if needed). WAL mode
+  given. It is the single source of truth. Whoever holds the instance lock is
+  its only writer: the app, or a CLI command run while no app runs (with
+  the app running, CLI commands go through its socket). WAL mode
   lets later read-only windows read alongside. Pre-release, the schema
   changes in place: a database of another schema version is refused with
   a message to delete it (only history and shuffle state are lost).

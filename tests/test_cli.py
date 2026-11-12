@@ -1,14 +1,12 @@
 import logging
-import sys
-from functools import partial
 from pathlib import Path
 
 import pytest
 from PIL import Image
 
 from wallpaper_py import cli
+from wallpaper_py.app.instance import InstanceLock
 from wallpaper_py.app.ui.launcher import PAGE_NAMES
-from wallpaper_py.commands import execute, open_service
 from wallpaper_py.core import paths
 from wallpaper_py.core.backend import Backend
 from wallpaper_py.core.config import Order
@@ -22,7 +20,6 @@ from wallpaper_py.protocol import (
     ReloadRequest,
     ReloadResult,
     RemoveResult,
-    Reply,
     StatusResult,
 )
 
@@ -132,22 +129,11 @@ class TestPlaylistCommands:
         return config
 
     def run(self, backend: FakeBackend, config: Path, *argv: str) -> int:
-        """Playlist commands go to a stand-in for the app, in this process."""
-
-        def app_client(request: CommandRequest, config_path: Path | None) -> Reply:
-            assert config_path == config  # --config was given, so it is sent
-            assert not isinstance(request, ReloadRequest)  # the app runs that
-            with open_service(config_path, backend, FakePresence()) as service:
-                return execute(service, request).reply
-
-        def no_backend() -> Backend:
-            raise AssertionError("playlist commands must not use a backend")
-
+        """No app is running: playlist commands run here, as in real use."""
         return cli.main(
             ["--config", str(config), *argv],
-            backend_factory=no_backend if argv[0] != "run" else lambda: backend,
+            backend_factory=lambda: backend,
             presence_factory=FakePresence,
-            app_client=app_client,
         )
 
     def test_run_shows_the_first_image(
@@ -190,7 +176,7 @@ class TestPlaylistCommands:
         assert "walls  (sorted, every 10m, as is)" in out
         assert "Main (attached)" in out
         assert "upcoming:  b.jpg, c.jpg, a.jpg" in out
-        assert "Rotation active" in out
+        assert out.rstrip().endswith(cli.NOT_RUNNING)  # run here: no app
 
     def test_pick_hold_resume(
         self,
@@ -245,37 +231,41 @@ class TestPlaylistCommands:
         assert "attached" in capsys.readouterr().err
 
 
-def test_playlist_command_explains_when_the_app_does_not_start(
+def test_playlist_command_gives_up_while_the_lock_stays_held(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(cli, "START_TIMEOUT_S", 0.5)
-    started: list[Path] = []
-
-    def app_that_exits(config: Path) -> list[str]:
-        started.append(config)
-        return [sys.executable, "-c", "pass"]
-
-    client = partial(cli.send_to_app, app_command=app_that_exits)
-    assert cli.main(["next"], app_client=client) == 1
-    assert started == [paths.config_file()]
+    """No app answers, yet the lock is held (a stuck app or command)."""
+    monkeypatch.setattr(cli, "WAIT_TIMEOUT_S", 0.5)
+    lock = InstanceLock(paths.instance_lock())
+    assert lock.acquire()
+    try:
+        assert cli.main(["next"]) == 1
+    finally:
+        lock.release()
     assert capsys.readouterr().err == (
-        f"error: could not start wallpaper_py; see {paths.log_file()}\n"
+        "error: wallpaper_py is starting or busy and did not answer; try again "
+        f"(see {paths.log_file()})\n"
     )
 
 
-def test_verbose_tells_how_the_app_was_reached(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+def test_verbose_tells_how_the_command_ran(
+    backend: FakeBackend, caplog: pytest.LogCaptureFixture
 ) -> None:
-    monkeypatch.setattr(cli, "START_TIMEOUT_S", 0.5)
-    client = partial(
-        cli.send_to_app, app_command=lambda _: [sys.executable, "-c", "pass"]
-    )
     with caplog.at_level(logging.INFO, logger="wallpaper_py"):
-        assert cli.main(["--verbose", "next"], app_client=client) == 1
+        # No config file: the command fails, but only after it ran here.
+        assert cli.main(["--verbose", "next"], backend_factory=lambda: backend) == 1
     messages = [record.getMessage() for record in caplog.records]
     assert messages[0].startswith("Asking the running app (socket wallpaper_py-")
-    assert messages[1] == "No app is running: starting one"
-    assert messages[2].startswith("Starting ")
+    assert messages[1] == "No app is running: running the command here"
+
+
+def test_answers_run_here_say_so() -> None:
+    status = StatusResult(playlists=(), paused=None)
+    assert cli.format_answer(cli.Answer(status)).out == "Rotation active"
+    here = cli.format_answer(cli.Answer(status, here=True))
+    assert here.out == cli.NOT_RUNNING
+    reload = cli.format_answer(cli.Answer(ReloadResult(), here=True))
+    assert reload.out.startswith("Config is valid (wallpaper_py isn't running")
 
 
 def test_status_of_a_manual_playlist() -> None:
@@ -340,9 +330,11 @@ def test_ui_pages_match_the_launcher() -> None:
 def test_reload_and_which_config_is_sent(capsys: pytest.CaptureFixture[str]) -> None:
     sent: list[tuple[CommandRequest, Path | None]] = []
 
-    def app_client(request: CommandRequest, config: Path | None) -> Reply:
+    def app_client(
+        request: CommandRequest, config: Path | None, _: cli.RunHere
+    ) -> cli.Answer:
         sent.append((request, config))
-        return ReloadResult(warnings=("w",))
+        return cli.Answer(ReloadResult(warnings=("w",)))
 
     assert cli.main(["reload"], app_client=app_client) == 0
     assert capsys.readouterr() == ("Config reloaded\n", "Warning: w\n")

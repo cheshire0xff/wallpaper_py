@@ -21,7 +21,8 @@ release it may still change in place.)
 - One JSON object per line (UTF-8, `\n`), one request per connection: send
   one line, read one line, and the app closes the connection. The exception
   is `subscribe` (below).
-- No app listening means it isn't running. The CLI then starts it
+- No app listening means it isn't running. The CLI then runs the command
+  itself (holding the app's lock) instead; the UI process starts the app
   (`pythonw -m wallpaper_py tray`) and retries for up to 10 s.
 - A command runs on the app's service thread between ticks, so the reply
   can take a while (a 4K render, or a first scan of a big directory): the

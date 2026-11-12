@@ -2,14 +2,16 @@
 Command-line interface.
 
 Monitor commands (`list`, `set`) work on their own. Playlist commands
-(`status`, `next`, ...) always run in the app, so they never overlap its
-ticks: if it isn't running, it is started in the tray first. The app
-replies with data (protocol.py); the text printed here is made here. `run`
-and `tray` start the app, `ui` the windows (see wallpaper_py.app).
+(`status`, `next`, ...) run in the app if it is running, so they never
+overlap its ticks. If it isn't, they run here, holding the app's lock (an
+app starting meanwhile waits for it), and nothing is left running after:
+only the app rotates. Replies are data (protocol.py); the text printed here
+is made here. `run` and `tray` start the app, `ui` the windows (see
+wallpaper_py.app).
 
-Which config: `run` / `tray` (and an app started for a command) use
---config, else the default file. A command sends --config only if it was
-given: without it, it means whatever config the running app uses.
+Which config: `run` / `tray` (and a command run here) use --config, else
+the default file. A command sends --config only if it was given: without
+it, it means whatever config the running app uses.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from .backends import get_backend, get_presence
+from .commands import error_reply, execute, open_service
 from .core import paths
 from .core.backend import Backend
 from .core.config import format_duration
@@ -60,53 +63,69 @@ PAGES = ("home", "library", "settings")
 
 BackendFactory = Callable[[], Backend]
 PresenceFactory = Callable[[], Presence]
-# Runs a request in the app (starting it if needed) and returns its reply.
-# The config: the one the user named, or None (whatever the app runs).
-AppClient = Callable[[CommandRequest, Path | None], Reply]
-# The command line that starts the app for a config file.
-AppCommand = Callable[[Path], list[str]]
+# Runs a request in this process, on this config file: no app is running,
+# and this process holds its lock.
+RunHere = Callable[[CommandRequest, Path], Reply]
+
+
+class Answer(NamedTuple):
+    reply: Reply
+    here: bool = False  # run in this process: no app was running
+
+
+# Runs a request in the running app, else with `RunHere`. The config: the
+# one the user named, or None (whatever the app runs).
+AppClient = Callable[[CommandRequest, Path | None, RunHere], Answer]
 
 log = logging.getLogger(__name__)
 
-START_TIMEOUT_S = 10.0  # for a started app to answer
+WAIT_TIMEOUT_S = 10.0  # for a starting app, or a command running elsewhere
 RETRY_INTERVAL_S = 0.2
+NOT_RUNNING = (
+    "wallpaper_py isn't running, so nothing rotates; `wallpaper tray` starts it"
+)
 
 
 def send_to_app(
-    request: CommandRequest,
-    config_path: Path | None,
-    app_command: AppCommand | None = None,
-) -> Reply:
+    request: CommandRequest, config_path: Path | None, run_here: RunHere
+) -> Answer:
     """
-    Run `request` in the app. If none is running, start it in the tray
-    (`app_command`, by default the autostart command; on `config_path`, else
-    the default config) and retry until it answers. Two CLIs may race to
-    start it: the instance lock keeps one app, and both reach it.
-    `config_path` None: the app may run any config.
+    Run `request` in the running app; if none is running, take its lock and
+    run it here (on `config_path`, else the default config). The lock held
+    but nobody answering: an app is starting, or another command runs here;
+    wait for either. `config_path` None: the app may run any config.
     """
     # pylint: disable=import-outside-toplevel
     from .app import ipc  # Qt is imported only for playlist commands
-    from .app.processes import autostart_command, start_detached
+    from .app.instance import InstanceLock
 
     name = ipc.server_name(paths.data_dir())
     envelope = Envelope(request=request, config=config_path)
+    lock = InstanceLock(paths.instance_lock())
     log.info("Asking the running app (socket %s)", name)
-    reply = ipc.send(name, envelope)
-    if reply is not None:
-        log.info("The running app answered")
-        return reply
-    log.info("No app is running: starting one")
-    start_detached(
-        (app_command or autostart_command)(config_path or paths.config_file())
-    )
-    started = time.monotonic()
-    while time.monotonic() < started + START_TIMEOUT_S:
-        time.sleep(RETRY_INTERVAL_S)
+    deadline = time.monotonic() + WAIT_TIMEOUT_S
+    waiting = False
+    while True:
         reply = ipc.send(name, envelope)
         if reply is not None:
-            log.info("The new app answered after %.1f s", time.monotonic() - started)
-            return reply
-    raise WallpaperError(f"could not start wallpaper_py; see {paths.log_file()}")
+            log.info("The running app answered")
+            return Answer(reply)
+        if lock.acquire():
+            try:
+                log.info("No app is running: running the command here")
+                config = config_path or paths.config_file()
+                return Answer(run_here(request, config), here=True)
+            finally:
+                lock.release()
+        if time.monotonic() > deadline:
+            raise WallpaperError(
+                "wallpaper_py is starting or busy and did not answer; try again "
+                f"(see {paths.log_file()})"
+            )
+        if not waiting:
+            log.info("The app is starting, or a command runs elsewhere: waiting")
+            waiting = True
+        time.sleep(RETRY_INTERVAL_S)
 
 
 @dataclass
@@ -128,6 +147,18 @@ class Context:
         if self._backend is None:
             self._backend = self.backend_factory()
         return self._backend
+
+    def run_here(self, request: CommandRequest, config_path: Path) -> Reply:
+        """`request` in this process, as the app runs it (but no tick first)."""
+        try:
+            with open_service(
+                config_path, self.backend, self.presence_factory()
+            ) as service:
+                if isinstance(request, ReloadRequest):  # nothing to restart
+                    return ReloadResult(warnings=tuple(service.config.warnings()))
+                return execute(service, request).reply
+        except WallpaperError as err:
+            return error_reply(err)
 
 
 # -- monitors ----------------------------------------------------------------
@@ -178,7 +209,7 @@ class Text(NamedTuple):
 
 
 def cmd_playlist(ctx: Context, args: argparse.Namespace) -> int:
-    """status, pick, reload and the TARGET_COMMANDS: always in the app."""
+    """status, pick, reload and the TARGET_COMMANDS: in the app, or here."""
     target: str | None = getattr(args, "target", None)
     request: CommandRequest
     if args.command == "pick":
@@ -188,14 +219,32 @@ def cmd_playlist(ctx: Context, args: argparse.Namespace) -> int:
     else:
         command: Command = args.command  # a subparser name from Command
         request = Request(command=command, target=target)
-    reply = ctx.app_client(request, ctx.config)
-    log.info("Reply: %s", reply.model_dump_json())
-    text = format_reply(reply)
+    answer = ctx.app_client(request, ctx.config, ctx.run_here)
+    log.info("Reply: %s", answer.reply.model_dump_json())
+    text = format_answer(answer)
     if text.out:
         print(text.out)
     if text.err:
         print(text.err, file=sys.stderr)
     return text.code
+
+
+def format_answer(answer: Answer) -> Text:
+    """The reply's text; run here, `status` and `reload` say so."""
+    text = format_reply(answer.reply)
+    if not answer.here:
+        return text
+    match answer.reply:
+        case StatusResult():
+            playlists, paused = answer.reply.playlists, answer.reply.paused
+            out = format_status(playlists, paused, running=False)
+            return text._replace(out=out)
+        case ReloadResult():
+            return text._replace(
+                out="Config is valid (wallpaper_py isn't running; "
+                "it reads the file when it starts)"
+            )
+    return text
 
 
 def format_reply(reply: Reply) -> Text:
@@ -236,7 +285,10 @@ def format_reply(reply: Reply) -> Text:
     raise AssertionError(f"Unhandled reply {reply!r}")
 
 
-def format_status(playlists: Sequence[PlaylistDetails], paused: str | None) -> str:
+def format_status(
+    playlists: Sequence[PlaylistDetails], paused: str | None, running: bool = True
+) -> str:
+    """`running` False: run here, with no app to rotate."""
     lines: list[str] = []
     for playlist in playlists:
         lines.append(f"{playlist.name}  ({', '.join(_traits(playlist))})")
@@ -253,7 +305,12 @@ def format_status(playlists: Sequence[PlaylistDetails], paused: str | None) -> s
         lines.append(f"  next in:   {_next_in(playlist)}")
         upcoming = ", ".join(p.name for p in playlist.upcoming) or "-"
         lines.append(f"  upcoming:  {upcoming}")
-    lines.append(f"Rotation paused: {paused}" if paused else "Rotation active")
+    if not running:
+        lines.append(NOT_RUNNING)
+    elif paused:
+        lines.append(f"Rotation paused: {paused}")
+    else:
+        lines.append("Rotation active")
     return "\n".join(lines)
 
 

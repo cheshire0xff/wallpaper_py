@@ -5,7 +5,7 @@ hand on each platform. Repeat the whole list for the KDE backend (Phase 6,
 on Arch and on Kubuntu), and the affected sections after a change to them.
 
 Add `--verbose` to a CLI command to see whether it reached the running app
-or started one. The app logs to `wallpaper.log`, the windows to `ui.log`
+or ran the command itself. The app logs to `wallpaper.log`, the windows to `ui.log`
 (both in the per-user log directory: `%LOCALAPPDATA%\wallpaper_py\Logs` on
 Windows).
 
@@ -18,7 +18,7 @@ Status: **ok** (with the date, when known) all steps seen working;
 | [2. Playlists](#2-playlists) | ok, except a reboot (step 4; an app restart is ok 2026-11-11) | todo | todo |
 | [3. Pause on lock and idle](#3-pause-on-lock-and-idle) | ok | todo | todo |
 | [4. Monitor switched off](#4-monitor-switched-off) | ok 2026-11-11 for a mirrored group (from the log); a single-monitor playlist not yet | todo | todo |
-| [5. CLI and the app](#5-cli-and-the-app) | ok, except step 3 | todo | todo |
+| [5. CLI and the app](#5-cli-and-the-app) | ok 2026-11-12 (steps 1 and 3 after the CLI started running commands itself) | todo | todo |
 | [6. Tray](#6-tray) | ok, except step 2 and a broken config (step 3) | todo | todo |
 | [7. Start at login](#7-start-at-login) | todo | todo | todo |
 | [8.1 The window: opening, pages, closing](#81-opening-pages-and-closing) | steps 2, 3, 4, 9, 10 ok 2026-11-12 (step 9 before the silver light-mode panel); 1, 5-8 todo | todo | todo |
@@ -67,11 +67,15 @@ monitor.
 
 ## 5. CLI and the app
 
-1. With no app running, `wallpaper --verbose next` says it started one;
-   the tray icon appears and the command runs. No console window opens,
-   not even briefly, and closing the terminal leaves the app running.
-2. Again with the app running: `--verbose` says the running app answered.
-3. `wallpaper tray` while one runs exits without starting a second.
+1. With no app running, `wallpaper --verbose next` says it ran the command
+   here; the wallpaper changes, no tray icon appears and no `pythonw` is
+   left in Task Manager. `wallpaper status` ends with *wallpaper_py isn't
+   running, so nothing rotates*, and `wallpaper reload` says the config is
+   valid.
+2. With the app running (`wallpaper tray`): `--verbose` says the running app
+   answered, and `status` ends with *Rotation active*.
+3. `wallpaper tray` while one runs exits without starting a second (after
+   about 5 s: it waits in case a CLI command holds the lock).
 
 ## 6. Tray
 

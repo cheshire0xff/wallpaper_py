@@ -91,11 +91,11 @@ given anyway must be the app's.
 `tray` and `run` start the same app; only one can run at a time (per
 user). It rotates the playlists, and the other commands (`status`, `next`,
 ...) are sent to it, so they never collide with a change in progress. When
-no app is running, those commands start it in the tray first (as *Start at
-login* would) and then run in it; if it doesn't come up within ~10 s, they
-say so and point to the log file. `list` and `set` work without the app.
-`--verbose` (before the command: `wallpaper --verbose next`) logs whether a
-command reached the running app or started one, and the app's raw reply.
+no app is running, those commands run by themselves and exit: nothing is
+left running, and nothing rotates until you start the app (`status` says
+so). `list` and `set` work without the app. `--verbose` (before the
+command: `wallpaper --verbose next`) logs whether a command reached the
+running app or ran by itself, and the raw reply.
 
 The tray menu has a section per playlist (its monitors by name, the current
 image, which opens on click, *Next*, *Previous*, a *Favourite* toggle,

@@ -1,19 +1,23 @@
 """
 The whole app in-process (fake backend), with the CLI as a separate process
-like in real use: single instance, commands through the socket.
+like in real use: single instance, commands through the socket, or run by
+the CLI itself (under the app's lock) when no app is running.
 """
 
 import logging
 import signal
 import subprocess
 import sys
-from contextlib import ExitStack, nullcontext
+import time
+from collections.abc import Iterator
+from contextlib import ExitStack, contextmanager, nullcontext
 from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QCoreApplication, QTimer
 from pytestqt.qtbot import QtBot
 
+from wallpaper_py import cli as cli_module
 from wallpaper_py.app.instance import InstanceLock
 from wallpaper_py.app.ipc import CommandServer
 from wallpaper_py.app.processes import autostart_command
@@ -21,7 +25,7 @@ from wallpaper_py.app.runtime import AppOptions, Platform, run_app
 from wallpaper_py.core import paths
 from wallpaper_py.core.model import WallpaperError
 
-from .clients import CLI, CLI_STARTING, NO_WINDOW, run_python
+from .clients import CLI, CLI_HERE, HOLD_LOCK, NO_WINDOW, run_python
 from .fakes import (
     FakeAutostart,
     FakeBackend,
@@ -60,7 +64,7 @@ def test_second_instance_is_refused(tmp_path: Path, platform: Platform) -> None:
     lock = InstanceLock(paths.instance_lock())
     assert lock.acquire()
     try:
-        options = AppOptions(write_config(tmp_path), tray=False)
+        options = AppOptions(write_config(tmp_path), tray=False, lock_wait_s=0.2)
         with pytest.raises(WallpaperError, match="already running"):
             run_app(options, platform)
     finally:
@@ -76,7 +80,7 @@ def test_cli_commands_go_through_the_running_app(
 
     def terminal() -> None:
         """Commands from another process, while the app's loop keeps serving."""
-        for name in ("next", "prev", "run"):
+        for name in ("next", "prev"):
             results[name] = run_python(qtbot, CLI, *cli, name)
         QCoreApplication.quit()
 
@@ -86,8 +90,6 @@ def test_cli_commands_go_through_the_running_app(
     assert results["next"].returncode == 0, results["next"].stderr
     assert results["next"].stdout.strip() == "walls: b.jpg on Main"
     assert results["prev"].stdout.strip() == "walls: a.jpg on Main"
-    assert results["run"].returncode == 1
-    assert "already running" in results["run"].stderr
     # Every change was made by the app (the CLI's backend factory fails).
     assert [c.image.name for c in backend.set_calls] == ["a.jpg", "b.jpg", "a.jpg"]
 
@@ -126,56 +128,81 @@ def app_running() -> bool:
     return True
 
 
-def stop_started_app(qtbot: QtBot) -> None:
-    """Quit an app started by CLI_STARTING, and wait until it has."""
-    paths.data_dir().mkdir(parents=True, exist_ok=True)
-    (paths.data_dir() / "stop").touch()
-    qtbot.waitUntil(lambda: not app_running(), timeout=15_000)
+@contextmanager
+def lock_held(seconds: float) -> Iterator[subprocess.Popen[str]]:
+    """The app's lock, held by another process for `seconds` from now."""
+    argv = [sys.executable, "-c", HOLD_LOCK, str(paths.data_dir()), str(seconds)]
+    with subprocess.Popen(
+        argv, stdout=subprocess.PIPE, text=True, creationflags=NO_WINDOW
+    ) as holder:
+        assert holder.stdout is not None
+        assert holder.stdout.readline().strip() == "locked"
+        yield holder
+        holder.wait(timeout=30)
 
 
-def test_cli_starts_the_app_when_none_runs(qtbot: QtBot, tmp_path: Path) -> None:
+def test_cli_runs_here_when_no_app_runs(qtbot: QtBot, tmp_path: Path) -> None:
     config = write_config(tmp_path)
     cli = [str(paths.data_dir()), "--config", str(config)]
-    try:
-        result = run_python(qtbot, CLI_STARTING, *cli, "next")
-        assert result.returncode == 0, result.stderr
-        # The first tick showed a.jpg; then the command ran in the started app.
-        assert result.stdout.strip() == "walls: b.jpg on Main"
-        assert app_running()  # it outlives the CLI
-        assert run_python(qtbot, CLI, *cli, "next").stdout.strip() == (
-            "walls: c.jpg on Main"
-        )
-    finally:
-        stop_started_app(qtbot)
+    first = run_python(qtbot, CLI_HERE, *cli, "next")
+    assert first.returncode == 0, first.stderr
+    assert first.stdout.strip() == "walls: a.jpg on Main"  # no tick first
+    assert not app_running()  # nothing left behind
+    assert run_python(qtbot, CLI_HERE, *cli, "next").stdout.strip() == (
+        "walls: b.jpg on Main"  # the state was kept
+    )
+    status = run_python(qtbot, CLI_HERE, *cli, "status").stdout
+    assert "upcoming:  c.jpg" in status
+    assert status.rstrip().endswith(cli_module.NOT_RUNNING)
 
 
-def test_two_clis_racing_reach_one_app(qtbot: QtBot, tmp_path: Path) -> None:
+def test_two_clis_without_an_app_take_turns(tmp_path: Path) -> None:
     config = write_config(tmp_path)
-    argv = [sys.executable, "-c", CLI_STARTING, str(paths.data_dir())]
+    argv = [sys.executable, "-c", CLI_HERE, str(paths.data_dir())]
     argv += ["--config", str(config), "next"]
-    try:
-        with ExitStack() as stack:
-            clis = [
-                stack.enter_context(
-                    subprocess.Popen(
-                        argv,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        text=True,
-                        creationflags=NO_WINDOW,
-                    )
+    with ExitStack() as stack:
+        clis = [
+            stack.enter_context(
+                subprocess.Popen(
+                    argv,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    creationflags=NO_WINDOW,
                 )
-                for _ in range(2)
-            ]
-            outputs = [cli.communicate(timeout=60) for cli in clis]
-    finally:
-        stop_started_app(qtbot)
+            )
+            for _ in range(2)
+        ]
+        outputs = [cli.communicate(timeout=60) for cli in clis]
     assert [cli.returncode for cli in clis] == [0, 0], outputs
-    # Both ran in the same app, one after the other.
+    # One after the other, under the lock: never the same image twice.
     assert sorted(out.strip() for out, _ in outputs) == [
+        "walls: a.jpg on Main",
         "walls: b.jpg on Main",
-        "walls: c.jpg on Main",
     ]
+
+
+def test_cli_waits_while_the_lock_is_held(qtbot: QtBot, tmp_path: Path) -> None:
+    """An app starting (lock taken, socket not up yet), or a command here."""
+    config = write_config(tmp_path)
+    with lock_held(1.0):
+        started = time.monotonic()
+        result = run_python(
+            qtbot, CLI_HERE, str(paths.data_dir()), "--config", str(config), "next"
+        )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "walls: a.jpg on Main"
+    assert time.monotonic() - started > 0.5
+
+
+def test_app_waits_for_a_command_run_here(
+    tmp_path: Path, platform: Platform, backend: FakeBackend
+) -> None:
+    """Login starting the app while a CLI command holds the lock."""
+    options = AppOptions(write_config(tmp_path), tray=False, quit_after_ticks=1)
+    with lock_held(1.0):
+        assert run_app(options, platform) == 0
+    assert [c.image.name for c in backend.set_calls] == ["a.jpg"]
 
 
 def test_socket_failure_stops_the_app(

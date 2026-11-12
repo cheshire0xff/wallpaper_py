@@ -12,7 +12,6 @@ so I need to pass it first through my lib management script to delete it properl
 1. Way to go to next and previous wallpaper, per monitor(if mirrored then just change all mirrored monitors)
 
 1. Investiage if this is still the preffered way to manage monitors and wallpapers on windows.
-1. wallpaper cli next prev and status etc should not launch tray, just a non ui service and it should close when command ends. In standalone mode. Maybe just drop standalone mode or make it opt in with a flag?
 
 ## Library window
 
@@ -56,5 +55,8 @@ the wallpapers.
 1. Library grid: fade in from black when a thumbnail loads (like the phone app).
 1. Sound notification when the wallpaper changes (I have this on Linux already), so I notice new images.
    On / off per playlist (in the config and the settings panel), off by default.
+1. More CLI verbosity, e.g. `--debug` (debug level): each step of reaching the app
+   (socket attempts, taking / waiting for / releasing the lock, timings), on top of
+   `--verbose`'s summary.
 1. Virtual backend (made-up monitors, nothing set on the real desktop) for end-to-end
    tests and a demo mode, and page renders uploaded by CI (docs/plan.md, Phase 7).

@@ -71,8 +71,9 @@ Must fix: while the CLI and `wallpaper run` are separate processes sharing
 the database, a command during an in-progress change can double-commit
 (same image twice in history). CLI commands always go through the app's
 socket and run on the one service, serialized with its ticks. If the app
-isn't running, the CLI starts it in the tray first (detached, so it
-outlives the CLI) and then sends the command.
+isn't running, the CLI runs the command itself under the app's instance
+lock and exits (it used to start the tray app, which then kept running
+after a mere `status`; changed 2026-11-12).
 
 Ticks and events: keep polling as the safety net, use events only where
 they make a visible difference.
@@ -163,7 +164,7 @@ nothing while closed):
   auto-start); if none answers, they start one. One UI process at most.
 - The UI process is a client of the app's socket like any other: commands
   with replies, plus `subscribe` for events. If the app isn't running, the
-  UI starts it (same auto-start as the CLI); if the app quits, the UI
+  UI starts it (the autostart command); if the app quits, the UI
   closes too (its subscription ends).
 - Windows depend only on a narrow client interface (send a command and
   get the reply; receive events), never on the service or `ServiceWorker`.
