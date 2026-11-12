@@ -10,6 +10,8 @@ dist/
 *.jpg
 *.jpeg
 *.png
+# ...except the design mockups the windows are built from.
+!docs/design/*.png
 wallpaper_py/processed/
 
 spikes/*.log

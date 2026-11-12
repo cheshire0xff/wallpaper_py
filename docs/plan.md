@@ -211,7 +211,8 @@ Look (decided, from a mockup the user approved; it holds for every window):
 - The title bar is the OS's own.
 
 One window (decided after step 3, from an approved mockup; replaces the
-three separate windows):
+three separate windows; screenshots and the mockup's source in
+[design/](design/README.md), which win over the words here):
 
 - **One main window with a sidebar** on the left: *Home*, *Library*,
   *Settings*, each an icon (Lucide `house`, `images`, `sliders-horizontal`)
