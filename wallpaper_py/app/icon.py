@@ -22,7 +22,7 @@ class IconState(Enum):
 def app_icon(state: IconState = IconState.NORMAL) -> QIcon:
     icon = QIcon()
     source = _state_pixmap(state)
-    icon.addPixmap(source)
+    icon.addPixmap(source)  # 256 px: HiDPI and large (Alt+Tab) sizes
     for size in SIZES:
         icon.addPixmap(
             source.scaled(

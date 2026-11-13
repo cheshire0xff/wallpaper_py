@@ -104,7 +104,7 @@ image, which opens on click, *Next*, *Previous*, a *Favourite* toggle,
 *Settings…*, *Reload config*
 (after editing it by hand; like `wallpaper reload`, it notifies the error or
 any warnings), *Open config folder*, *Start at login* and *Quit*. Left-click
-opens the same menu. The icon turns
+opens the window on Home. The icon turns
 grey while rotation is paused and shows a red badge if the config can't be
 loaded. Start at login uses the per-user Run key on Windows and
 `~/.config/autostart` on Linux; it starts `pythonw -m wallpaper_py tray`

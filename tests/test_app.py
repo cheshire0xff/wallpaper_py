@@ -58,6 +58,9 @@ def test_tray_and_ui_set_the_application_icon(
     qt_application: QApplication,
 ) -> None:
     previous = qt_application.windowIcon()
+    font = qt_application.font()
+    name = qt_application.applicationName()
+    quit_on_close = qt_application.quitOnLastWindowClosed()
     try:
         qt_application.setWindowIcon(QIcon())
         assert qt_application.windowIcon().isNull()
@@ -69,6 +72,9 @@ def test_tray_and_ui_set_the_application_icon(
         assert not qt_application.windowIcon().isNull()
     finally:
         qt_application.setWindowIcon(previous)
+        qt_application.setFont(font)
+        qt_application.setApplicationName(name)
+        qt_application.setQuitOnLastWindowClosed(quit_on_close)
 
 
 @pytest.mark.parametrize("tray", [False, True])
