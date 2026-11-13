@@ -15,7 +15,8 @@ app/                          PySide6 (Qt only here); two processes
   instance.py    single instance: a QLockFile next to the state database
   screens.py     Qt screen signals -> one debounced extra tick
   tray.py        tray icon and menu, drawn from an Overview
-  icon.py        the icon, drawn in code
+  icon.py        the bundled app icon and tray-state variants
+  icons/         shared app icon image, package data
   ui/            the UI process (`wallpaper ui`), on demand
     process.py   run_ui: single instance, the window, quits with the app / window
     launcher.py  its own socket: "show this page" (UiServer, WindowOpener)

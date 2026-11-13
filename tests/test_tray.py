@@ -2,10 +2,12 @@
 
 from collections.abc import Callable
 from contextlib import nullcontext
+from importlib import resources
 from pathlib import Path
 
 import pytest
-from PySide6.QtGui import QAction
+from PySide6.QtCore import QSize, Qt
+from PySide6.QtGui import QAction, QImage, QPixmap
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
 from wallpaper_py.app.icon import IconState, app_icon
@@ -268,6 +270,32 @@ def test_tooltip_and_icon_state() -> None:
     assert icon_state(Overview()) is IconState.NORMAL
     for state in IconState:
         assert not app_icon(state).isNull()
+
+
+def test_app_icon_keeps_transparency_and_tray_states() -> None:
+    size = QSize(64, 64)
+    normal = app_icon().pixmap(size).toImage()
+    paused = app_icon(IconState.PAUSED).pixmap(size).toImage()
+    error = app_icon(IconState.ERROR).pixmap(size).toImage()
+    source = QPixmap.fromImage(
+        QImage.fromData(
+            resources.files("wallpaper_py.app")
+            .joinpath("icons", "app-icon.png")
+            .read_bytes()
+        )
+    )
+    expected = source.scaled(
+        size,
+        Qt.AspectRatioMode.KeepAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+
+    assert normal == expected.toImage()
+    assert normal.pixelColor(0, 0).alpha() == 0
+    assert paused.pixelColor(0, 0).alpha() == 0
+    grey = paused.pixelColor(32, 32)
+    assert grey.red() == grey.green() == grey.blue()
+    assert error.pixelColor(54, 48).name() == "#e03c31"
 
 
 def test_tray_follows_the_overview(tmp_path: Path) -> None:

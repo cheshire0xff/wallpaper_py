@@ -1,22 +1,16 @@
-"""The tray icon, drawn in code (no image files to ship): a small landscape."""
+"""The bundled app icon and its tray-state variants."""
 
 from __future__ import annotations
 
 from enum import Enum
+from functools import lru_cache
+from importlib import resources
 
-from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import (
-    QBrush,
-    QColor,
-    QIcon,
-    QLinearGradient,
-    QPainter,
-    QPainterPath,
-    QPen,
-    QPixmap,
-)
+from PySide6.QtCore import QPoint, QPointF, Qt
+from PySide6.QtGui import QColor, QIcon, QImage, QPainter, QPen, QPixmap
 
 SIZES = (16, 20, 24, 32, 40, 48, 64)
+_ICON_SIZE = 64
 
 
 class IconState(Enum):
@@ -27,46 +21,49 @@ class IconState(Enum):
 
 def app_icon(state: IconState = IconState.NORMAL) -> QIcon:
     icon = QIcon()
+    source = _state_pixmap(state)
+    icon.addPixmap(source)
     for size in SIZES:
-        icon.addPixmap(_pixmap(size, state))
+        icon.addPixmap(
+            source.scaled(
+                size,
+                size,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        )
     return icon
 
 
-def _pixmap(size: int, state: IconState) -> QPixmap:
-    pixmap = QPixmap(size, size)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.scale(size / 64, size / 64)  # draw on a 64x64 grid
+@lru_cache(maxsize=1)
+def _source_image() -> QImage:
+    data = resources.files(__package__).joinpath("icons", "app-icon.png").read_bytes()
+    image = QImage.fromData(data)
+    if image.isNull():
+        raise RuntimeError("Cannot load the bundled app icon (icons/app-icon.png)")
+    return image
 
-    grey = state is IconState.PAUSED
-    frame = QRectF(4, 10, 56, 44)
-    sky = QLinearGradient(QPointF(0, 10), QPointF(0, 54))
-    sky.setColorAt(0, QColor("#8a8a8a" if grey else "#3b6fd8"))
-    sky.setColorAt(1, QColor("#c8c8c8" if grey else "#9cc3ff"))
-    clip = QPainterPath()
-    clip.addRoundedRect(frame, 8, 8)
-    painter.fillPath(clip, QBrush(sky))
-    painter.setClipPath(clip)
 
-    painter.setPen(Qt.PenStyle.NoPen)
-    painter.setBrush(QColor("#d0d0d0" if grey else "#ffd75e"))
-    painter.drawEllipse(QPointF(45, 23), 6, 6)
-    hills = QPainterPath(QPointF(4, 54))
-    hills.lineTo(4, 44)
-    hills.lineTo(22, 26)
-    hills.lineTo(36, 40)
-    hills.lineTo(44, 33)
-    hills.lineTo(60, 47)
-    hills.lineTo(60, 54)
-    painter.fillPath(hills, QColor("#5a5a5a" if grey else "#2e5e3a"))
-    painter.setClipping(False)
+def _state_pixmap(state: IconState) -> QPixmap:
+    image = _source_image()
+    if state is IconState.PAUSED:
+        grey = image.convertToFormat(QImage.Format.Format_Grayscale8).convertToFormat(
+            QImage.Format.Format_ARGB32
+        )
+        # Grayscale8 has no alpha channel, so restore the source alpha.
+        painter = QPainter(grey)
+        painter.setCompositionMode(
+            QPainter.CompositionMode.CompositionMode_DestinationIn
+        )
+        painter.drawImage(QPoint(0, 0), image)
+        painter.end()
+        image = grey
 
-    painter.setBrush(Qt.BrushStyle.NoBrush)
-    painter.setPen(QPen(QColor("#303030"), 3))
-    painter.drawRoundedRect(frame, 8, 8)
-
+    pixmap = QPixmap.fromImage(image)
     if state is IconState.ERROR:
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.scale(pixmap.width() / _ICON_SIZE, pixmap.height() / _ICON_SIZE)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor("#e03c31"))
         painter.drawEllipse(QPointF(48, 48), 14, 14)
@@ -75,5 +72,5 @@ def _pixmap(size: int, state: IconState) -> QPixmap:
         painter.setPen(pen)
         painter.drawLine(QPointF(48, 40), QPointF(48, 49))
         painter.drawPoint(QPointF(48, 56))
-    painter.end()
+        painter.end()
     return pixmap

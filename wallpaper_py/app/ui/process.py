@@ -24,6 +24,7 @@ from PySide6.QtWidgets import QApplication
 
 from ...core import paths
 from ...core.model import WallpaperError
+from ..icon import app_icon
 from ..instance import InstanceLock
 from ..ipc import server_name
 from ..processes import autostart_command, quit_on_interrupt, start_detached
@@ -140,5 +141,6 @@ def _application() -> QApplication:
     # `MainWindow.closed` decides; a closing dialog must not end the process.
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationName("wallpaper_py")
+    app.setWindowIcon(app_icon())
     app.setFont(theme.body_font(app.font()))
     return app

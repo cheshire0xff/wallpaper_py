@@ -15,13 +15,17 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtCore import QCoreApplication, QTimer
+from PySide6.QtGui import QIcon
+from PySide6.QtWidgets import QApplication
 from pytestqt.qtbot import QtBot
 
 from wallpaper_py import cli as cli_module
+from wallpaper_py.app import runtime as app_runtime
 from wallpaper_py.app.instance import InstanceLock
 from wallpaper_py.app.ipc import CommandServer
 from wallpaper_py.app.processes import autostart_command
 from wallpaper_py.app.runtime import AppOptions, Platform, run_app
+from wallpaper_py.app.ui import process as ui_process
 from wallpaper_py.core import paths
 from wallpaper_py.core.model import WallpaperError
 
@@ -48,6 +52,23 @@ def fixture_platform(backend: FakeBackend) -> Platform:
         autostart_factory=FakeAutostart,
         thread_scope=nullcontext,
     )
+
+
+def test_tray_and_ui_set_the_application_icon(
+    qt_application: QApplication,
+) -> None:
+    previous = qt_application.windowIcon()
+    try:
+        qt_application.setWindowIcon(QIcon())
+        assert qt_application.windowIcon().isNull()
+        app_runtime._application(tray=True)  # pylint: disable=protected-access
+        assert not qt_application.windowIcon().isNull()
+
+        qt_application.setWindowIcon(QIcon())
+        ui_process._application()  # pylint: disable=protected-access
+        assert not qt_application.windowIcon().isNull()
+    finally:
+        qt_application.setWindowIcon(previous)
 
 
 @pytest.mark.parametrize("tray", [False, True])

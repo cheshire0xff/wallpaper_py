@@ -98,12 +98,14 @@ monitor.
 
 ## 6. Tray
 
-1. The menu shows each playlist with its monitors and current image;
+1. The tray and UI window (title bar/taskbar) show the layered photo-cards
+   icon.
+2. The menu shows each playlist with its monitors and current image;
    *Next*, *Previous*, *Favourite*, *Remove* work from it.
-2. Clicking the image name opens it.
-3. *Reload config* after an edit applies it; a broken config shows the red
+3. Clicking the image name opens it.
+4. *Reload config* after an edit applies it; a broken config shows the red
    badge and a notification, and fixing it clears both.
-4. *Open config folder* opens it. *Quit* stops the app.
+5. *Open config folder* opens it. *Quit* stops the app.
 
 ## 7. Start at login
 

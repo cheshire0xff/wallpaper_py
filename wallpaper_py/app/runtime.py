@@ -31,6 +31,7 @@ from ..core.autostart import Autostart
 from ..core.backend import Backend
 from ..core.model import WallpaperError
 from ..core.presence import Presence
+from .icon import app_icon
 from .instance import InstanceLock
 from .ipc import server_name
 from .processes import autostart_command, quit_on_interrupt, ui_command
@@ -154,6 +155,7 @@ def _application(tray: bool) -> QCoreApplication:
         if not isinstance(app, QApplication):
             raise WallpaperError("The tray needs a QApplication")
         app.setQuitOnLastWindowClosed(False)  # later windows only hide
+        app.setWindowIcon(app_icon())
     app.setApplicationName("wallpaper_py")
     return app
 

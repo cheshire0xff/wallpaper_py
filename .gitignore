@@ -10,8 +10,9 @@ dist/
 *.jpg
 *.jpeg
 *.png
-# ...except the design mockups the windows are built from.
+# ...except the design mockups and the packaged app icon.
 !docs/design/*.png
+!wallpaper_py/app/icons/app-icon.png
 wallpaper_py/processed/
 
 spikes/*.log

@@ -231,3 +231,13 @@ def test_icons_ship_with_the_package() -> None:
         assert any(fnmatch.fnmatch(f"icons/{name}", p) for p in patterns), name
     for name in theme.ICON_NAMES:
         assert b"currentColor" in theme.icon_svg(name)  # what the tint replaces
+
+
+def test_app_icon_ships_with_the_package() -> None:
+    package = "wallpaper_py.app"
+    icon = resources.files(package).joinpath("icons", "app-icon.png")
+    assert icon.is_file()
+    patterns = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
+        "tool"
+    ]["setuptools"]["package-data"][package]
+    assert any(fnmatch.fnmatch("icons/app-icon.png", pattern) for pattern in patterns)
