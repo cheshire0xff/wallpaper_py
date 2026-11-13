@@ -55,6 +55,10 @@ With the real config (a mirrored group and a single monitor):
    rotation goes on, never to an image in the list. The same with
    favourites.txt: the tray's and Home's *Favourite* are off and disabled
    until it can be read.
+6. **Explorer restarted (Windows).** With the app running, Task Manager >
+   Windows Explorer > Restart. At most one tick logs a wallpaper error (no
+   traceback); after it, `wallpaper next` changes the wallpaper and
+   rotation goes on at its interval.
 
 ## 3. Pause on lock and idle
 

@@ -16,6 +16,7 @@ from wallpaper_py.core.model import (
     MonitorId,
     MonitorNotAttachedError,
     UnsupportedModeError,
+    WallpaperError,
 )
 
 from .com import IDesktopWallpaper, Position
@@ -36,13 +37,27 @@ class WindowsBackend:
     it detaches; the remaining monitors get new indices *and* new positions.
     For a while its device path disappears, then it is listed again with
     GetMonitorRECT failing. Only the device path is a stable identity.
+
+    IDesktopWallpaper is served by Explorer: once Explorer restarts, the old
+    object only fails (RPC_E_DISCONNECTED). Any COM failure that is not
+    handled in place drops the object and becomes a WallpaperError; the
+    next call creates a new one.
     """
 
     def __init__(self) -> None:
-        self._dw = IDesktopWallpaper.co_create_instance()
+        self._dw: IDesktopWallpaper | None = IDesktopWallpaper.co_create_instance()
         # EDID names are only reported for attached monitors; remember them
         # so a detached monitor keeps its name.
         self._known_names: dict[MonitorId, str] = {}
+
+    def _wallpaper(self) -> IDesktopWallpaper:
+        if self._dw is None:
+            self._dw = IDesktopWallpaper.co_create_instance()
+        return self._dw
+
+    def _com_failed(self, err: COMError) -> WallpaperError:
+        self._dw = None
+        return WallpaperError(f"Windows wallpaper call failed: {err}")
 
     @property
     def per_monitor_modes(self) -> bool:
@@ -50,11 +65,17 @@ class WindowsBackend:
 
     def monitors(self) -> list[Monitor]:
         self._known_names.update(monitor_names())
+        try:
+            return self._monitors(self._wallpaper())
+        except COMError as err:
+            raise self._com_failed(err) from err
+
+    def _monitors(self, dw: IDesktopWallpaper) -> list[Monitor]:
         result: list[Monitor] = []
         seen: set[MonitorId] = set()
-        for index in range(self._dw.get_monitor_device_path_count()):
+        for index in range(dw.get_monitor_device_path_count()):
             try:
-                device_path = self._dw.get_monitor_device_path_at(index)
+                device_path = dw.get_monitor_device_path_at(index)
             except COMError:
                 continue
             monitor_id = MonitorId(device_path)
@@ -63,11 +84,11 @@ class WindowsBackend:
                 continue
             seen.add(monitor_id)
             try:
-                rect = self._dw.get_monitor_rect(device_path)
+                rect = dw.get_monitor_rect(device_path)
             except COMError:
                 rect = None  # known but detached
             try:
-                wallpaper = self._dw.get_wallpaper(device_path)
+                wallpaper = dw.get_wallpaper(device_path)
             except COMError:
                 wallpaper = ""
             result.append(
@@ -90,16 +111,31 @@ class WindowsBackend:
                 "use set_global_mode or a pre-rendered image"
             )
         try:
-            self._dw.get_monitor_rect(str(monitor_id))
+            dw = self._wallpaper()
         except COMError as err:
+            raise self._com_failed(err) from err
+        try:
+            dw.get_monitor_rect(str(monitor_id))
+        except COMError as err:
+            # Also what a dead Explorer looks like: drop the object either way.
+            self._dw = None
             raise MonitorNotAttachedError(f"{monitor_id} is not attached") from err
-        self._dw.set_wallpaper(str(monitor_id), str(image.resolve()))
+        try:
+            dw.set_wallpaper(str(monitor_id), str(image.resolve()))
+        except COMError as err:
+            raise self._com_failed(err) from err
 
     def set_global_mode(self, mode: ImageMode) -> None:
-        self._dw.set_position(Position[mode.name])
+        try:
+            self._wallpaper().set_position(Position[mode.name])
+        except COMError as err:
+            raise self._com_failed(err) from err
 
     def global_mode(self) -> ImageMode | None:
-        position = self._dw.get_position()
+        try:
+            position = self._wallpaper().get_position()
+        except COMError as err:
+            raise self._com_failed(err) from err
         if position.name in ImageMode.__members__:
             return ImageMode[position.name]
         return None  # tile, span, center
