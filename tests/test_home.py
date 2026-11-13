@@ -1,0 +1,655 @@
+"""
+Home: the monitor arrangement to scale, the playlist rows' text, hover,
+and the buttons, all through a fake Client (never a real app).
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterator
+from pathlib import Path
+
+import pytest
+from PySide6.QtCore import QPoint, QSize
+from PySide6.QtGui import QImage
+from PySide6.QtTest import QTest
+from pytestqt.qtbot import QtBot
+
+from wallpaper_py.app.ui.arrangement import (
+    LABEL_HEIGHT,
+    MARGIN,
+    Box,
+    MonitorsView,
+    arrange,
+    caption,
+    compact_caption,
+    playlists_by_monitor,
+)
+from wallpaper_py.app.ui.home import (
+    HomePage,
+    chip_text,
+    details_text,
+    format_duration,
+    format_size,
+    schedule_text,
+)
+from wallpaper_py.app.ui.thumbnails import (
+    Decoded,
+    ImageInfo,
+    Thumbnail,
+    ThumbnailLoader,
+)
+from wallpaper_py.core.config import Order
+from wallpaper_py.core.model import MonitorId
+from wallpaper_py.core.service import Change
+from wallpaper_py.protocol import (
+    DesktopMonitor,
+    ErrorReply,
+    Geometry,
+    MarkResult,
+    MonitorView,
+    NextResult,
+    Overview,
+    PlaylistDetails,
+    PlaylistView,
+    PrevResult,
+    Request,
+    StatusResult,
+)
+
+from .fake_client import FakeClient as BaseFakeClient
+
+AW = DesktopMonitor(
+    id=MonitorId("aw"),
+    name="AW3225QF",
+    geometry=Geometry(x=0, y=0, width=3840, height=2160),
+)
+PLX = DesktopMonitor(
+    id=MonitorId("plx"),
+    name="PLX2783H",
+    geometry=Geometry(x=-1920, y=0, width=1920, height=1080),
+)
+ZERO = DesktopMonitor(
+    id=MonitorId("zero"), name="ZeroMOD", geometry=None
+)  # switched off
+TV = DesktopMonitor(
+    id=MonitorId("tv"),
+    name="TV",
+    geometry=Geometry(x=3840, y=0, width=1920, height=1080),
+)
+
+KONACHAN = PlaylistView(
+    name="konachan",
+    monitors=(
+        MonitorView(id=MonitorId("aw"), name="AW3225QF", attached=True),
+        MonitorView(id=MonitorId("plx"), name="PLX2783H", attached=True),
+    ),
+    current=Path("/p/konachan/123.jpg"),
+    favourite=False,
+)
+FANTASY = PlaylistView(
+    name="fantasy",
+    monitors=(MonitorView(id=MonitorId("zero"), name="ZeroMOD", attached=False),),
+    current=Path("/p/fantasy/7.png"),
+    favourite=False,
+    manual=True,
+)
+OVERVIEW = Overview(playlists=(KONACHAN, FANTASY), monitors=(AW, PLX, ZERO, TV))
+
+INFO = ImageInfo(3840, 2160, 4_200_000)
+THUMBNAIL = Thumbnail(INFO, None)
+
+
+def details(view: PlaylistView, next_in: float | None = 754.0) -> PlaylistDetails:
+    return PlaylistDetails(
+        **dict(view),
+        directory=Path("/p") / view.name,
+        order=Order.SHUFFLE,
+        interval=None if view.manual else 1800.0,
+        mode=None,
+        next_in_seconds=None if view.manual else next_in,
+        upcoming=(),
+    )
+
+
+# -- the arrangement -----------------------------------------------------------
+
+
+def aspect(box: Box) -> float:
+    return box.width / box.height
+
+
+def test_negative_positions_are_scaled_to_fit_keeping_aspect() -> None:
+    placed = {str(p.monitor.id): p.box for p in arrange([AW, PLX], 1000, 400)}
+    aw, plx = placed["aw"], placed["plx"]
+    # The PLX2783H at -1920,0 is left of the AW3225QF at 0,0, touching it.
+    assert plx.x < aw.x and plx.right == pytest.approx(aw.x)
+    assert plx.y == pytest.approx(aw.y)
+    # One scale for both, aspect ratios kept.
+    assert aw.width == pytest.approx(2 * plx.width)
+    assert aspect(aw) == pytest.approx(16 / 9) and aspect(plx) == pytest.approx(16 / 9)
+    # Inside the area (labels below), and as large as it fits.
+    room_right, room_bottom = 1000 - MARGIN, 400 - MARGIN - LABEL_HEIGHT
+    for box in (aw, plx):
+        assert box.x >= MARGIN and box.y >= MARGIN
+        assert box.right <= room_right + 1e-6 and box.bottom <= room_bottom + 1e-6
+    # As large as it fits: here the height limits it.
+    assert aw.bottom == pytest.approx(room_bottom)
+
+
+def test_scaling_follows_the_area() -> None:
+    small = arrange([AW, PLX], 500, 300)
+    large = arrange([AW, PLX], 1500, 700)
+    assert large[0].box.width > small[0].box.width
+    assert aspect(large[0].box) == pytest.approx(aspect(small[0].box))
+
+
+def test_stacked_monitors() -> None:
+    top = DesktopMonitor(
+        id=MonitorId("t"),
+        name="T",
+        geometry=Geometry(x=0, y=-1080, width=1920, height=1080),
+    )
+    bottom = DesktopMonitor(
+        id=MonitorId("b"),
+        name="B",
+        geometry=Geometry(x=0, y=0, width=1920, height=1080),
+    )
+    placed = {str(p.monitor.id): p.box for p in arrange([top, bottom], 800, 600)}
+    assert placed["t"].bottom == pytest.approx(placed["b"].y)
+    assert placed["t"].x == pytest.approx(placed["b"].x)
+
+
+def test_detached_monitors_go_right_of_the_arrangement() -> None:
+    placed = arrange([AW, ZERO, PLX], 1200, 400)
+    by_id = {str(p.monitor.id): p for p in placed}
+    assert not by_id["zero"].attached and by_id["aw"].attached
+    zero, aw = by_id["zero"].box, by_id["aw"].box
+    assert zero.x > aw.right  # with a gap
+    assert aspect(zero) == pytest.approx(16 / 9)  # never seen: 1920 x 1080
+    # Its last known size, if it was seen attached.
+    strip = arrange([AW, ZERO], 1200, 400, {MonitorId("zero"): (1920, 480)})
+    assert aspect(strip[1].box) == pytest.approx(4)
+
+
+def test_only_detached_monitors() -> None:
+    placed = arrange([ZERO], 400, 300)
+    assert len(placed) == 1 and placed[0].box.width > 0
+    assert not arrange([], 400, 300)
+
+
+def test_captions_and_monitors_in_no_playlist() -> None:
+    by_monitor = playlists_by_monitor(OVERVIEW)
+    assert {str(m): p for m, p in by_monitor.items()} == {
+        "aw": "konachan",
+        "plx": "konachan",
+        "zero": "fantasy",
+    }
+    assert caption(AW, "konachan") == ("AW3225QF", "3840×2160 · konachan")
+    assert caption(TV, by_monitor.get(TV.id)) == ("TV", "1920×1080 · no playlist")
+    assert caption(ZERO, "fantasy") == ("ZeroMOD", "off · fantasy")
+
+
+def compact_view(qtbot: QtBot, overview: Overview, width: int) -> MonitorsView:
+    """Settings' drawing: compact captions."""
+    view = MonitorsView()
+    qtbot.addWidget(view)
+    view.set_compact(True)
+    view.resize(width, 200)
+    view.set_heights(150, 2000, 0.3)  # taller as it widens: wide enough fits
+    view.show_overview(overview)
+    return view
+
+
+def captions(view: MonitorsView) -> dict[str, tuple[str, ...]]:
+    return {str(p.monitor.id): view.caption_lines(p) for p in view.placed()}
+
+
+def assert_captions_overlap_no_monitor(view: MonitorsView) -> None:
+    placed = view.placed()
+    for item in placed:
+        area = view.caption_area(item)
+        assert area.width == pytest.approx(item.box.width)  # never beside
+        assert area.bottom <= view.height() + 1e-6
+        for other in placed:
+            if other is not item:
+                assert not area.intersects(other.box), (item.monitor.id, other)
+
+
+def narrowest_one_line(qtbot: QtBot, overview: Overview) -> int:
+    """The narrowest drawing in which every compact caption fits one line
+    (found by trying, so the test doesn't depend on the font)."""
+    for width in range(200, 4000, 10):
+        view = compact_view(qtbot, overview, width)
+        if all(len(lines) == 1 for lines in captions(view).values()):
+            return width
+    raise AssertionError("captions never fit on one line")
+
+
+def test_compact_captions_fit_on_one_line_when_they_can(qtbot: QtBot) -> None:
+    pair = Overview(playlists=(KONACHAN,), monitors=(AW, PLX))
+    view = compact_view(qtbot, pair, narrowest_one_line(qtbot, pair))
+    assert compact_caption(PLX, "konachan") == "PLX2783H · konachan"
+    assert captions(view) == {
+        "aw": ("AW3225QF · konachan",),
+        "plx": ("PLX2783H · konachan",),
+    }
+    assert_captions_overlap_no_monitor(view)
+    view.grab()
+
+
+def test_compact_captions_take_two_lines_when_one_is_too_wide(
+    qtbot: QtBot,
+) -> None:
+    pair = Overview(playlists=(KONACHAN,), monitors=(AW, PLX))
+    width = narrowest_one_line(qtbot, pair)
+    wide = compact_view(qtbot, pair, width)
+    one_line = wide.caption_area(wide.placed()[0]).height
+    view = compact_view(qtbot, pair, width - 10)  # the PLX2783H just too narrow
+    lines = captions(view)
+    # The playlist stays (that is what this drawing is for), on its own line.
+    assert lines["plx"] == ("PLX2783H", "konachan")
+    assert lines["aw"] == ("AW3225QF · konachan",)  # twice as wide: one line
+    # Room for two lines under every monitor, and no overlap.
+    assert view.caption_area(view.placed()[0]).height > one_line
+    assert_captions_overlap_no_monitor(view)
+    view.grab()
+
+
+def test_compact_captions_elide_each_line_and_stay_off_other_monitors(
+    qtbot: QtBot,
+) -> None:
+    long_name = KONACHAN.model_copy(update={"name": "a-rather-long-playlist-name"})
+    top = DesktopMonitor(
+        id=MonitorId("t"),
+        name="TopMonitor",
+        geometry=Geometry(x=0, y=-1080, width=1920, height=1080),
+    )
+    bottom = DesktopMonitor(
+        id=MonitorId("b"),
+        name="Bottom",
+        geometry=Geometry(x=0, y=0, width=1920, height=1080),
+    )
+    members = (
+        MonitorView(id=MonitorId("t"), name="TopMonitor", attached=True),
+        MonitorView(id=MonitorId("b"), name="Bottom", attached=True),
+    )
+    stacked = Overview(
+        playlists=(long_name.model_copy(update={"monitors": members}),),
+        monitors=(top, bottom),
+    )
+    view = compact_view(qtbot, stacked, 600)
+    lines = captions(view)
+    name, playlist = lines["t"]  # two lines: each elided, none dropped
+    assert name == "TopMonitor" or (name.startswith("Top") and name.endswith("…"))
+    assert playlist.startswith("a-") and playlist.endswith("…")
+    assert_captions_overlap_no_monitor(view)  # inside the top one: a monitor below
+    view.grab()
+
+
+def test_monitors_view_draws_every_monitor(qtbot: QtBot) -> None:
+    view = MonitorsView()
+    qtbot.addWidget(view)
+    view.resize(900, 300)
+    view.show_overview(OVERVIEW)
+    assert {str(p.monitor.id) for p in view.placed()} == {"aw", "plx", "zero", "tv"}
+    assert "TV: 1920×1080 · no playlist" in view.accessibleDescription()
+    assert "ZeroMOD: off · fantasy" in view.accessibleDescription()
+    view.grab()  # paints without error
+    before = view.placed()[0].box
+    view.resize(500, 300)  # redrawn to the new size
+    assert view.placed()[0].box.width < before.width
+    # A monitor seen attached keeps its size once switched off.
+    off = Overview(monitors=(AW.model_copy(update={"geometry": None}),))
+    view.show_overview(off)
+    assert aspect(view.placed()[0].box) == pytest.approx(16 / 9)
+    view.grab()
+
+
+# -- row text ------------------------------------------------------------------
+
+
+def test_formats() -> None:
+    assert format_size(980) == "980 B"
+    assert format_size(12_300) == "12 KB"
+    assert format_size(4_200_000) == "4.2 MB"
+    assert format_size(1_100_000_000) == "1.1 GB"
+    # As the config writes durations; seconds only under 10 minutes.
+    assert format_duration(30) == "30s"
+    assert format_duration(350) == "5m50s"
+    assert format_duration(300) == "5m"
+    assert format_duration(754) == "13m"
+    assert format_duration(3600) == "1h"
+    assert format_duration(3900) == "1h5m"
+    assert format_duration(2 * 86400 + 3 * 3600) == "2d3h"
+    assert format_duration(-5) == "0s"
+
+
+def test_row_text_normal() -> None:
+    assert chip_text(KONACHAN) is None
+    assert details_text(KONACHAN, details(KONACHAN), THUMBNAIL, 754.0) == (
+        "3840×2160 · 4.2 MB · shuffle, every 30m · next in 13m"
+    )
+    # Before the image and the schedule have arrived.
+    assert details_text(KONACHAN, None, None, None) == ""
+    unreadable = Thumbnail(None, None, "Unsupported image format")
+    assert details_text(KONACHAN, None, unreadable, None) == (
+        "can't read: Unsupported image format"
+    )
+
+
+def test_row_text_held() -> None:
+    held = KONACHAN.model_copy(update={"held": True})
+    assert chip_text(held) == "Held"
+    assert schedule_text(held, details(held), 754.0) == (
+        "shuffle, every 30m · 13m left once resumed"
+    )
+
+
+def test_row_text_manual() -> None:
+    assert chip_text(FANTASY) == "Manual"
+    assert details_text(FANTASY, details(FANTASY), THUMBNAIL, None) == (
+        "3840×2160 · 4.2 MB · shuffle · manual"
+    )
+
+
+def test_row_text_without_a_monitor() -> None:
+    off = FANTASY.model_copy(update={"manual": False})
+    assert schedule_text(off, details(off), 60.0) == (
+        "shuffle, every 30m · 1m left once a monitor is on"
+    )
+
+
+# -- the page ------------------------------------------------------------------
+
+
+class FakeClient(BaseFakeClient):
+    """Also answers `status` from an overview."""
+
+    def answer_status(self, overview: Overview) -> None:
+        """Answer the status requests so far (the window may ask again)."""
+        asked = [c for c in self.calls if c[0].command == "status"]
+        self.calls = [c for c in self.calls if c[0].command != "status"]
+        for _, on_reply in asked:
+            on_reply(
+                StatusResult(
+                    playlists=tuple(details(p) for p in overview.playlists),
+                    paused=None,
+                )
+            )
+
+
+def fake_decode(path: Path, box: QSize) -> Decoded:
+    del path
+    image = QImage(box.width() // 4, box.height() // 4, QImage.Format.Format_RGB32)
+    image.fill(0x336699)
+    return Decoded(INFO, image)
+
+
+class Clock:
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+@pytest.fixture(name="client")
+def fixture_client() -> FakeClient:
+    return FakeClient()
+
+
+@pytest.fixture(name="clock")
+def fixture_clock() -> Clock:
+    return Clock()
+
+
+@pytest.fixture(name="page")
+def fixture_page(qtbot: QtBot, client: FakeClient, clock: Clock) -> Iterator[HomePage]:
+    loader = ThumbnailLoader(QSize(480, 270), fake_decode)
+    page = HomePage(client, loader, clock)
+    qtbot.addWidget(page)
+    page.resize(1000, 800)
+    page.show()
+    yield page
+    loader.close()
+
+
+def test_window_draws_the_overview(
+    qtbot: QtBot, page: HomePage, client: FakeClient
+) -> None:
+    assert page.banner.text() == "Connecting to wallpaper_py…"
+    client.publish(OVERVIEW)
+    assert page.banner.isHidden()
+    assert list(page.rows) == ["konachan", "fantasy"]
+    assert page.monitors_heading.text() == "Monitors (4)"
+    konachan, fantasy = page.rows["konachan"], page.rows["fantasy"]
+    assert konachan.title.text() == "konachan"
+    assert konachan.monitors.text() == "AW3225QF + PLX2783H"
+    assert not konachan.link.isHidden()  # a mirrored group
+    assert konachan.chip.isHidden()
+    assert konachan.file.text() == "123.jpg"
+    assert fantasy.monitors.text() == "ZeroMOD (off)"
+    assert fantasy.link.isHidden()
+    assert fantasy.chip.text() == "Manual" and not fantasy.chip.isHidden()
+    assert fantasy.hold_button.isHidden()  # hold doesn't apply to manual
+    assert not konachan.hold_button.isHidden()
+    assert {str(p.monitor.id) for p in page.monitors_view.placed()} == {
+        "aw",
+        "plx",
+        "zero",
+        "tv",
+    }
+    # Thumbnails arrive off the UI thread; details follow.
+    qtbot.waitUntil(lambda: konachan.thumbnail() is not None)
+    assert konachan.image.pixmap() is not None
+    assert konachan.details.text() == "3840×2160 · 4.2 MB"
+    # Then the schedule, from one status request.
+    statuses = [r for r, _ in client.calls if r.command == "status"]
+    assert statuses == [Request(command="status")]
+    client.answer_status(OVERVIEW)
+    assert konachan.details.text().endswith("shuffle, every 30m · next in 13m")
+    assert fantasy.details.text().endswith("shuffle · manual")
+
+
+def test_the_countdown_runs_only_while_counting(
+    page: HomePage, client: FakeClient, clock: Clock
+) -> None:
+    client.publish(OVERVIEW)
+    client.answer_status(OVERVIEW)
+    row = page.rows["konachan"]
+    assert row.details.text().endswith("next in 13m")
+    clock.now += 600
+    page.refresh_schedule()
+    assert row.details.text().endswith("next in 2m34s")
+    # Paused (locked / idle): it stands still (the sidebar says why).
+    client.publish(OVERVIEW.model_copy(update={"paused": "idle"}))
+    client.answer_status(OVERVIEW)
+    clock.now += 600
+    page.refresh_schedule()
+    assert row.details.text().endswith("next in 13m")
+
+
+def test_status_is_asked_once_at_a_time(page: HomePage, client: FakeClient) -> None:
+    client.publish(OVERVIEW)
+    client.publish(OVERVIEW)
+    assert len([r for r, _ in client.calls if r.command == "status"]) == 1
+    client.answer_status(OVERVIEW)  # then once more, for the newer overview
+    assert len([r for r, _ in client.calls if r.command == "status"]) == 1
+    assert page.rows["konachan"].details.text()
+
+
+def test_hover_highlights_a_playlist_in_the_drawing_and_its_row(
+    qtbot: QtBot, page: HomePage, client: FakeClient
+) -> None:
+    client.publish(OVERVIEW)
+    view = page.monitors_view
+    konachan, fantasy = page.rows["konachan"], page.rows["fantasy"]
+    assert view.highlight() is None and not konachan.highlighted()
+    # Pointing at a row outlines its monitors.
+    konachan.hovered.emit("konachan")
+    assert view.highlight() == "konachan"
+    assert konachan.highlighted() and not fantasy.highlighted()
+    view.grab()  # paints the outline without error
+    konachan.hovered.emit(None)
+    assert view.highlight() is None and not konachan.highlighted()
+    # Pointing at a monitor highlights its row; one in no playlist, nothing.
+    boxes = {str(p.monitor.id): p.box for p in view.placed()}
+
+    def centre(monitor_id: str) -> QPoint:
+        box = boxes[monitor_id]
+        return QPoint(round(box.x + box.width / 2), round(box.y + box.height / 2))
+
+    QTest.mouseMove(view, centre("plx"))
+    qtbot.waitUntil(konachan.highlighted)
+    assert view.highlight() == "konachan" and not fantasy.highlighted()
+    QTest.mouseMove(view, centre("tv"))
+    qtbot.waitUntil(lambda: view.highlight() is None)
+    assert not konachan.highlighted()
+
+
+def test_buttons_send_commands(page: HomePage, client: FakeClient) -> None:
+    held_fav = KONACHAN.model_copy(update={"favourite": True, "held": True})
+    client.publish(
+        Overview(playlists=(KONACHAN, held_fav.model_copy(update={"name": "other"})))
+    )
+    row, other = page.rows["konachan"], page.rows["other"]
+    for button in (
+        row.prev_button,
+        row.next_button,
+        row.fav_button,
+        row.remove_button,
+        row.hold_button,
+        other.fav_button,
+        other.hold_button,
+    ):
+        button.click()
+    assert client.commands() == [
+        Request(command="prev", target="konachan"),
+        Request(command="next", target="konachan"),
+        Request(command="fav", target="konachan"),
+        Request(command="remove", target="konachan"),
+        Request(command="hold", target="konachan"),
+        Request(command="unfav", target="other"),  # it is a favourite
+        Request(command="resume", target="other"),  # it is held
+    ]
+    assert row.prev_button.toolTip() == "Previous"
+    assert row.prev_button.accessibleName() == "Previous"
+    assert other.fav_button.accessibleName() == "Remove from favourites"
+
+
+def test_toggles_follow_the_overview_not_the_click(
+    page: HomePage, client: FakeClient
+) -> None:
+    client.publish(Overview(playlists=(KONACHAN,)))
+    row = page.rows["konachan"]
+    row.fav_button.click()
+    row.hold_button.click()
+    request, on_reply = client.calls[-2]
+    assert request == Request(command="fav", target="konachan")
+    on_reply(
+        MarkResult(
+            command="fav",
+            playlist="konachan",
+            image=Path("/p/konachan/123.jpg"),
+            list_file=Path("/p/favourites.txt"),
+            changed=True,
+        )
+    )
+    assert not row.fav_button.is_on() and not row.hold_button.is_on()
+    on = KONACHAN.model_copy(update={"favourite": True, "held": True})
+    client.publish(Overview(playlists=(on,)))
+    assert row.fav_button.is_on() and row.hold_button.is_on()
+    assert row.chip.text() == "Held"
+    client.publish(Overview(playlists=(KONACHAN,)))
+    assert not row.fav_button.is_on() and not row.hold_button.is_on()
+
+
+def test_nothing_shown_yet(page: HomePage, client: FakeClient) -> None:
+    empty = KONACHAN.model_copy(update={"current": None})
+    client.publish(Overview(playlists=(empty,)))
+    row = page.rows["konachan"]
+    assert row.file.text() == "Nothing shown yet"
+    assert not row.fav_button.isEnabled() and not row.remove_button.isEnabled()
+    assert row.next_button.isEnabled()
+
+
+def test_errors_show_in_the_row(page: HomePage, client: FakeClient) -> None:
+    client.publish(OVERVIEW)
+    row = page.rows["fantasy"]
+    row.next_button.click()
+    _, on_reply = client.calls[-1]
+    on_reply(ErrorReply.make("not_attached", "None of fantasy's monitors is attached"))
+    assert row.message.text() == "None of fantasy's monitors is attached"
+    assert not row.message.isHidden() and not row.message_icon.isHidden()
+    row.prev_button.click()  # a new command clears it
+    assert row.message.isHidden()
+    _, on_reply = client.calls[-1]
+    on_reply(PrevResult(playlist="fantasy", change=None))
+    assert row.message.text() == "Nothing earlier in the history"
+    assert row.message_icon.isHidden()  # a note, not an error
+    row.next_button.click()
+    _, on_reply = client.calls[-1]
+    change = Change("fantasy", Path("/p/fantasy/8.png"), "next", ("ZeroMOD",))
+    on_reply(NextResult(playlist="fantasy", change=change))
+    assert row.message.isHidden()
+
+
+def test_no_playlists_offers_settings(page: HomePage, client: FakeClient) -> None:
+    client.publish(Overview())
+    assert page.empty.isVisible()
+    wanted: list[str] = []
+    page.page_wanted.connect(wanted.append)
+    page.add_button.click()
+    assert wanted == ["settings"]
+    client.publish(OVERVIEW)
+    assert page.empty.isHidden()
+
+
+def test_config_error_and_unreachable_app(page: HomePage, client: FakeClient) -> None:
+    client.publish(Overview(error="No config file"))
+    assert page.banner.text() == "Error: No config file"
+    assert not page.rows and page.empty.isHidden()
+    assert not client.calls  # no status while the service is down
+    client.failed.emit("could not start wallpaper_py")
+    assert page.banner.text() == "Error: could not start wallpaper_py"
+
+
+def test_a_reply_after_closing_is_ignored(page: HomePage, client: FakeClient) -> None:
+    client.publish(OVERVIEW)
+    page.rows["konachan"].next_button.click()
+    page.shutdown()  # the window closed
+    for _, on_reply in client.calls:
+        on_reply(ErrorReply.make("unreachable", "gone"))  # no error
+    client.publish(OVERVIEW)  # nor from a late overview
+
+
+def test_rows_follow_the_config_order_with_dividers_between(
+    page: HomePage, client: FakeClient
+) -> None:
+    third = KONACHAN.model_copy(update={"name": "third"})
+    client.publish(
+        OVERVIEW.model_copy(update={"playlists": (third, *OVERVIEW.playlists)})
+    )
+    assert list(page.rows) == ["third", "konachan", "fantasy"]
+    assert [r.divider() for r in page.rows.values()] == [False, True, True]
+    # A playlist gone from the config: its row goes too.
+    client.publish(OVERVIEW)
+    assert list(page.rows) == ["konachan", "fantasy"]
+    assert [r.divider() for r in page.rows.values()] == [False, True]
+
+
+def test_a_highlighted_row_gets_a_faint_fill(
+    page: HomePage, client: FakeClient
+) -> None:
+    client.publish(OVERVIEW)
+    row = page.rows["konachan"]
+    point = (row.width() // 2, 4)  # above the text, beside the image
+
+    def colour() -> str:
+        return str(row.grab().toImage().pixelColor(*point).name())
+
+    plain = colour()
+    row.set_highlighted(True)
+    assert colour() != plain
+    row.set_highlighted(False)
+    assert colour() == plain

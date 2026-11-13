@@ -1,0 +1,51 @@
+# wallpaper_py config: a reference for every key. You don't need to write
+# it: the settings window (tray: Settings) creates and edits it, and without
+# a file the app runs with no playlists. It lives at the path shown by
+# `wallpaper --help` (on Windows: %LOCALAPPDATA%\wallpaper_py\config.toml).
+#
+# Durations: "45s", "30m", "1h30m", "1d".
+# Paths: use 'single quotes' on Windows, so backslashes are taken literally.
+# Relative paths are relative to this file.
+
+# Pause rotation while the session is locked, or after this long without
+# keyboard / mouse input (false: never), so no image goes by unseen.
+pause_when_locked = true
+pause_when_idle = "5m"
+
+# Favourites and to-remove lists: plain text, one full path per line. You can
+# edit them by hand; to-remove is only a list (and hides images from
+# rotation), files are never deleted. Default: next to the state database.
+# favourites_file = 'D:\pictures\favourites.txt'
+# to_remove_file = 'D:\pictures\to-remove.txt'
+
+# One table per playlist.
+#
+# `id`: the playlist's history and shuffle cycle are kept under it, so the
+# name can change freely. Any text no other playlist has; the settings
+# window makes a random one, so a new playlist never takes over a deleted
+# one's history.
+#
+# `monitors`: monitor ids, from `wallpaper list --all` (names repeat: two
+# monitors of one model). More than one: a mirrored group, which shows the
+# same image on every member. A monitor can be in one playlist. On Windows
+# a monitor plugged into another port gets a new id: assign it again.
+#
+# To stop a playlist for a while, use `wallpaper hold` (or the tray's Hold)
+# rather than editing this file; `wallpaper resume` starts it again.
+[playlists.konachan]
+id = "5d0e8b5c2f1a4e0f9b7c3a6d8e2f4b1c"
+directory = 'D:\pictures\KONACHAN'   # scanned recursively
+monitors = ['\\?\DISPLAY#DELA246#5&2b3e4f&0&UID4352#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}', '\\?\DISPLAY#PLX2783#5&2b3e4f&0&UID4353#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}']
+order = "shuffle"                    # every image once before any repeats
+interval = "30m"                     # active time since the last change
+mode = "fill"                        # fill / fit / stretch; omit: as is
+
+[playlists.fantasy]
+id = "a3c9f4e2b8d14c6e8f0a2b5d7c9e1f3a"
+directory = 'D:\pictures\Fantasy'
+monitors = ['\\?\DISPLAY#AUS27B1#5&2b3e4f&0&UID4354#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}']
+order = "sorted"                     # natural order: 2 before 10
+# "manual": never changes by itself, only by next / prev / pick
+# (`wallpaper pick IMAGE fantasy` shows any image, from any directory).
+interval = "manual"
+mode = "fill"

@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wallpaper_py"
+version = "0.3.0"
+description = "Per-monitor wallpaper playlists for Windows and KDE Plasma"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pillow>=11",
+    "platformdirs>=4",
+    "comtypes>=1.4; sys_platform == 'win32'",
+    "pyside6-essentials>=6.12.0",
+    "pydantic>=2.14.3",
+    "tomlkit>=0.15.2",
+]
+
+[dependency-groups]
+dev = [
+    "black",
+    "mypy",
+    "pylint",
+    "pytest",
+    "pytest-qt>=4.5.0",
+]
+
+[project.scripts]
+wallpaper = "wallpaper_py.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["wallpaper_py*"]
+
+[tool.setuptools.package-data]
+# The app icon and bundled Lucide icons/licence (loaded with importlib.resources).
+"wallpaper_py.app" = ["icons/app-icon.png"]
+"wallpaper_py.app.ui" = ["icons/*.svg", "icons/LICENSE"]
+
+[tool.mypy]
+strict = true
+# every method that overrides one says so (@override): a misspelt or
+# removed base method is then an error, not a method nobody calls.
+enable_error_code = ["explicit-override"]
+
+[[tool.mypy.overrides]]
+# comtypes creates COM methods at runtime, so its own (1.5+) type hints can't
+# describe our interfaces; treat it as untyped.
+module = ["comtypes", "comtypes.*"]
+follow_imports = "skip"
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["windows: needs the real Windows desktop (IDesktopWallpaper)"]

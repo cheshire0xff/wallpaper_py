@@ -1,6 +1,20 @@
+[MAIN]
+# Windows-only modules; don't report them as missing elsewhere.
+ignored-modules=comtypes,winreg
+# Compiled extension modules pylint may introspect.
+extension-pkg-allow-list=PySide6,shiboken6
+
 [MESSAGE CONTROL]
 disable=
     missing-docstring,
     missing-function-docstring,
     missing-class-docstring,
     too-few-public-methods,
+
+[TYPECHECK]
+# Qt signals look like methods to pylint (e.g. QLocalSocket.readyRead).
+generated-members=connect,disconnect,emit
+
+[FORMAT]
+# Match black.
+max-line-length=88

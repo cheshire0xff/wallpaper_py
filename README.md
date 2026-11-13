@@ -1,100 +1,166 @@
 # wallpaper_py
 
-wallpaper_py is a cross‑platform library for managing desktop wallpapers. The project defines a minimal base protocol for common wallpaper management functionality and provides platform‑specific implementations. On Windows, additional monitor details (such as unique monitor identifiers) are required by the Windows APIs. These extra details are encapsulated in Windows‑specific types located in the `windows` directory.
+Per-monitor wallpaper management for **Windows** and (planned) **KDE Plasma**.
 
-## Overview
+The goal is a tray app that runs wallpaper playlists per monitor (or per group
+of mirrored monitors), keeps history and favourites, and browses large
+libraries (10k+ images). See [todo.md](todo.md) for the feature list,
+[docs/plan.md](docs/plan.md) for the phases and
+[docs/architecture.md](docs/architecture.md) for the design.
 
-The library is built around a base protocol defined in `desktop_protocol.py` that includes:
+**Status:** the core, the Windows backend, the playlist service and the tray
+app exist, plus the UI process with its window (Home and Settings). The
+library is next.
 
-- **MonitorDescription:**  
-  A minimal interface that describes a monitor (e.g., using a `Rectangle` for monitor bounds).
+## Install
 
-- **DesktopManager:**  
-  An interface for retrieving monitor information and setting wallpapers, which all platform-specific implementations must follow.
+Python 3.12+, managed with [uv](https://docs.astral.sh/uv/).
 
-Cross‑platform code depends only on these base protocols. Platform‑specific implementations extend the base protocols only where necessary.
+```
+uv sync                           # creates .venv with the package and dev tools
+uv run wallpaper list             # or activate .venv and run `wallpaper` directly
+uv run python scripts/check.py    # black, mypy, pylint, pytest (as CI does)
+```
 
-### Windows‑Specific Extensions
+## CLI
 
-On Windows, extra information is needed to properly interface with the desktop wallpaper API. To address this without "polluting" the cross‑platform interface:
+```
+wallpaper list [--all]
+wallpaper set IMAGE --monitor NAME [--mode fill|fit|stretch]
+```
 
-- **WindowsMonitorDescription:**  
-  Defined in `windows/desktop_manager.py`, this data class extends the base `MonitorDescription` with extra attributes such as `id` (a unique identifier) and `index` (the monitor’s position in the system).
+- `list` shows each monitor's name, position, size, current wallpaper and id;
+  `--all` includes monitors that are known but detached (switched off).
+- `--monitor` takes a monitor name, a unique part of it (`zero` for
+  `ZeroMOD`), or the full id. **Numbers are refused on purpose**: monitor
+  order changes when a monitor is switched off, which is exactly how a
+  wallpaper ends up on the wrong screen.
+- `--mode`: Windows applies one mode to all monitors, so the image is rendered
+  to the monitor's exact resolution instead, letting each monitor use its own
+  mode. If the global mode is *tile* or *span* (used by tools that set one
+  combined image, e.g. John's Background Switcher) it is switched to *fill*.
+  Close such tools first, or they will overwrite the result.
 
-- **WindowsDesktopManager:**  
-  The Windows implementation of `DesktopManager` (found in the `windows` directory) uses these extended types along with COM (via comtypes) to interact with Windows APIs. It includes runtime type checks to ensure that the provided monitor description contains the Windows‑specific fields.
+### Playlists
 
-This separation keeps the cross‑platform core clean while isolating Windows‑only behavior to its dedicated module.
+```
+wallpaper [-c CONFIG] tray                   # the app, in the tray (what starts at login)
+wallpaper [-c CONFIG] run [--poll SECONDS]   # the app, headless in this terminal (Ctrl+C stops)
+wallpaper status                             # playlists, monitors, current, upcoming
+wallpaper next|prev|fav|unfav|remove [TARGET]  # TARGET: playlist or monitor name
+wallpaper pick IMAGE [TARGET]                # show IMAGE now (any directory)
+wallpaper hold|resume [TARGET]               # stop / restart rotating
+wallpaper reload                             # read the config file again
+wallpaper ui [home|library|settings]         # open the window on a page (see below)
+```
 
-## Project Structure
+Playlists are defined in a TOML file; start from
+[docs/config.example.toml](docs/config.example.toml) and save it where
+`wallpaper --help` says (or pass `--config`), or edit it in the settings
+page. `--config` picks the file the app starts with; commands to a
+running app don't need it (they go to whatever config it runs), and one
+given anyway must be the app's.
 
-- **`desktop_protocol.py`**  
-  Defines the minimal, cross‑platform protocols for monitor descriptions and desktop management.
+- A playlist rotates a directory (recursively), *sorted* (natural order) or
+  *shuffled* (every image once before any repeats; the order is kept across
+  reboots), on one monitor or a **mirrored group**.
+- The interval counts *active* time since the last change: it pauses while
+  the session is locked or idle, while none of the playlist's monitors is
+  attached, and while the PC sleeps. `next` / `prev` / `pick` start it again.
+- `pick IMAGE` shows any image, from any directory, as if `next` had
+  chosen it: `prev` goes back to what was shown before. A picked image from
+  the playlist's own directory counts as seen in the current shuffle cycle;
+  in a sorted playlist, rotation goes on from it. The image must be one
+  Pillow can open.
+- `hold` stops a playlist rotating until `resume` (the tray has a *Hold*
+  toggle too); `next`, `prev` and `pick` still work, and the held state
+  survives restarts. `interval = "manual"` in the config makes a playlist
+  that never changes by itself, only by `next` / `prev` / `pick` (it shows
+  nothing until you pick or step it once). `status` and the tray show which
+  playlists are held or manual.
+- A monitor that is switched off is never written to: its playlist waits
+  (a group keeps going on its other members) and the monitor gets the
+  current image when it comes back.
+- `fav` and `remove` append the current image to `favourites.txt` /
+  `to-remove.txt` (one full path per line, editable by hand); `unfav` takes
+  it out of favourites again. `remove` only lists the image and hides it
+  from rotation; deleting is up to you.
 
-- **`windows/desktop_manager.py`**  
-  Contains the Windows‑specific implementation. It provides:
-  - `WindowsMonitorDescription` – an extension of the base monitor description.
-  - `WindowsMonitor` – the monitor type used by Windows.
-  - Windows-specific methods for querying monitor details and setting wallpapers.
+### The app
 
-- **`windows/desktop_wallpaper.py`**  
-  Wraps Windows COM interfaces to interact with the system’s desktop wallpaper API.
+`tray` and `run` start the same app; only one can run at a time (per
+user). It rotates the playlists, and the other commands (`status`, `next`,
+...) are sent to it, so they never collide with a change in progress. When
+no app is running, those commands run by themselves and exit: nothing is
+left running, and nothing rotates until you start the app (`status` says
+so). `list` and `set` work without the app. `--verbose` (before the
+command: `wallpaper --verbose next`) logs whether a command reached the
+running app or ran by itself, and the raw reply.
 
-- **`image.py`**  
-  Contains image processing functions (for modes such as FILL, FIT, and STRETCH) that resize and crop images to match target monitor resolutions.
+The tray menu has a section per playlist (its monitors by name, the current
+image, which opens on click, *Next*, *Previous*, a *Favourite* toggle,
+*Remove*, and a *Hold* toggle unless it is manual; the header says *held* or
+*manual*), then *Open wallpaper_py* (the window on Home), *Library*,
+*Settings…*, *Reload config*
+(after editing it by hand; like `wallpaper reload`, it notifies the error or
+any warnings), *Open config folder*, *Start at login* and *Quit*. Left-click
+opens the window on Home. The icon turns
+grey while rotation is paused and shows a red badge if the config can't be
+loaded. Start at login uses the per-user Run key on Windows and
+`~/.config/autostart` on Linux; it starts `pythonw -m wallpaper_py tray`
+from the current environment, so no console window opens. The tray app logs
+to `wallpaper.log` in the per-user log directory (on Windows
+`%LOCALAPPDATA%\wallpaper_py\Logs`). Everything it adds to your system
+(start at login, files, sockets, what it changes on the desktop) and how to
+remove it all: [docs/system-integration.md](docs/system-integration.md).
 
-- **`cli_parsers.py` and `changer.py`**  
-  Provide a command‑line interface (CLI) for listing monitors and setting wallpapers. The CLI depends only on the base protocols, while the underlying implementation is selected based on the platform.
+The window runs in a separate process (`wallpaper ui`), started when it
+is opened and gone when it closes, so it costs nothing while closed. It has
+a sidebar with its pages (Home, Library, Settings) and the app's status
+(rotation active or paused). Opening it while that process runs just
+brings it to the front on the page asked for; it starts the app if needed
+and closes when the app quits. It follows the system's light / dark mode
+and accent. It logs to `ui.log` next to `wallpaper.log`.
 
-- **(Optional) Factory Module:**  
-  A module (or conditional import in `desktop_manager.py`) may choose the appropriate implementation (Windows or stub/alternative for other platforms) at runtime.
+- **Home** (`wallpaper ui`, tray *Open wallpaper_py*): the monitors to
+  scale with their current wallpapers, and a row per playlist with
+  previous / next, favourite, remove and hold. Pointing at a row outlines
+  its monitors.
+- **Settings** (`wallpaper ui settings`, tray *Settings…*): the config file
+  as a form. *Playlists*: click a monitor in the drawing to choose its
+  playlist (or *No playlist*, or *New playlist…*); one playlist open at a
+  time (the others show a summary), with its name, folder, order, changes
+  (every *duration* of active time, or manually), mode and monitors.
+  *General*:
+  pausing while locked or idle, and where favourites.txt / to-remove.txt
+  are. *About*: the version and every data location, with *Open folder* and
+  *Copy path*. It edits the file the running app uses, in place: only what
+  you changed is written, so your comments and layout stay, and hand
+  editing keeps working. Save asks the app to reload. Problems show next to
+  their field and keep *Save* off; if the file was edited by hand since the
+  page read it, nothing is overwritten and the page offers to load it
+  again. Unsaved changes stay while you visit other pages; closing the
+  window with them asks first.
+- **Library** (`wallpaper ui library`, tray *Library*): a placeholder for
+  now.
 
-## Usage
+Other programs can drive the app over the same socket: see
+[docs/protocol.md](docs/protocol.md).
 
-### Command‑Line Interface (CLI)
+`python -m wallpaper_py ...` works too.
 
-- **List Monitors:**
+## Development
 
-  ```bash
-  python -m wallpaper_py.changer list
-  ```
+```
+python scripts/check.py            # black --check, mypy (strict), pylint, pytest
+python scripts/check.py black      # format
+```
 
-  This command displays all connected monitors along with their positions, sizes, and current wallpaper paths.
+CI runs the same on Windows and Ubuntu. Tests marked `windows` read the real
+desktop (never change it) and are skipped elsewhere. Qt tests run offscreen
+(`tests/conftest.py`) with per-test data directories, so they never show an
+icon or reach a running app. What only a real desktop can show is checked
+by hand: [docs/desktop-checks.md](docs/desktop-checks.md).
 
-- **Set Wallpaper:**
-
-  ```bash
-  python -m wallpaper_py.changer set /path/to/image.jpg --monitor 0 --mode FIT
-  ```
-
-  This sets the wallpaper on monitor 0 using the FIT mode. The image is processed to match the monitor's resolution.
-
-### Code Integration
-
-- **Cross‑Platform Code:**  
-  Code that is intended to be cross‑platform should depend only on the base protocols defined in `desktop_protocol.py`. It will not assume the presence of Windows‑specific fields.
-
-- **Windows‑Specific Code:**  
-  When running on Windows, you can safely use the extended types (such as `WindowsMonitorDescription`) to access extra attributes like `id` or `index`. If needed, a runtime type check (or an explicit cast) can be performed to ensure that a monitor description meets the Windows‑specific contract.
-
-## Design Considerations
-
-### Platform Agnosticism
-
-- **Common Core:**  
-  The base protocols define what is essential across all platforms (e.g., monitor geometry and basic wallpaper management).
-
-- **Isolation of Windows‑Specific Requirements:**  
-  By placing Windows‑specific types and implementations in a dedicated module (the `windows` directory), the design keeps platform‑dependent details isolated. This makes the core API truly cross‑platform and makes it easier to add or update platform‑specific functionality in the future.
-
-### Liskov Substitution Principle (LSP)
-
-- **Minimal Base Contract:**  
-  The base protocol guarantees only the attributes common to all platforms. Windows‑specific details are not part of the base contract.
-
-- **Extended Windows Types:**  
-  Windows‑specific implementations (like `WindowsMonitorDescription`) include extra fields needed only on Windows. Windows‑only code can safely cast to these richer types. Cross‑platform code remains unaffected, adhering to LSP.
-
-## License
-
-This project is licensed under the [MIT License](LICENSE).
+`spikes/` holds throwaway experiments (monitor behaviour when switched off,
+the 20k-image grid prototype); see [spikes/README.md](spikes/README.md).

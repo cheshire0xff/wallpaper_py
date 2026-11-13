@@ -1,0 +1,999 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "wallpaper_py socket protocol",
+  "description": "Protocol version 2. One JSON object per line: a Request in; a Reply out, or Events while subscribed. See docs/protocol.md.",
+  "anyOf": [
+    {
+      "$ref": "#/$defs/Request"
+    },
+    {
+      "$ref": "#/$defs/Reply"
+    },
+    {
+      "$ref": "#/$defs/Event"
+    }
+  ],
+  "$defs": {
+    "Change": {
+      "properties": {
+        "playlist": {
+          "title": "Playlist",
+          "type": "string"
+        },
+        "image": {
+          "format": "path",
+          "title": "Image",
+          "type": "string"
+        },
+        "reason": {
+          "enum": [
+            "scheduled",
+            "next",
+            "previous",
+            "picked",
+            "restored"
+          ],
+          "title": "Reason",
+          "type": "string"
+        },
+        "shown_on": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Shown On",
+          "type": "array"
+        },
+        "missed": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Missed",
+          "type": "array"
+        }
+      },
+      "required": [
+        "playlist",
+        "image",
+        "reason",
+        "shown_on"
+      ],
+      "title": "Change",
+      "type": "object"
+    },
+    "ChangedEvent": {
+      "description": "A wallpaper changed, by a tick or by a command.",
+      "properties": {
+        "event": {
+          "const": "changed",
+          "default": "changed",
+          "title": "Event",
+          "type": "string"
+        },
+        "change": {
+          "$ref": "#/$defs/Change"
+        }
+      },
+      "required": [
+        "change"
+      ],
+      "title": "ChangedEvent",
+      "type": "object"
+    },
+    "DesktopMonitor": {
+      "description": "A monitor the desktop lists, whether a playlist drives it or not.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "geometry": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Geometry"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "geometry"
+      ],
+      "title": "DesktopMonitor",
+      "type": "object"
+    },
+    "Envelope": {
+      "additionalProperties": false,
+      "description": "A request on the wire.",
+      "properties": {
+        "v": {
+          "default": 2,
+          "title": "V",
+          "type": "integer"
+        },
+        "request": {
+          "discriminator": {
+            "mapping": {
+              "fav": "#/$defs/Request",
+              "hold": "#/$defs/Request",
+              "next": "#/$defs/Request",
+              "pick": "#/$defs/PickRequest",
+              "prev": "#/$defs/Request",
+              "prune": "#/$defs/PruneRequest",
+              "reload": "#/$defs/ReloadRequest",
+              "remove": "#/$defs/Request",
+              "resume": "#/$defs/Request",
+              "status": "#/$defs/Request",
+              "subscribe": "#/$defs/Subscribe",
+              "unfav": "#/$defs/Request"
+            },
+            "propertyName": "command"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Request"
+            },
+            {
+              "$ref": "#/$defs/PickRequest"
+            },
+            {
+              "$ref": "#/$defs/PruneRequest"
+            },
+            {
+              "$ref": "#/$defs/ReloadRequest"
+            },
+            {
+              "$ref": "#/$defs/Subscribe"
+            }
+          ],
+          "title": "Request"
+        },
+        "config": {
+          "anyOf": [
+            {
+              "format": "path",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Config"
+        }
+      },
+      "required": [
+        "request"
+      ],
+      "title": "Envelope",
+      "type": "object"
+    },
+    "ErrorInfo": {
+      "properties": {
+        "kind": {
+          "enum": [
+            "protocol",
+            "wrong_config",
+            "config_error",
+            "unknown_target",
+            "not_attached",
+            "no_images",
+            "nothing_shown",
+            "bad_image",
+            "failed",
+            "internal",
+            "unreachable"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "message"
+      ],
+      "title": "ErrorInfo",
+      "type": "object"
+    },
+    "ErrorReply": {
+      "properties": {
+        "error": {
+          "$ref": "#/$defs/ErrorInfo"
+        }
+      },
+      "required": [
+        "error"
+      ],
+      "title": "ErrorReply",
+      "type": "object"
+    },
+    "Event": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ChangedEvent"
+        },
+        {
+          "$ref": "#/$defs/OverviewChangedEvent"
+        }
+      ],
+      "discriminator": {
+        "propertyName": "event",
+        "mapping": {
+          "changed": "#/$defs/ChangedEvent",
+          "overview_changed": "#/$defs/OverviewChangedEvent"
+        }
+      }
+    },
+    "Geometry": {
+      "description": "A monitor's area in desktop pixels; x and y may be negative.",
+      "properties": {
+        "x": {
+          "title": "X",
+          "type": "integer"
+        },
+        "y": {
+          "title": "Y",
+          "type": "integer"
+        },
+        "width": {
+          "title": "Width",
+          "type": "integer"
+        },
+        "height": {
+          "title": "Height",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height"
+      ],
+      "title": "Geometry",
+      "type": "object"
+    },
+    "HoldResult": {
+      "properties": {
+        "command": {
+          "const": "hold",
+          "default": "hold",
+          "title": "Command",
+          "type": "string"
+        },
+        "playlist": {
+          "title": "Playlist",
+          "type": "string"
+        },
+        "held": {
+          "title": "Held",
+          "type": "boolean"
+        },
+        "changed": {
+          "title": "Changed",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "playlist",
+        "held",
+        "changed"
+      ],
+      "title": "HoldResult",
+      "type": "object"
+    },
+    "ImageMode": {
+      "enum": [
+        "fill",
+        "fit",
+        "stretch"
+      ],
+      "title": "ImageMode",
+      "type": "string"
+    },
+    "MarkResult": {
+      "properties": {
+        "command": {
+          "enum": [
+            "fav",
+            "unfav"
+          ],
+          "title": "Command",
+          "type": "string"
+        },
+        "playlist": {
+          "title": "Playlist",
+          "type": "string"
+        },
+        "image": {
+          "format": "path",
+          "title": "Image",
+          "type": "string"
+        },
+        "list_file": {
+          "format": "path",
+          "title": "List File",
+          "type": "string"
+        },
+        "changed": {
+          "title": "Changed",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "command",
+        "playlist",
+        "image",
+        "list_file",
+        "changed"
+      ],
+      "title": "MarkResult",
+      "type": "object"
+    },
+    "MonitorView": {
+      "description": "A playlist's member. `id` is spelt as the desktop spells it when the\nmonitor is listed (as in `Overview.monitors`), else as the config\ndoes; ids compare case-insensitively (`MonitorId`).",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "attached": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Attached"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "attached"
+      ],
+      "title": "MonitorView",
+      "type": "object"
+    },
+    "NextResult": {
+      "properties": {
+        "command": {
+          "const": "next",
+          "default": "next",
+          "title": "Command",
+          "type": "string"
+        },
+        "playlist": {
+          "title": "Playlist",
+          "type": "string"
+        },
+        "change": {
+          "$ref": "#/$defs/Change"
+        }
+      },
+      "required": [
+        "playlist",
+        "change"
+      ],
+      "title": "NextResult",
+      "type": "object"
+    },
+    "Order": {
+      "enum": [
+        "sorted",
+        "shuffle"
+      ],
+      "title": "Order",
+      "type": "string"
+    },
+    "Overview": {
+      "description": "The small snapshot the tray and the windows draw from.",
+      "properties": {
+        "playlists": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/PlaylistView"
+          },
+          "title": "Playlists",
+          "type": "array"
+        },
+        "monitors": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/DesktopMonitor"
+          },
+          "title": "Monitors",
+          "type": "array"
+        },
+        "paused": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Paused"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "config": {
+          "anyOf": [
+            {
+              "format": "path",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Config"
+        }
+      },
+      "title": "Overview",
+      "type": "object"
+    },
+    "OverviewChangedEvent": {
+      "description": "The overview changed; also the first event of every subscription.",
+      "properties": {
+        "event": {
+          "const": "overview_changed",
+          "default": "overview_changed",
+          "title": "Event",
+          "type": "string"
+        },
+        "overview": {
+          "$ref": "#/$defs/Overview"
+        }
+      },
+      "required": [
+        "overview"
+      ],
+      "title": "OverviewChangedEvent",
+      "type": "object"
+    },
+    "PickRequest": {
+      "additionalProperties": false,
+      "description": "Show a chosen image on a playlist now (from any directory).",
+      "properties": {
+        "command": {
+          "const": "pick",
+          "default": "pick",
+          "title": "Command",
+          "type": "string"
+        },
+        "target": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target"
+        },
+        "image": {
+          "format": "path",
+          "title": "Image",
+          "type": "string"
+        }
+      },
+      "required": [
+        "image"
+      ],
+      "title": "PickRequest",
+      "type": "object"
+    },
+    "PickResult": {
+      "properties": {
+        "command": {
+          "const": "pick",
+          "default": "pick",
+          "title": "Command",
+          "type": "string"
+        },
+        "playlist": {
+          "title": "Playlist",
+          "type": "string"
+        },
+        "change": {
+          "$ref": "#/$defs/Change"
+        }
+      },
+      "required": [
+        "playlist",
+        "change"
+      ],
+      "title": "PickResult",
+      "type": "object"
+    },
+    "PlaylistDetails": {
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "monitors": {
+          "items": {
+            "$ref": "#/$defs/MonitorView"
+          },
+          "title": "Monitors",
+          "type": "array"
+        },
+        "current": {
+          "anyOf": [
+            {
+              "format": "path",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Current"
+        },
+        "favourite": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Favourite"
+        },
+        "held": {
+          "default": false,
+          "title": "Held",
+          "type": "boolean"
+        },
+        "manual": {
+          "default": false,
+          "title": "Manual",
+          "type": "boolean"
+        },
+        "directory": {
+          "format": "path",
+          "title": "Directory",
+          "type": "string"
+        },
+        "order": {
+          "$ref": "#/$defs/Order"
+        },
+        "interval": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Interval"
+        },
+        "mode": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ImageMode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "next_in_seconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Next In Seconds"
+        },
+        "upcoming": {
+          "items": {
+            "format": "path",
+            "type": "string"
+          },
+          "title": "Upcoming",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "monitors",
+        "current",
+        "favourite",
+        "directory",
+        "order",
+        "interval",
+        "mode",
+        "next_in_seconds",
+        "upcoming"
+      ],
+      "title": "PlaylistDetails",
+      "type": "object"
+    },
+    "PlaylistView": {
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "monitors": {
+          "items": {
+            "$ref": "#/$defs/MonitorView"
+          },
+          "title": "Monitors",
+          "type": "array"
+        },
+        "current": {
+          "anyOf": [
+            {
+              "format": "path",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Current"
+        },
+        "favourite": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Favourite"
+        },
+        "held": {
+          "default": false,
+          "title": "Held",
+          "type": "boolean"
+        },
+        "manual": {
+          "default": false,
+          "title": "Manual",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "monitors",
+        "current",
+        "favourite"
+      ],
+      "title": "PlaylistView",
+      "type": "object"
+    },
+    "PrevResult": {
+      "properties": {
+        "command": {
+          "const": "prev",
+          "default": "prev",
+          "title": "Command",
+          "type": "string"
+        },
+        "playlist": {
+          "title": "Playlist",
+          "type": "string"
+        },
+        "change": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Change"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "playlist",
+        "change"
+      ],
+      "title": "PrevResult",
+      "type": "object"
+    },
+    "PruneRequest": {
+      "additionalProperties": false,
+      "description": "Drop the state of playlist ids no longer in the config.",
+      "properties": {
+        "command": {
+          "const": "prune",
+          "default": "prune",
+          "title": "Command",
+          "type": "string"
+        }
+      },
+      "title": "PruneRequest",
+      "type": "object"
+    },
+    "PruneResult": {
+      "description": "The state of playlist ids no longer in the config was dropped.",
+      "properties": {
+        "command": {
+          "const": "prune",
+          "default": "prune",
+          "title": "Command",
+          "type": "string"
+        },
+        "dropped": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Dropped",
+          "type": "array"
+        }
+      },
+      "required": [
+        "dropped"
+      ],
+      "title": "PruneResult",
+      "type": "object"
+    },
+    "ReloadRequest": {
+      "additionalProperties": false,
+      "description": "Read the config file again (after it was edited).",
+      "properties": {
+        "command": {
+          "const": "reload",
+          "default": "reload",
+          "title": "Command",
+          "type": "string"
+        }
+      },
+      "title": "ReloadRequest",
+      "type": "object"
+    },
+    "ReloadResult": {
+      "description": "The config was read again and the playlists restarted from it.",
+      "properties": {
+        "command": {
+          "const": "reload",
+          "default": "reload",
+          "title": "Command",
+          "type": "string"
+        },
+        "warnings": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Warnings",
+          "type": "array"
+        }
+      },
+      "title": "ReloadResult",
+      "type": "object"
+    },
+    "RemoveResult": {
+      "properties": {
+        "command": {
+          "const": "remove",
+          "default": "remove",
+          "title": "Command",
+          "type": "string"
+        },
+        "playlist": {
+          "title": "Playlist",
+          "type": "string"
+        },
+        "image": {
+          "format": "path",
+          "title": "Image",
+          "type": "string"
+        },
+        "list_file": {
+          "format": "path",
+          "title": "List File",
+          "type": "string"
+        },
+        "change": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Change"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "playlist",
+        "image",
+        "list_file",
+        "change"
+      ],
+      "title": "RemoveResult",
+      "type": "object"
+    },
+    "Reply": {
+      "anyOf": [
+        {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/StatusResult"
+            },
+            {
+              "$ref": "#/$defs/NextResult"
+            },
+            {
+              "$ref": "#/$defs/PrevResult"
+            },
+            {
+              "$ref": "#/$defs/MarkResult"
+            },
+            {
+              "$ref": "#/$defs/RemoveResult"
+            },
+            {
+              "$ref": "#/$defs/PickResult"
+            },
+            {
+              "$ref": "#/$defs/HoldResult"
+            },
+            {
+              "$ref": "#/$defs/ResumeResult"
+            },
+            {
+              "$ref": "#/$defs/PruneResult"
+            },
+            {
+              "$ref": "#/$defs/ReloadResult"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "command",
+            "mapping": {
+              "status": "#/$defs/StatusResult",
+              "next": "#/$defs/NextResult",
+              "prev": "#/$defs/PrevResult",
+              "fav": "#/$defs/MarkResult",
+              "unfav": "#/$defs/MarkResult",
+              "remove": "#/$defs/RemoveResult",
+              "pick": "#/$defs/PickResult",
+              "hold": "#/$defs/HoldResult",
+              "resume": "#/$defs/ResumeResult",
+              "prune": "#/$defs/PruneResult",
+              "reload": "#/$defs/ReloadResult"
+            }
+          }
+        },
+        {
+          "$ref": "#/$defs/ErrorReply"
+        }
+      ]
+    },
+    "Request": {
+      "$ref": "#/$defs/Envelope"
+    },
+    "ResumeResult": {
+      "properties": {
+        "command": {
+          "const": "resume",
+          "default": "resume",
+          "title": "Command",
+          "type": "string"
+        },
+        "playlist": {
+          "title": "Playlist",
+          "type": "string"
+        },
+        "held": {
+          "title": "Held",
+          "type": "boolean"
+        },
+        "changed": {
+          "title": "Changed",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "playlist",
+        "held",
+        "changed"
+      ],
+      "title": "ResumeResult",
+      "type": "object"
+    },
+    "StatusResult": {
+      "properties": {
+        "command": {
+          "const": "status",
+          "default": "status",
+          "title": "Command",
+          "type": "string"
+        },
+        "playlists": {
+          "items": {
+            "$ref": "#/$defs/PlaylistDetails"
+          },
+          "title": "Playlists",
+          "type": "array"
+        },
+        "paused": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Paused"
+        },
+        "warnings": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Warnings",
+          "type": "array"
+        }
+      },
+      "required": [
+        "playlists",
+        "paused"
+      ],
+      "title": "StatusResult",
+      "type": "object"
+    },
+    "Subscribe": {
+      "additionalProperties": false,
+      "description": "Keep the connection open and receive one `Event` per line.",
+      "properties": {
+        "command": {
+          "const": "subscribe",
+          "default": "subscribe",
+          "title": "Command",
+          "type": "string"
+        }
+      },
+      "title": "Subscribe",
+      "type": "object"
+    }
+  }
+}
