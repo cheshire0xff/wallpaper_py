@@ -93,7 +93,7 @@ class PlaylistSettings:
     monitors: tuple[MonitorId, ...]
     interval: str  # a duration ("30m"), or MANUAL
     order: Order = Order.SHUFFLE
-    mode: ImageMode | None = None  # None: as is (no `mode` key)
+    mode: ImageMode = ImageMode.FILL
 
     @property
     def manual(self) -> bool:
@@ -284,11 +284,7 @@ def _write_playlist(table: Table, old: PlaylistSettings, new: PlaylistSettings) 
     if new.interval != old.interval:
         _set(table, "interval", _string(new.interval, _existing(table, "interval")))
     if new.mode != old.mode:
-        if new.mode is None:  # as is: no key
-            if "mode" in table:
-                del table["mode"]
-        else:
-            _set(table, "mode", _string(new.mode.value, _existing(table, "mode")))
+        _set(table, "mode", _string(new.mode.value, _existing(table, "mode")))
 
 
 def _add_playlist(doc: TOMLDocument, playlist: PlaylistSettings) -> None:
@@ -302,8 +298,7 @@ def _add_playlist(doc: TOMLDocument, playlist: PlaylistSettings) -> None:
     table.append("monitors", _monitor_ids(playlist.monitors, None))
     table.append("order", playlist.order.value)
     table.append("interval", playlist.interval)
-    if playlist.mode is not None:
-        table.append("mode", playlist.mode.value)
+    table.append("mode", playlist.mode.value)
     # A blank line before its header, unless the file already ends with one.
     rendered = doc.as_string()
     if rendered and not rendered.endswith("\n\n"):

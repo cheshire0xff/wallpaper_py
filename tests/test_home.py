@@ -39,7 +39,7 @@ from wallpaper_py.app.ui.thumbnails import (
     ThumbnailLoader,
 )
 from wallpaper_py.core.config import Order
-from wallpaper_py.core.model import MonitorId
+from wallpaper_py.core.model import ImageMode, MonitorId
 from wallpaper_py.core.service import Change
 from wallpaper_py.protocol import (
     DesktopMonitor,
@@ -105,7 +105,7 @@ def details(view: PlaylistView, next_in: float | None = 754.0) -> PlaylistDetail
         directory=Path("/p") / view.name,
         order=Order.SHUFFLE,
         interval=None if view.manual else 1800.0,
-        mode=None,
+        mode=ImageMode.FILL,
         next_in_seconds=None if view.manual else next_in,
         upcoming=(),
     )

@@ -140,7 +140,7 @@ def test_defaults_when_the_file_leaves_keys_out() -> None:
     [playlist] = settings.playlists
     assert (playlist.monitors, playlist.interval) == ((MonitorId("M"),), "manual")
     assert str(playlist.monitors[0]) == "M"  # as the app reads it: no padding
-    assert (playlist.order, playlist.mode) == (Order.SHUFFLE, None)
+    assert (playlist.order, playlist.mode) == (Order.SHUFFLE, ImageMode.FILL)
     assert read_settings("pause_when_idle = false\n").pause_when_idle is None
 
 
@@ -214,18 +214,17 @@ def test_order_and_mode() -> None:
     )
 
 
-def test_as_is_removes_mode_and_back_adds_it_after_the_last_key() -> None:
-    as_is = edit_playlist(COMMENTED, "konachan", mode=None)
-    assert diff(COMMENTED, as_is) == (
-        ['mode = "fill"                        # fill / fit / stretch; omit: as is'],
-        [],
-    )
-    again = edit_playlist(as_is, "konachan", mode=ImageMode.STRETCH)
+def test_a_mode_is_added_after_the_last_key() -> None:
+    line = 'mode = "fill"                        # fill (the default) / fit / stretch'
+    without = COMMENTED.replace(line + "\n", "", 1)
+    assert without != COMMENTED
+    assert read_settings(without).playlists[0].mode is ImageMode.FILL  # the default
+    again = edit_playlist(without, "konachan", mode=ImageMode.STRETCH)
     # Under interval, not under the comment that belongs to the next table.
     lines = again.splitlines()
     index = lines.index('mode = "stretch"')
     assert lines[index - 1].startswith("interval = ")
-    assert diff(as_is, again) == ([], ['mode = "stretch"'])
+    assert diff(without, again) == ([], ['mode = "stretch"'])
 
 
 def test_monitors(tmp_path: Path) -> None:
@@ -271,7 +270,7 @@ def test_delete_keeps_the_comments_above_the_next_table(tmp_path: Path) -> None:
         f"monitors = ['{AW.id}', '{PLX.id}']",
         'order = "shuffle"                    # every image once before any repeats',
         'interval = "30m"                     # active time since the last change',
-        'mode = "fill"                        # fill / fit / stretch; omit: as is',
+        'mode = "fill"                        # fill (the default) / fit / stretch',
     ]
     assert not added  # the blank line stays, between two comment blocks
     assert "starts it again.\n\n# The strip under" in new
@@ -282,7 +281,7 @@ def test_delete_keeps_the_comments_above_the_next_table(tmp_path: Path) -> None:
     edited = replace(base, playlists=base.playlists[:1])
     new = render(COMMENTED, base, edited)
     assert "fantasy" not in new and "The strip under" not in new
-    assert new.endswith("omit: as is\n\n")
+    assert new.endswith("/ fit / stretch\n\n")
 
 
 def test_add_appends_a_table(tmp_path: Path) -> None:
@@ -354,8 +353,7 @@ def test_general_settings() -> None:
 
 def test_crlf_files_stay_crlf() -> None:
     text = COMMENTED.replace("\n", "\r\n")
-    new = edit_playlist(text, "konachan", mode=None)
-    new = edit_playlist(new, "konachan", mode=ImageMode.FIT)
+    new = edit_playlist(text, "konachan", mode=ImageMode.FIT)
     assert "\n" not in new.replace("\r\n", "")
     base = read_settings(text)
     added = replace(new_playlist(base, 5, (MonitorId("M"),)), directory="d")

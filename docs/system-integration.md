@@ -82,14 +82,14 @@ The messages are documented in [protocol.md](protocol.md).
 ## What it changes on your desktop
 
 - **The wallpaper of each monitor**, through Windows' own per-monitor
-  wallpaper interface. An image that needs fitting (`mode = "fill"` etc.)
-  is first rendered to the monitor's exact size and saved in the cache
+  wallpaper interface. Every image is first rendered to the monitor's
+  exact size with its mode (fill, fit, stretch) and saved in the cache
   folder; Windows is then pointed at that file. Each monitor uses two cache
   files in turn, so the cache never grows.
-- **Windows' wallpaper position**, once: Windows applies one fit mode to
-  all monitors, so wallpaper_py sets it to *fill* if it was *tile* or
-  *span* (modes some other wallpaper tools use). With the images rendered
-  to size, *fill* shows them exactly.
+- **Windows' wallpaper position**: Windows applies one position to all
+  monitors; wallpaper_py keeps it at *fill*, setting it only when it is
+  something else (e.g. *tile* or *span*, which some other wallpaper tools
+  use). With the images rendered to size, *fill* shows them exactly.
 - Nothing else: it doesn't change the lock screen, themes or colours.
 
 It *reads* (never changes): the list of monitors and their positions,

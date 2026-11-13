@@ -11,11 +11,9 @@ from pathlib import Path
 from comtypes import COMError
 
 from wallpaper_py.core.model import (
-    ImageMode,
     Monitor,
     MonitorId,
     MonitorNotAttachedError,
-    UnsupportedModeError,
     WallpaperError,
 )
 
@@ -59,10 +57,6 @@ class WindowsBackend:
         self._dw = None
         return WallpaperError(f"Windows wallpaper call failed: {err}")
 
-    @property
-    def per_monitor_modes(self) -> bool:
-        return False
-
     def monitors(self) -> list[Monitor]:
         self._known_names.update(monitor_names())
         try:
@@ -102,14 +96,7 @@ class WindowsBackend:
             )
         return result
 
-    def set_wallpaper(
-        self, monitor_id: MonitorId, image: Path, mode: ImageMode | None = None
-    ) -> None:
-        if mode is not None:
-            raise UnsupportedModeError(
-                "Windows applies the image mode to all monitors; "
-                "use set_global_mode or a pre-rendered image"
-            )
+    def set_wallpaper(self, monitor_id: MonitorId, image: Path) -> None:
         try:
             dw = self._wallpaper()
         except COMError as err:
@@ -121,21 +108,11 @@ class WindowsBackend:
             self._dw = None
             raise MonitorNotAttachedError(f"{monitor_id} is not attached") from err
         try:
+            # One position for all monitors. Any but tile / span / center
+            # shows an exact-size image as is; Fill is kept, and set only
+            # when it differs: setting it redraws every monitor.
+            if dw.get_position() != Position.FILL:
+                dw.set_position(Position.FILL)
             dw.set_wallpaper(str(monitor_id), str(image.resolve()))
         except COMError as err:
             raise self._com_failed(err) from err
-
-    def set_global_mode(self, mode: ImageMode) -> None:
-        try:
-            self._wallpaper().set_position(Position[mode.name])
-        except COMError as err:
-            raise self._com_failed(err) from err
-
-    def global_mode(self) -> ImageMode | None:
-        try:
-            position = self._wallpaper().get_position()
-        except COMError as err:
-            raise self._com_failed(err) from err
-        if position.name in ImageMode.__members__:
-            return ImageMode[position.name]
-        return None  # tile, span, center

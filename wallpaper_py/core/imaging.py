@@ -1,9 +1,10 @@
 """
-Render an image to an exact monitor size (fill / fit / stretch).
+Render an image as it looks on a screen (a `Look`: fill / fit / stretch).
 
-Used when the platform can't apply a different mode per monitor (Windows):
-an image rendered to the monitor's exact resolution looks the same whatever
-the global mode is.
+Every wallpaper is rendered to its monitor's exact resolution (core.setter),
+so the system only ever shows exact-size images and every look is the
+same on every platform. The renderer knows nothing of the service, the
+backend or where the result goes.
 """
 
 from __future__ import annotations
@@ -12,13 +13,13 @@ from pathlib import Path
 
 from PIL import Image, ImageOps
 
-from .model import ImageLoadError, ImageMode
+from .model import ImageLoadError, ImageMode, Look
 
 BACKGROUND = (0, 0, 0)
 
 # Renders are saved as BMP: lossless like PNG, but with no compression to
 # compute (a 4K render saves in ~15 ms instead of ~150 ms). The cost is disk:
-# ~25 MB per 4K render, two slots per monitor (see core.setter).
+# ~25 MB per 4K render, two slots per monitor (see core.setter), saved there.
 RENDER_SUFFIX = ".bmp"
 
 _ORIENTATION = 0x0112  # the EXIF tag
@@ -80,26 +81,33 @@ def fit_size(src: tuple[int, int], dst: tuple[int, int]) -> tuple[int, int]:
     return max(1, round(src[0] * ratio)), max(1, round(src[1] * ratio))
 
 
-def render(img: Image.Image, size: tuple[int, int], mode: ImageMode) -> Image.Image:
+def render(
+    img: Image.Image, screen: tuple[int, int], output: tuple[int, int], look: Look
+) -> Image.Image:
+    """
+    `img` as it looks with `look` on a screen of `screen` pixels, drawn at
+    `output` pixels (the screen's own size for a wallpaper, smaller for a
+    preview; about the screen's aspect ratio either way).
+
+    The rule that keeps previews true: a look depends on the screen, never
+    on the output. Anything measured in pixels (a margin, a blur radius) is
+    in screen pixels, worked out at the screen's size and scaled to the
+    output; so a render at preview size is the full render, smaller.
+    """
     lanczos = Image.Resampling.LANCZOS
+    mode = look.mode
     if mode is ImageMode.STRETCH:
-        return img.resize(size, lanczos)
+        return img.resize(output, lanczos)
     if mode is ImageMode.FILL:
-        return img.resize(size, lanczos, box=fill_box(img.size, size))
+        return img.resize(output, lanczos, box=fill_box(img.size, screen))
     if mode is ImageMode.FIT:
-        inner = fit_size(img.size, size)
-        canvas = Image.new("RGB", size, BACKGROUND)
-        offset = ((size[0] - inner[0]) // 2, (size[1] - inner[1]) // 2)
-        canvas.paste(img.resize(inner, lanczos), offset)
+        inner = fit_size(img.size, screen)
+        size = (
+            max(1, round(inner[0] * output[0] / screen[0])),
+            max(1, round(inner[1] * output[1] / screen[1])),
+        )
+        canvas = Image.new("RGB", output, BACKGROUND)
+        offset = ((output[0] - size[0]) // 2, (output[1] - size[1]) // 2)
+        canvas.paste(img.resize(size, lanczos), offset)
         return canvas
     raise ValueError(f"Unsupported mode: {mode}")
-
-
-def render_file(
-    source: Path, size: tuple[int, int], mode: ImageMode, destination: Path
-) -> Path:
-    """Render `source` to exactly `size` and save it as BMP at `destination`."""
-    result = render(load(source, size), size, mode)
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    result.save(destination, "BMP")
-    return destination

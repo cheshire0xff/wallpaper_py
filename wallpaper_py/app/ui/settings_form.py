@@ -56,11 +56,10 @@ ORDERS: tuple[tuple[str, Order, str], ...] = (  # label, value, description
     ("Shuffle", Order.SHUFFLE, "Shuffle shows every image once before any repeats"),
     ("Sorted", Order.SORTED, "Sorted goes in natural order: 2 before 10"),
 )
-MODES: tuple[tuple[str, ImageMode | None, str], ...] = (  # label, value, tooltip
+MODES: tuple[tuple[str, ImageMode, str], ...] = (  # label, value, tooltip
     ("Fill", ImageMode.FILL, "Cover the screen, cropping"),
     ("Fit", ImageMode.FIT, "The whole image, letterboxed"),
     ("Stretch", ImageMode.STRETCH, "To the screen's shape"),
-    ("As is", None, "The system's own mode"),
 )
 CHANGES = (("Every", EVERY), ("Manually", MANUALLY))
 CHANGES_HELP = {

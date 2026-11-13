@@ -1,10 +1,10 @@
 from pathlib import Path
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageChops, ImageStat
 
-from wallpaper_py.core.imaging import fill_box, fit_size, load, render, render_file
-from wallpaper_py.core.model import ImageMode
+from wallpaper_py.core.imaging import fill_box, fit_size, load, render
+from wallpaper_py.core.model import ImageMode, Look
 
 RED, GREEN, BLUE, BLACK = (255, 0, 0), (0, 255, 0), (0, 0, 255), (0, 0, 0)
 
@@ -52,14 +52,14 @@ def test_fit_size(
 
 
 def test_fill_keeps_the_center() -> None:
-    result = render(stripes(), (100, 100), ImageMode.FILL)
+    result = render(stripes(), (100, 100), (100, 100), Look(ImageMode.FILL))
     assert result.size == (100, 100)
     for x in (5, 50, 94):
         assert close_to(result.getpixel((x, 50)), GREEN)
 
 
 def test_fit_letterboxes_with_black() -> None:
-    result = render(stripes(), (100, 100), ImageMode.FIT)
+    result = render(stripes(), (100, 100), (100, 100), Look(ImageMode.FIT))
     assert result.size == (100, 100)
     assert result.getpixel((50, 5)) == BLACK  # bar above
     assert result.getpixel((50, 94)) == BLACK  # bar below
@@ -68,28 +68,57 @@ def test_fit_letterboxes_with_black() -> None:
 
 
 def test_stretch_keeps_everything() -> None:
-    result = render(stripes(), (90, 200), ImageMode.STRETCH)
+    result = render(stripes(), (90, 200), (90, 200), Look(ImageMode.STRETCH))
     assert result.size == (90, 200)
     assert close_to(result.getpixel((5, 100)), RED)
     assert close_to(result.getpixel((84, 100)), BLUE)
 
 
+def test_the_default_look_is_fill() -> None:
+    assert Look() == Look(ImageMode.FILL)
+
+
+@pytest.mark.parametrize("mode", list(ImageMode))
+@pytest.mark.parametrize(
+    ("screen", "output"),
+    [
+        ((1920, 1080), (480, 270)),
+        ((1080, 1920), (270, 480)),
+        ((2560, 1440), (481, 271)),
+    ],
+)
+def test_a_preview_is_the_full_render_smaller(
+    mode: ImageMode, screen: tuple[int, int], output: tuple[int, int]
+) -> None:
+    """
+    The rule every look keeps: it depends on the screen, never on the
+    output size. A feature measured in output pixels fails this.
+    """
+    img = stripes(900, 400)
+    img.paste((255, 255, 255), (400, 150, 500, 250))  # a square: shapes show
+    look = Look(mode)
+    full = render(img, screen, screen, look)
+    preview = render(img, screen, output, look)
+    assert full.size == screen and preview.size == output
+    expected = full.resize(output, Image.Resampling.LANCZOS)
+    difference = ImageStat.Stat(ImageChops.difference(preview, expected)).mean
+    assert max(difference) < 4, difference
+
+
 @pytest.mark.parametrize("source_mode", ["RGB", "RGBA", "P", "L"])
-def test_render_file_writes_exact_size_bmp(tmp_path: Path, source_mode: str) -> None:
+def test_any_source_loads_as_rgb(tmp_path: Path, source_mode: str) -> None:
     source = tmp_path / "source.png"
     stripes().convert(source_mode).save(source)
-    out = render_file(source, (64, 48), ImageMode.FILL, tmp_path / "out" / "r.bmp")
-    with Image.open(out) as img:
-        assert (img.format, img.size, img.mode) == ("BMP", (64, 48), "RGB")
+    result = render(load(source, (64, 48)), (64, 48), (64, 48), Look())
+    assert (result.size, result.mode) == ((64, 48), "RGB")
 
 
 def test_large_jpeg_is_rendered_at_target_size(tmp_path: Path) -> None:
     source = tmp_path / "big.jpg"
     stripes(3000, 1000).save(source, quality=90)
-    out = render_file(source, (300, 100), ImageMode.FILL, tmp_path / "r.bmp")
-    with Image.open(out) as img:
-        assert img.size == (300, 100)
-        assert close_to(img.getpixel((150, 50)), GREEN, tol=20)
+    img = render(load(source, (300, 100)), (300, 100), (300, 100), Look())
+    assert img.size == (300, 100)
+    assert close_to(img.getpixel((150, 50)), GREEN, tol=20)
 
 
 def test_a_jpeg_turned_by_exif_is_not_decoded_too_small(tmp_path: Path) -> None:

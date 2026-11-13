@@ -200,7 +200,7 @@ class PlaylistDetails(PlaylistView):
     directory: Path
     order: Order
     interval: float | None  # seconds of active time; None: manual
-    mode: ImageMode | None  # None: as is
+    mode: ImageMode
     # Of active time; None: manual. While held, what is left once resumed.
     next_in_seconds: float | None
     upcoming: tuple[Path, ...]

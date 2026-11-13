@@ -416,9 +416,9 @@ def test_one_playlist_is_open_the_others_a_summary(window: SettingsPage) -> None
     assert window.open_uid == fantasy.uid
     # The summary follows the edits, and marks a problem.
     konachan.interval_edit.setText("1h")
-    konachan.mode_combo.setCurrentIndex(konachan.mode_combo.findText("As is"))
+    konachan.mode_combo.setCurrentIndex(konachan.mode_combo.findText("Fit"))
     assert konachan.summary.summary == (
-        "AW3225QF + PLX2783H · shuffle · every 1h · as is"
+        "AW3225QF + PLX2783H · shuffle · every 1h · fit"
     )
     assert not konachan.summary.problem
     konachan.directory_edit.setText("missing")

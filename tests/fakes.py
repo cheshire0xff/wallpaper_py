@@ -8,14 +8,13 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 from wallpaper_py.core.model import (
-    ImageMode,
     Monitor,
     MonitorId,
     MonitorNotAttachedError,
     Rectangle,
-    UnsupportedModeError,
 )
 
 GUID = "{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}"
@@ -40,30 +39,18 @@ def make_monitor(
 @dataclass(frozen=True)
 class SetCall:
     monitor_id: MonitorId
-    image: Path
-    mode: ImageMode | None
+    image: Path  # what the backend got: a render
+    source: Path | None  # the image it was rendered from (see make_images)
 
 
 class FakeBackend:
-    def __init__(
-        self,
-        monitors: Iterable[Monitor],
-        per_monitor_modes: bool = False,
-        global_mode: ImageMode | None = ImageMode.FILL,
-    ) -> None:
+    def __init__(self, monitors: Iterable[Monitor]) -> None:
         self._monitors = list(monitors)
-        self._per_monitor_modes = per_monitor_modes
-        self._global_mode = global_mode
         self.set_calls: list[SetCall] = []
-        self.global_mode_calls: list[ImageMode] = []
         self.monitors_calls = 0
         # Called with the call number before each monitors() result, so a
         # test can detach a monitor "while" the code under test is working.
         self.before_monitors: Callable[[int], None] | None = None
-
-    @property
-    def per_monitor_modes(self) -> bool:
-        return self._per_monitor_modes
 
     def monitors(self) -> list[Monitor]:
         self.monitors_calls += 1
@@ -89,23 +76,17 @@ class FakeBackend:
     def relist(self, monitor: Monitor) -> None:
         self._monitors.append(monitor)
 
-    def set_wallpaper(
-        self, monitor_id: MonitorId, image: Path, mode: ImageMode | None = None
-    ) -> None:
-        if mode is not None and not self._per_monitor_modes:
-            raise UnsupportedModeError("global modes only")
+    def set_wallpaper(self, monitor_id: MonitorId, image: Path) -> None:
         monitor = next((m for m in self._monitors if m.id == monitor_id), None)
         if monitor is None or not monitor.attached:
             raise MonitorNotAttachedError(str(monitor_id))
-        self.set_calls.append(SetCall(monitor_id, image, mode))
+        self.set_calls.append(SetCall(monitor_id, image, source_of(image)))
         self.update(monitor.name, wallpaper=image)
 
-    def set_global_mode(self, mode: ImageMode) -> None:
-        self.global_mode_calls.append(mode)
-        self._global_mode = mode
-
-    def global_mode(self) -> ImageMode | None:
-        return self._global_mode
+    def source(self, name: str) -> Path | None:
+        """The image the monitor's render was made from, if it has one."""
+        found = next(m for m in self._monitors if m.name == name)
+        return None if found.wallpaper is None else source_of(found.wallpaper)
 
 
 class FakeAutostart:
@@ -169,15 +150,52 @@ def write_config(directory: Path) -> Path:
     return config
 
 
+# Every image make_images writes has a colour of its own, so the image a
+# render was made from can be told from the render (source_of).
+_COLOURS: dict[tuple[int, int, int], Path] = {}
+_STEPS = 6  # per channel: 216 colours, 40 apart (well above JPEG's error)
+_made = [0]  # images made so far: the next colour
+
+
+def _colour(index: int) -> tuple[int, int, int]:
+    def channel(value: int) -> int:
+        return 20 + 40 * (value % _STEPS)
+
+    i = index % _STEPS**3
+    return channel(i), channel(i // _STEPS), channel(i // _STEPS**2)
+
+
 def make_images(directory: Path, *names: str) -> list[Path]:
-    """Empty files with image names: enough when nothing is rendered."""
+    """
+    Tiny images, each in a colour of its own (a name Pillow can't save to,
+    such as `.txt`, gets an empty file).
+    """
+    formats = Image.registered_extensions()
     paths = []
     for name in names:
         path = directory / name
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.touch()
+        image_format = formats.get(path.suffix.lower())
+        if image_format is None:
+            path.touch()
+        else:
+            colour = _colour(_made[0])
+            _made[0] += 1
+            Image.new("RGB", (8, 6), colour).save(path, image_format)
+            _COLOURS[colour] = path
         paths.append(path)
     return paths
+
+
+def source_of(render: Path) -> Path | None:
+    """The make_images image `render` shows (by its centre's colour), if any."""
+    with Image.open(render) as img:
+        centre = img.convert("RGB").getpixel((img.width // 2, img.height // 2))
+    assert isinstance(centre, tuple)
+    for colour, path in _COLOURS.items():
+        if all(abs(a - b) <= 12 for a, b in zip(colour, centre)):
+            return path
+    return None
 
 
 class BusyFile:

@@ -5,6 +5,7 @@ from PIL import Image
 
 from wallpaper_py.core.model import (
     ImageMode,
+    Look,
     MonitorId,
     MonitorNotAttachedError,
     Rectangle,
@@ -54,41 +55,33 @@ class TestFindAttached:
 
 
 class TestApplyWallpaper:
-    def test_without_mode_sets_the_original_file(
-        self, backend: FakeBackend, image: Path, tmp_path: Path
-    ) -> None:
-        used = apply_wallpaper(backend, main_id(backend), image, None, tmp_path / "r")
-        assert used == image
-        assert [c.image for c in backend.set_calls] == [image]
-        assert not backend.global_mode_calls
-        assert not (tmp_path / "r").exists()
-
-    def test_per_monitor_backend_gets_the_mode_directly(
-        self, image: Path, tmp_path: Path
-    ) -> None:
-        backend = FakeBackend([make_monitor("A")], per_monitor_modes=True)
-        apply_wallpaper(backend, main_id(backend), image, ImageMode.FIT, tmp_path)
-        assert backend.set_calls[0].mode is ImageMode.FIT
-        assert backend.set_calls[0].image == image
-
-    def test_global_mode_backend_gets_an_exact_size_render(
-        self, backend: FakeBackend, image: Path, tmp_path: Path
+    @pytest.mark.parametrize("mode", list(ImageMode))
+    def test_the_backend_gets_an_exact_size_bmp_render(
+        self, backend: FakeBackend, image: Path, tmp_path: Path, mode: ImageMode
     ) -> None:
         strip_id = backend.monitors()[2].id
-        used = apply_wallpaper(backend, strip_id, image, ImageMode.FILL, tmp_path)
+        used = apply_wallpaper(backend, strip_id, image, Look(mode), tmp_path)
         assert used.parent == tmp_path and used != image
         assert backend.set_calls[0].image == used
-        assert backend.set_calls[0].mode is None
         with Image.open(used) as img:
-            assert img.size == (1920, 480)
+            assert (img.format, img.size, img.mode) == ("BMP", (1920, 480), "RGB")
+
+    def test_the_look_is_used(self, image: Path, tmp_path: Path) -> None:
+        backend = FakeBackend([make_monitor("A", size=(400, 100))])
+        fit = apply_wallpaper(
+            backend, main_id(backend), image, Look(ImageMode.FIT), tmp_path
+        )
+        with Image.open(fit) as img:
+            assert img.getpixel((5, 50)) == (0, 0, 0)  # a bar beside the image
+            assert img.getpixel((200, 50)) != (0, 0, 0)
 
     def test_renders_alternate_between_two_files(
         self, backend: FakeBackend, image: Path, tmp_path: Path
     ) -> None:
         mid = main_id(backend)
-        first = apply_wallpaper(backend, mid, image, ImageMode.FILL, tmp_path)
-        second = apply_wallpaper(backend, mid, image, ImageMode.FILL, tmp_path)
-        third = apply_wallpaper(backend, mid, image, ImageMode.FILL, tmp_path)
+        first = apply_wallpaper(backend, mid, image, Look(), tmp_path)
+        second = apply_wallpaper(backend, mid, image, Look(), tmp_path)
+        third = apply_wallpaper(backend, mid, image, Look(), tmp_path)
         assert first != second
         assert third == first
 
@@ -96,25 +89,8 @@ class TestApplyWallpaper:
         self, backend: FakeBackend, image: Path, tmp_path: Path
     ) -> None:
         ids = [m.id for m in backend.monitors()]
-        used = {
-            apply_wallpaper(backend, i, image, ImageMode.FILL, tmp_path) for i in ids
-        }
+        used = {apply_wallpaper(backend, i, image, Look(), tmp_path) for i in ids}
         assert len(used) == 3
-
-    @pytest.mark.parametrize(
-        ("current", "expected_calls"),
-        [(None, [ImageMode.FILL]), (ImageMode.FIT, []), (ImageMode.FILL, [])],
-    )
-    def test_tile_or_span_global_mode_is_switched_to_fill(
-        self,
-        image: Path,
-        tmp_path: Path,
-        current: ImageMode | None,
-        expected_calls: list[ImageMode],
-    ) -> None:
-        backend = FakeBackend([make_monitor("A")], global_mode=current)
-        apply_wallpaper(backend, main_id(backend), image, ImageMode.FILL, tmp_path)
-        assert backend.global_mode_calls == expected_calls
 
     def test_detached_monitor_is_not_rendered_or_set(
         self, backend: FakeBackend, image: Path, tmp_path: Path
@@ -122,7 +98,7 @@ class TestApplyWallpaper:
         mid = main_id(backend)
         backend.detach("Main")
         with pytest.raises(MonitorNotAttachedError):
-            apply_wallpaper(backend, mid, image, ImageMode.FILL, tmp_path / "r")
+            apply_wallpaper(backend, mid, image, Look(), tmp_path / "r")
         assert not backend.set_calls
         assert not (tmp_path / "r").exists()
 
@@ -133,7 +109,7 @@ class TestApplyWallpaper:
         mid = main_id(backend)
         backend.before_monitors = lambda n: backend.detach("Main") if n == 3 else None
         with pytest.raises(MonitorNotAttachedError):
-            apply_wallpaper(backend, mid, image, ImageMode.FILL, tmp_path)
+            apply_wallpaper(backend, mid, image, Look(), tmp_path)
         assert not backend.set_calls
 
     def test_resolution_change_while_rendering_is_not_set(
@@ -144,5 +120,5 @@ class TestApplyWallpaper:
             backend.update("Main", rect=Rectangle(0, 0, 2560, 1440)) if n == 3 else None
         )
         with pytest.raises(MonitorNotAttachedError, match="resolution"):
-            apply_wallpaper(backend, mid, image, ImageMode.FILL, tmp_path)
+            apply_wallpaper(backend, mid, image, Look(), tmp_path)
         assert not backend.set_calls

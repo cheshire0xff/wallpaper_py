@@ -18,6 +18,7 @@ from wallpaper_py.core.model import (
     ImageMode,
     MonitorId,
     MonitorNotAttachedError,
+    Rectangle,
 )
 from wallpaper_py.core.selection import MonitorSelectionError
 from wallpaper_py.core.service import (
@@ -73,8 +74,8 @@ class Env:
         self.service = make_service(self)
 
     def shown(self, monitor: str) -> Path | None:
-        found = next(m for m in self.backend.monitors() if m.name == monitor)
-        return found.wallpaper
+        """The image the monitor shows (rendered from)."""
+        return self.backend.source(monitor)
 
 
 def make_service(env: Env, tick_period: float = STEP) -> PlaylistService:
@@ -337,16 +338,48 @@ def test_new_files_join(env: Env) -> None:
 
 
 def test_unreadable_images_are_skipped(env: Env) -> None:
-    Image.new("RGB", (64, 16)).save(env.tmp / "fantasy" / "f2.png")
+    (env.tmp / "fantasy" / "f1.png").write_bytes(b"")  # not an image
+    env.service.tick()
+    f2 = env.tmp / "fantasy" / "f2.png"
+    assert env.service.current(env.fantasy) == env.shown("ZeroMOD") == f2
+
+
+def test_every_image_is_rendered_with_the_playlist_mode(env: Env) -> None:
     env.config = replace(
         env.config,
-        playlists=(env.konachan, replace(env.fantasy, mode=ImageMode.FILL)),
+        playlists=(env.konachan, replace(env.fantasy, mode=ImageMode.FIT)),
     )
     env.restart()
-    env.service.tick()  # f1.png is an empty file, not an image
-    assert env.service.current(env.fantasy) == env.tmp / "fantasy" / "f2.png"
+    env.service.tick()
+    zero = next(m for m in env.backend.monitors() if m.name == "ZeroMOD")
+    assert zero.wallpaper is not None and zero.wallpaper.parent == env.tmp / "rendered"
+    with Image.open(zero.wallpaper) as render:
+        assert render.size == (1920, 480)
+        assert render.getpixel((5, 240)) == (0, 0, 0)  # fit: a bar on each side
+    assert env.shown("ZeroMOD") == env.tmp / "fantasy" / "f1.png"
+
+
+def test_a_resolution_change_renders_again(env: Env) -> None:
+    env.service.tick()
     shown = env.shown("ZeroMOD")
-    assert shown is not None and shown.parent == env.tmp / "rendered"
+    env.backend.update("ZeroMOD", rect=Rectangle(3840, 0, 3840 + 2560, 1440))
+    changes = env.service.tick()
+    assert [(c.playlist, c.reason) for c in changes] == [("fantasy", "restored")]
+    assert env.shown("ZeroMOD") == shown  # the same image, rendered again
+    zero = next(m for m in env.backend.monitors() if m.name == "ZeroMOD")
+    assert zero.wallpaper is not None
+    with Image.open(zero.wallpaper) as render:
+        assert render.size == (2560, 1440)
+    assert not env.service.tick()  # once
+
+
+def test_restore_renders_every_monitor_again(env: Env) -> None:
+    """What a reload does: a changed mode shows at once."""
+    env.service.tick()
+    calls = len(env.backend.set_calls)
+    env.service.restore()
+    assert {c.reason for c in env.service.tick()} == {"restored"}
+    assert len(env.backend.set_calls) == calls + 3
 
 
 def test_state_survives_a_restart(env: Env) -> None:
@@ -399,10 +432,8 @@ def test_status(env: Env) -> None:
 
 
 def real_image(path: Path) -> Path:
-    """A small real image (pick checks that Pillow can open it)."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    Image.new("RGB", (8, 8), "teal").save(path)
-    return path
+    """A small image outside the playlists' directories."""
+    return make_images(path.parent, path.name)[0]
 
 
 def test_pick_from_another_directory_and_back(env: Env) -> None:
@@ -470,8 +501,10 @@ def test_pick_refuses_missing_and_unreadable_images(env: Env) -> None:
     calls = len(env.backend.set_calls)
     with pytest.raises(ImageLoadError, match="No such image file"):
         env.service.pick(env.konachan, env.tmp / "nowhere.png")
+    empty = env.tmp / "konachan" / "k01.jpg"
+    empty.write_bytes(b"")
     with pytest.raises(ImageLoadError, match="Cannot open"):
-        env.service.pick(env.konachan, env.tmp / "konachan" / "k01.jpg")  # empty
+        env.service.pick(env.konachan, empty)
     with pytest.raises(ImageLoadError, match="No such image file"):
         env.service.pick(env.konachan, env.tmp / "konachan")  # a directory
     assert env.service.current(env.konachan) == current

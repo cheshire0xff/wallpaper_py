@@ -606,14 +606,7 @@
           "title": "Interval"
         },
         "mode": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ImageMode"
-            },
-            {
-              "type": "null"
-            }
-          ]
+          "$ref": "#/$defs/ImageMode"
         },
         "next_in_seconds": {
           "anyOf": [

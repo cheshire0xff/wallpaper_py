@@ -19,7 +19,6 @@ from wallpaper_py.backends.windows import backend as backend_module
 from wallpaper_py.backends.windows.backend import WindowsBackend, fallback_name
 from wallpaper_py.backends.windows.com import IDesktopWallpaper, Position
 from wallpaper_py.core.model import (
-    ImageMode,
     MonitorId,
     MonitorNotAttachedError,
     WallpaperError,
@@ -39,11 +38,6 @@ def test_monitors_have_stable_ids_names_and_sizes() -> None:
         assert monitor.name
         if monitor.rect is not None:
             assert monitor.rect.width > 0 and monitor.rect.height > 0
-
-
-def test_global_mode_is_readable() -> None:
-    mode = WindowsBackend().global_mode()
-    assert mode is None or isinstance(mode, ImageMode)
 
 
 @pytest.mark.parametrize(
@@ -68,11 +62,28 @@ class _DeadExplorer:
 
 
 class _LiveExplorer:
+    """Records what is set; one attached monitor, any id."""
+
+    def __init__(self, position: Position = Position.FILL) -> None:
+        self.position = position
+        self.positions_set: list[Position] = []
+        self.wallpapers: list[tuple[str, str]] = []
+
     def get_monitor_device_path_count(self) -> int:
         return 0
 
+    def get_monitor_rect(self, _monitor_id: str) -> object:
+        return object()
+
     def get_position(self) -> Position:
-        return Position.FILL
+        return self.position
+
+    def set_position(self, position: Position) -> None:
+        self.positions_set.append(position)
+        self.position = position
+
+    def set_wallpaper(self, monitor_id: str, wallpaper: str) -> None:
+        self.wallpapers.append((monitor_id, wallpaper))
 
 
 def test_com_failure_becomes_wallpaper_error_and_reconnects(
@@ -87,15 +98,38 @@ def test_com_failure_becomes_wallpaper_error_and_reconnects(
     with pytest.raises(WallpaperError):
         backend.monitors()
     assert not backend.monitors()
-    assert backend.global_mode() is ImageMode.FILL
 
 
 def test_dead_explorer_on_set_reconnects(monkeypatch: pytest.MonkeyPatch) -> None:
-    instances: list[object] = [_DeadExplorer(), _LiveExplorer()]
+    live = _LiveExplorer()
+    instances: list[object] = [_DeadExplorer(), live]
     monkeypatch.setattr(
         IDesktopWallpaper, "co_create_instance", lambda: instances.pop(0)
     )
     backend = WindowsBackend()
     with pytest.raises(MonitorNotAttachedError):
-        backend.set_wallpaper(MonitorId("x"), Path("a.jpg"))
-    assert backend.global_mode() is ImageMode.FILL
+        backend.set_wallpaper(MonitorId("x"), Path("a.bmp"))
+    backend.set_wallpaper(MonitorId("x"), Path("a.bmp"))
+    assert live.wallpapers == [("x", str(Path("a.bmp").resolve()))]
+
+
+@pytest.mark.parametrize(
+    ("position", "expected"),
+    [
+        (Position.TILE, [Position.FILL]),
+        (Position.SPAN, [Position.FILL]),
+        (Position.FIT, [Position.FILL]),
+        (Position.FILL, []),
+    ],
+)
+def test_set_keeps_the_position_at_fill(
+    monkeypatch: pytest.MonkeyPatch, position: Position, expected: list[Position]
+) -> None:
+    """Set only when it differs: setting it redraws every monitor."""
+    live = _LiveExplorer(position)
+    monkeypatch.setattr(IDesktopWallpaper, "co_create_instance", lambda: live)
+    backend = WindowsBackend()
+    backend.set_wallpaper(MonitorId("x"), Path("a.bmp"))
+    backend.set_wallpaper(MonitorId("x"), Path("b.bmp"))
+    assert live.positions_set == expected
+    assert len(live.wallpapers) == 2

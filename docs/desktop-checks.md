@@ -25,13 +25,14 @@ Status: **ok** (with the date, when known) all steps seen working;
 | [8.2 The window: Home](#82-home) | step 1 ok 2026-11-12; 2-7 todo as rows (as the layout window: ok 2026-11-11, except *Remove* and steps 4, 5, 6) | todo | todo |
 | [8.3 The window: Settings](#83-settings) | steps 1, 2, 4, 7 ok 2026-11-12 (step 1 also on a copy of the real config); 3, 5, 6, 8-11 todo | todo | todo |
 | [9. Pick, hold and manual](#9-pick-hold-and-manual) | ok 2026-11-11, except waiting past an interval (steps 3, 6) | todo | todo |
+| [10. Looks: always rendered](#10-looks-always-rendered) | todo | todo | todo |
 
 ## 1. Monitors and `set`
 
 1. `wallpaper list --all`: every monitor with its name, size and id; a
    switched-off one shows as detached.
 2. `wallpaper set IMAGE --monitor <part of a name>` changes only that
-   monitor; `--mode fit` renders it to the monitor's resolution.
+   monitor, rendered to its resolution (fill); `--mode fit` letterboxes it.
 3. `wallpaper set IMAGE --monitor 1` is refused (numbers are never used).
 
 ## 2. Playlists
@@ -314,3 +315,19 @@ on the right monitors, the real tray menu, and a real quit and restart.
    says *(manual)*, there is no *Hold* item, and it never changes by itself
    (leave it well past its old interval, also across an app restart).
    `wallpaper hold <it>` says why it can't be held; `next` and `pick` work.
+
+## 10. Looks: always rendered
+
+1. `wallpaper list`: every monitor's wallpaper is a `.bmp` render in the
+   cache folder, also for a playlist in Fill.
+2. **Position kept at Fill (Windows).** Settings > Personalisation >
+   Background > *Choose a fit* > Tile, then `wallpaper next`: the position
+   is Fill again and every monitor shows its image as its mode says.
+3. **A changed mode shows at once.** In Settings, change a playlist from
+   Fill to Fit and Save: its monitors show the current image letterboxed
+   right away, without waiting for the next image (the log says
+   "restored").
+4. **A resolution change.** Change a monitor's resolution in Display
+   settings: within a few seconds its image is rendered again for the new
+   size (log: "changed resolution: rendering again"), with no stretching
+   or cropping left over from the old size. Change it back: the same.

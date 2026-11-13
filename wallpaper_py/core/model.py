@@ -107,6 +107,17 @@ class ImageMode(Enum):
 
 
 @dataclass(frozen=True)
+class Look:
+    """
+    How an image looks on one screen: everything the renderer needs besides
+    the image and the sizes (core.imaging.render). Per monitor; more fields
+    (a background, later a crop anchor or a blur) join here.
+    """
+
+    mode: ImageMode = ImageMode.FILL
+
+
+@dataclass(frozen=True)
 class Monitor:
     """
     One physical monitor.
@@ -145,10 +156,6 @@ class WallpaperError(AppError):
 
 class MonitorNotAttachedError(WallpaperError):
     """The target monitor is unknown or currently detached; nothing was set."""
-
-
-class UnsupportedModeError(WallpaperError):
-    """The backend cannot apply the requested image mode this way."""
 
 
 class UnsupportedPlatformError(WallpaperError):

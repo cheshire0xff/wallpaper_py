@@ -100,7 +100,7 @@ def test_ui_shows_the_live_overview_until_its_window_closes(
         window = main_window()
         row = window.home.rows.get("walls") if window is not None else None
         # The overview, then the schedule from `status` (both over the
-        # app's socket); the images are empty files.
+        # app's socket).
         if window is None or row is None or "sorted" not in row.details.text():
             return False
         seen.append(f"{row.file.text()} | {row.details.text()}")
@@ -110,7 +110,7 @@ def test_ui_shows_the_live_overview_until_its_window_closes(
 
     assert run_ui_while(UiOptions(tmp_path / "config.toml"), close_when_live) == 0
     assert len(seen) == 2
-    assert seen[0].startswith("a.jpg | can't read: ")
+    assert seen[0].startswith("a.jpg | 8×6 · ")
     assert seen[0].endswith(" · sorted, every 10m · next in 10m")
     assert seen[1] == "Rotation active"
     assert InstanceLock(paths.ui_lock()).acquire()  # released

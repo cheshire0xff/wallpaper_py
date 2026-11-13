@@ -69,14 +69,14 @@ def test_set_by_name(
     backend: FakeBackend, image: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     assert run(backend, "set", str(image), "-m", "main") == 0
-    assert backend.set_calls[0].image == image
-    assert "Set wall.png on Main" in capsys.readouterr().out
+    assert "Set wall.png on Main (rendered: " in capsys.readouterr().out
 
 
-def test_set_with_mode_renders(
-    backend: FakeBackend, image: Path, tmp_path: Path
+@pytest.mark.parametrize("mode", [(), ("--mode", "FIT")])
+def test_set_renders(
+    backend: FakeBackend, image: Path, tmp_path: Path, mode: tuple[str, ...]
 ) -> None:
-    assert run(backend, "set", str(image), "-m", "main", "--mode", "FIT") == 0
+    assert run(backend, "set", str(image), "-m", "main", *mode) == 0
     assert backend.set_calls[0].image.parent == tmp_path / "rendered"
 
 
@@ -136,7 +136,7 @@ class TestPlaylistCommands:
         self, backend: FakeBackend, config: Path
     ) -> None:
         assert self.run(backend, config, "run", "--ticks", "1") == 0
-        assert [c.image.name for c in backend.set_calls] == ["a.jpg"]
+        assert [c.source and c.source.name for c in backend.set_calls] == ["a.jpg"]
 
     def test_next_prev_fav_remove(
         self,
@@ -169,7 +169,7 @@ class TestPlaylistCommands:
         self.run(backend, config, "next")
         assert self.run(backend, config, "status") == 0
         out = capsys.readouterr().out
-        assert "walls  (sorted, every 10m, as is)" in out
+        assert "walls  (sorted, every 10m, fill)" in out
         assert "Main (attached)" in out
         assert "upcoming:  b.jpg, c.jpg, a.jpg" in out
         assert out.rstrip().endswith(cli.NOT_RUNNING)  # run here: no app
@@ -204,7 +204,7 @@ class TestPlaylistCommands:
             "`wallpaper resume walls`",
             "walls is already held",
         ]
-        assert "walls  (sorted, every 10m, as is, held)" in out
+        assert "walls  (sorted, every 10m, fill, held)" in out
         assert "  next in:   held (10m of active time once resumed)" in out
         assert out[-2:] == ["walls: rotating again", "walls is not held"]
         missing = tmp_path / "elsewhere" / "missing.png"

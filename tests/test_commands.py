@@ -10,7 +10,7 @@ from PIL import Image
 from wallpaper_py.commands import error_reply, execute, open_service, overview
 from wallpaper_py.core import paths
 from wallpaper_py.core.config import Order
-from wallpaper_py.core.model import MonitorId
+from wallpaper_py.core.model import ImageMode, MonitorId
 from wallpaper_py.core.service import (
     Change,
     ChangeReason,
@@ -208,11 +208,12 @@ def test_pick_hold_resume_reply_with_data(
 
 @pytest.mark.parametrize(
     "image, message",
-    [("missing.png", "No such image file"), ("walls/a.jpg", "Cannot open")],
+    [("missing.png", "No such image file"), ("walls/empty.jpg", "Cannot open")],
 )
 def test_pick_errors(
     service: PlaylistService, tmp_path: Path, image: str, message: str
 ) -> None:
+    (tmp_path / "walls" / "empty.jpg").write_bytes(b"")  # not an image
     outcome = execute(service, PickRequest(target="walls", image=tmp_path / image))
     assert outcome.change is None
     reply = outcome.reply
@@ -268,7 +269,7 @@ def test_status(service: PlaylistService, tmp_path: Path) -> None:
         "walls",
         Order.SORTED,
         600.0,
-        None,
+        ImageMode.FILL,
     )
     assert walls.directory == tmp_path / "walls"
     assert walls.monitors == (

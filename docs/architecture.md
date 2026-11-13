@@ -41,11 +41,11 @@ protocol.py                   the socket protocol as pydantic models: requests, 
                               result per command, errors, events, Overview. Qt-free
         │
 core/                         pure Python, no Qt, no platform APIs
-  model.py       Monitor, MonitorId, Rectangle, ImageMode, error types
+  model.py       Monitor, MonitorId, Rectangle, ImageMode, Look, error types
   backend.py     Backend protocol (the only thing platforms implement)
   selection.py   user-typed monitor selector -> Monitor (names/ids, never numbers)
-  setter.py      put an image on a monitor safely (re-checks, renders if needed)
-  imaging.py     fill / fit / stretch rendering to an exact size
+  setter.py      put an image on a monitor safely (renders it, re-checks)
+  imaging.py     render(image, screen, output, look): fill / fit / stretch
   paths.py       per-user config, data and cache locations (per OS, never shared)
   config.py      the TOML config (written by Settings): playlists, monitors, pausing
                  (tomllib, keys and types as pydantic models; meaning checked after)
@@ -278,8 +278,9 @@ removal, deleted). Hold doesn't apply to a manual playlist.
 
 A member that was detached (or vanished from the monitor list) has its
 "applied" record dropped, so on return it is given the group's current
-image. The app drops all of them when it starts, so after a reboot every
-monitor gets its playlist's current image back.
+image. The app drops all of them when it loads the config (at start and on
+a reload), so after a reboot every monitor gets its playlist's current
+image back, rendered with its current mode.
 
 ## Monitor identity
 
@@ -314,11 +315,24 @@ Consequences in code:
   `MonitorNotAttachedError` instead of setting if the monitor is gone or its
   resolution changed. Callers (later: the scheduler) postpone on that error.
 
-## Image modes
+## Image modes and looks
 
-Windows has one mode for all monitors (`per_monitor_modes = False`). To give
-each monitor its own fill/fit/stretch, `setter` renders the image to the
-monitor's exact resolution; such an image looks the same in any of those
-modes. Renders alternate between two files per monitor, because Windows may
-ignore a wallpaper whose path did not change. KDE will set the mode per
-monitor natively and skip rendering.
+Every image is rendered: `setter` renders it to the monitor's exact
+resolution with the monitor's `Look` (mode now; a background later) and
+hands the render to the backend, which only ever shows exact-size images
+and keeps the system's own position at Fill (Windows has one for all
+monitors, set only when it differs; KDE will do the same per monitor).
+So every look works the same on every platform. Renders alternate between
+two files per monitor, because Windows may ignore a wallpaper whose path
+did not change.
+
+`imaging.render(image, screen, output, look)` separates the screen (whose
+size the look is worked out for) from the output (the size drawn): the
+app renders with output = screen; previews will render the same look at a
+small output. A look depends on the screen, never on the output.
+
+A rendered image depends on the look and the monitor's size, so the
+service renders again when either changes: a monitor whose resolution
+changed (noticed by the tick) has its "applied" record dropped, and so
+does every monitor when the config is loaded (start and reload), which
+is how a changed mode shows at once.

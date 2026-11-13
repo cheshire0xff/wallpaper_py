@@ -12,6 +12,7 @@ thin. See [architecture.md](architecture.md) for the layers.
 | 2 | Playlists, mirrored groups, scheduler, history, favourites, to-remove | done (awaiting a real-desktop trial) |
 | 3 | App shell: tray, single instance, IPC, autostart | done (awaiting a real-desktop trial) |
 | 4 | UI process, layout and settings windows | done (pick / hold / manual, the layout and settings windows awaiting review and desktop checks) |
+| 4b | Settings in the database, per-monitor looks, previews | planned (next) |
 | 5 | Library window | |
 | 6 | KDE backend | |
 | 7 | Polish | |
@@ -588,6 +589,150 @@ One window, implemented (decisions made while building it):
   Cancel (unchanged logic); the window title carries "*" while modified.
 - A left click on the tray icon opens the Home window; the Library page is a
   placeholder (Phase 5).
+
+## Phase 4b: settings in the database, per-monitor looks
+
+Decided 2026-11-14, from the high-priority items in todo.md. Comes before
+Phase 5.
+
+Why: the mode was per playlist although it is about a screen's shape; a
+changed mode showed only with the next image (the app records only the
+image it gave each monitor, so the same image with a new look seemed
+already shown); Home drew every monitor cropped, whatever its mode; and
+assigning monitors (a *Monitors* menu per playlist, "A + B") was awkward.
+With nobody editing config.toml by hand, a file the app must parse, check
+and reload is no longer worth its cost.
+
+**Per monitor or per playlist.** How the image looks on a screen is per
+monitor: mode, background, and anything like them later (a crop anchor, a
+blur). Which image and when is per playlist: folder, order, interval, hold,
+sound (Phase 7). The members of a mirrored group change together, so
+timing can't be per monitor.
+
+**Settings live in the state database** (the same file); config.toml goes.
+
+- Tables: `playlist` gains its settings (name, directory, order, interval)
+  beside its state; a `monitor` table: id, playlist (NULL: none), mode,
+  background; the general settings (pause when locked / idle, where the
+  list files are) in a one-row table.
+- A monitor has no name in the settings: names repeat (two monitors of
+  one model, common with several monitors), so it is identified by id
+  only. Mirroring is several monitors on one playlist; one playlist per
+  monitor holds by construction. A playlist on no monitor is valid: it
+  doesn't rotate and keeps its history.
+- The app is the only writer. The window reads the settings with a
+  `settings` command and writes them with `save_settings`: the whole edited
+  settings plus the revision it read, refused if the stored ones changed
+  since. The command checks what values mean (a new or changed folder
+  exists, names unique case-insensitively, an interval of at least 10 s or
+  manual), stores everything in one transaction and uses it at once:
+  monitors whose playlist or look changed are rendered again before the
+  reply. The reply carries the warnings (an interval shorter than the idle
+  pause). The window never reads the tables itself, so their layout stays
+  private to the service.
+- Deleting a playlist deletes its history, deck and hold in the same
+  transaction. Open: whether Save asks first when it drops a playlist's
+  history (todo.md, normal priority).
+- Goes: config.toml and its parsing (`ConfigFile`, `PlaylistTable`,
+  `_PROBLEMS`), `config_edit` and tomlkit, the `reload` and `prune`
+  commands, the tray's *Reload config* and *Open config folder*,
+  `--config` and the "which config" rules, the broken-config state (settings
+  that fail the checks are never stored), the About page's config entry,
+  the "Saved; the app is using it." line.
+- Stays: favourites.txt and to-remove.txt (the library script edits them),
+  with their UTF-8 / BOM rule and the `ConfigError` that stops the service
+  when one can't be used; only their locations are settings.
+- No migration: config.toml is not imported. The schema version goes up
+  (state.db is deleted once) and the playlists are set up again in the
+  window.
+
+**Looks: always rendered.**
+
+- "As is" goes. The app renders every image at the monitor's exact pixel
+  size with the monitor's look; the default is Fill on black.
+- The backend only shows exact-size images: `set_wallpaper(monitor,
+  image)`. On Windows it keeps the system's position at Fill (one setting
+  for all monitors; set only when it differs, since setting it redraws them
+  all); on KDE (Phase 6) the same, per monitor. `per_monitor_modes`,
+  `set_global_mode`, `global_mode`, `UnsupportedModeError` and the mode
+  parameter go.
+- `Look` (mode, background) is one value type: stored, sent in the overview
+  per monitor (`DesktopMonitor.look`), edited in the window.
+- The renderer (`core/imaging.py`) knows nothing of the service, the
+  backend or files: `render(image, screen, output, look)`. The app passes
+  output = screen and saves the BMP in the two slots per monitor, as now.
+- Rule: a look depends on the screen, never on the output size. A blur
+  radius or "never enlarge" are in screen pixels, scaled to the output;
+  automatic colours come from a fixed tiny copy of the image. A test
+  renders at full size and at preview size and compares, so a feature that
+  breaks the rule fails it.
+- Background, used by Fit (its row shows only then): a fixed colour
+  (`#rrggbb`), `average` (the image's average colour) or `edges` (the
+  average of the image's edges next to the bars). Later, in the same
+  setting: `dominant`, `blur` (the bars filled with a blurred, enlarged
+  copy of the image).
+- A monitor whose resolution changed is rendered again (today it keeps the
+  old render until the next image).
+
+**Previews: virtual monitors.** The window renders its own previews with
+the same renderer, for the monitor's real screen size at a small output
+(about 480 px on the long side, times the display scale). It never waits
+for the app to show its own state (the saved look, or an edit), and every
+look feature shows in the previews without preview code.
+
+- One Pillow load per image (`imaging.load`, about 960 px: enough for any
+  monitor's preview, even Fill on a portrait screen), off the UI thread;
+  the playlist row's thumbnail (still the image itself, letterboxed) comes
+  from it too. One render per monitor box, cached by image and look; the
+  drawing paints it as is (`_cover` goes).
+- Settings shows unsaved edits live: dragging the colour picker renders
+  again from the loaded image (a few ms).
+- What no small preview shows: sharpness (a small image enlarged on a 4K
+  screen looks crisp in the preview) and pixel-level effects (grain,
+  dithering).
+- Measured (2026-11-14, warm file cache): load and render for a preview,
+  18 ms from a 2688×1920 JPEG and 89 ms from a 3058×1712 PNG (today's Qt
+  thumbnail: 10 and 78 ms); the app's full 4K render, 81 ms. The preview
+  still shows before Windows has faded to the new wallpaper.
+
+**Settings page, monitor-first** (a mockup first, for approval):
+
+- The drawing with the previews. Clicking a monitor selects it (outlined)
+  instead of opening a menu. Under the drawing, the selected monitor's
+  rows: *Playlist* (None, each playlist, *New playlist…*; the description
+  names the monitors it mirrors), *Mode*, *Background* (Fit only).
+- A monitor drop-down selects by keyboard and also lists switched-off and
+  not-connected monitors, which aren't drawn. Monitors sharing a name get
+  their resolution and a number counted left to right ("PLX2783H ·
+  1920×1080 · 1 of 2"), from the current arrangement, never stored.
+  *Forget monitor* deletes its row.
+- Playlists below: Name, Folder, Order, Changes, and a read-only *Shown
+  on*. The Monitors row, its *Choose…* menu and the "A + B" text go.
+- Save and Revert stay.
+
+Order, one session each, all checks green after each:
+
+1. (done 2026-11-14) The renderer with `Look` and the screen / output split; always render,
+   the backend keeps Fill; "As is" goes (the mode stays per playlist in
+   config.toml meanwhile). A reload re-renders every monitor, as at
+   start, so a changed mode shows at once until step 3 replaces reloads.
+   A resolution change renders again.
+2. The mockup of the monitor-first Settings page. Independent of the
+   code; it can be done alongside step 1 or 3a.
+3. Settings in the database, in two steps, so that every session ends
+   green and the app (autostart runs it from this checkout) keeps rotating:
+   1. **3a, the core:** the tables, the `Settings` model and its checks,
+      `settings` / `save_settings`, per-monitor looks in the service, the
+      worker, tray and CLI on them. The old Settings page keeps working
+      through a temporary bridge: it still writes config.toml and sends
+      `reload`, and `reload` imports that file into the database (each
+      playlist's mode copied to its monitors). Dev-time scaffolding for
+      this step only, not a migration: the result still imports nothing.
+   2. **3b, the page** (after the mockup is approved): the new Settings page
+      on the commands; the old page, config.toml, `config_edit`, tomlkit,
+      `reload`, `prune`, `--config` and the bridge go.
+4. Previews through the renderer, in Home and Settings.
+5. Backgrounds: a fixed colour, average, edges.
 
 ## Phase 5: library window
 

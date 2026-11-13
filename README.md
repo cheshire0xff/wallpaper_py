@@ -35,11 +35,12 @@ wallpaper set IMAGE --monitor NAME [--mode fill|fit|stretch]
   `ZeroMOD`), or the full id. **Numbers are refused on purpose**: monitor
   order changes when a monitor is switched off, which is exactly how a
   wallpaper ends up on the wrong screen.
-- `--mode`: Windows applies one mode to all monitors, so the image is rendered
-  to the monitor's exact resolution instead, letting each monitor use its own
-  mode. If the global mode is *tile* or *span* (used by tools that set one
-  combined image, e.g. John's Background Switcher) it is switched to *fill*.
-  Close such tools first, or they will overwrite the result.
+- `--mode` (default *fill*): the image is always rendered to the monitor's
+  exact resolution with this mode, so each monitor can have its own. Windows
+  has one position for all monitors; it is kept at *fill* (switched from
+  *tile* or *span*, which tools that set one combined image use, e.g. John's
+  Background Switcher). Close such tools first, or they will overwrite the
+  result.
 
 ### Playlists
 

@@ -83,7 +83,7 @@ def test_runs_and_quits_after_ticks(
 ) -> None:
     options = AppOptions(write_config(tmp_path), tray=tray, quit_after_ticks=1)
     assert run_app(options, platform) == 0
-    assert [c.image.name for c in backend.set_calls] == ["a.jpg"]
+    assert [c.source and c.source.name for c in backend.set_calls] == ["a.jpg"]
     assert InstanceLock(paths.instance_lock()).acquire()  # released
 
 
@@ -118,7 +118,11 @@ def test_cli_commands_go_through_the_running_app(
     assert results["next"].stdout.strip() == "walls: b.jpg on Main"
     assert results["prev"].stdout.strip() == "walls: a.jpg on Main"
     # Every change was made by the app (the CLI's backend factory fails).
-    assert [c.image.name for c in backend.set_calls] == ["a.jpg", "b.jpg", "a.jpg"]
+    assert [c.source and c.source.name for c in backend.set_calls] == [
+        "a.jpg",
+        "b.jpg",
+        "a.jpg",
+    ]
 
 
 def test_cli_without_config_reaches_an_app_on_another_config(
@@ -230,7 +234,7 @@ def test_app_waits_for_a_command_run_here(
     options = AppOptions(write_config(tmp_path), tray=False, quit_after_ticks=1)
     with lock_held(1.0):
         assert run_app(options, platform) == 0
-    assert [c.image.name for c in backend.set_calls] == ["a.jpg"]
+    assert [c.source and c.source.name for c in backend.set_calls] == ["a.jpg"]
 
 
 def test_socket_failure_stops_the_app(

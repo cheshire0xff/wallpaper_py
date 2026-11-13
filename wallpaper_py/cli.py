@@ -32,7 +32,7 @@ from .commands import error_reply, execute, open_service
 from .core import paths
 from .core.backend import Backend
 from .core.config import format_duration
-from .core.model import AppError, ImageMode, Monitor, WallpaperError
+from .core.model import AppError, ImageMode, Look, Monitor, WallpaperError
 from .core.presence import Presence
 from .core.selection import resolve_monitor
 from .core.setter import apply_wallpaper
@@ -193,10 +193,9 @@ def cmd_list(ctx: Context, args: argparse.Namespace) -> int:
 def cmd_set(ctx: Context, args: argparse.Namespace) -> int:
     monitor = resolve_monitor(ctx.backend.monitors(), args.monitor)
     used = apply_wallpaper(
-        ctx.backend, monitor.id, args.image, args.mode, paths.render_dir()
+        ctx.backend, monitor.id, args.image, Look(args.mode), paths.render_dir()
     )
-    suffix = f" (rendered: {used})" if used != args.image else ""
-    print(f"Set {args.image.name} on {monitor.name}{suffix}")
+    print(f"Set {args.image.name} on {monitor.name} (rendered: {used})")
     return 0
 
 
@@ -348,8 +347,7 @@ def _traits(playlist: PlaylistDetails) -> list[str]:
         rotation = "manual"
     else:
         rotation = f"every {format_duration(playlist.interval)}"
-    mode = playlist.mode.value if playlist.mode else "as is"
-    traits = [playlist.order.value, rotation, mode]
+    traits = [playlist.order.value, rotation, playlist.mode.value]
     if playlist.held:
         traits.append("held")
     return traits
@@ -465,8 +463,9 @@ def build_parser() -> argparse.ArgumentParser:
     set_parser.add_argument(
         "--mode",
         type=image_mode,
-        help="fill, fit or stretch; on Windows the image is rendered to the "
-        "monitor's resolution so each monitor can use its own mode",
+        default=ImageMode.FILL,
+        help="fill (the default), fit or stretch; the image is rendered to "
+        "the monitor's resolution",
     )
     set_parser.set_defaults(handler=cmd_set)
 

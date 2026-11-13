@@ -80,7 +80,7 @@ class PlaylistConfig:
     monitors: tuple[MonitorId, ...]
     interval: float | None  # seconds of active time; None: manual
     order: Order = Order.SHUFFLE
-    mode: ImageMode | None = None
+    mode: ImageMode = ImageMode.FILL
 
     @property
     def manual(self) -> bool:
@@ -169,7 +169,7 @@ class PlaylistTable(BaseModel):
     monitors: MonitorIds
     interval: StrictStr  # a duration, or MANUAL
     order: Order = Order.SHUFFLE
-    mode: ImageMode | None = None
+    mode: ImageMode = ImageMode.FILL
 
 
 class ConfigFile(BaseModel):

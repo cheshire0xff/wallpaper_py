@@ -75,7 +75,9 @@ def test_load_example(tmp_path: Path) -> None:
     assert konachan.order is Order.SHUFFLE
     assert konachan.mode is ImageMode.FILL
     assert fantasy.monitors == (MonitorId("ZeroMOD"),)
-    assert fantasy.order is Order.SORTED and fantasy.mode is None
+    assert (
+        fantasy.order is Order.SORTED and fantasy.mode is ImageMode.FILL
+    )  # the default
     assert fantasy.directory == tmp_path / "fantasy"  # relative to the file
     assert config.pause_when_idle == 600 and config.pause_when_locked
     assert config.favourites_file == tmp_path / "data" / "favourites.txt"

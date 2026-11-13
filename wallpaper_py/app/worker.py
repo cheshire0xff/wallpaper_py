@@ -92,7 +92,6 @@ class ServiceWorker(QObject):
         self._session = ExitStack()  # backend, database and service
         self._service: PlaylistService | None = None
         self._error: ErrorReply | None = None  # why there is no service
-        self._restored = False
         self._timer: QTimer | None = None
         self._server: CommandServer | None = None
         self._overview: Overview | None = None
@@ -250,9 +249,9 @@ class ServiceWorker(QObject):
             log.warning("%s", warning)
         names = ", ".join(p.name for p in self._service.config.playlists)
         log.info("Running playlists: %s", names)
-        if not self._restored:  # first start: put every current image back
-            self._service.restore()
-            self._restored = True
+        # Put every current image back, rendered again: after a reboot, and
+        # after a reload that may have changed a mode.
+        self._service.restore()
 
     def _fail(self, error: Exception) -> None:
         self._error = error_reply(error)

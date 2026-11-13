@@ -38,7 +38,7 @@ directory = 'D:\pictures\KONACHAN'   # scanned recursively
 monitors = ['\\?\DISPLAY#DELA246#5&2b3e4f&0&UID4352#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}', '\\?\DISPLAY#PLX2783#5&2b3e4f&0&UID4353#{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}']
 order = "shuffle"                    # every image once before any repeats
 interval = "30m"                     # active time since the last change
-mode = "fill"                        # fill / fit / stretch; omit: as is
+mode = "fill"                        # fill (the default) / fit / stretch
 
 [playlists.fantasy]
 id = "a3c9f4e2b8d14c6e8f0a2b5d7c9e1f3a"

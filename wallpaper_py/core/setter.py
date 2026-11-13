@@ -1,4 +1,4 @@
-"""Safely put one image on one monitor, whatever the backend supports."""
+"""Safely put one image on one monitor, rendered for it."""
 
 from __future__ import annotations
 
@@ -6,8 +6,8 @@ import hashlib
 from pathlib import Path
 
 from .backend import Backend
-from .imaging import RENDER_SUFFIX, render_file
-from .model import ImageMode, Monitor, MonitorId, MonitorNotAttachedError
+from .imaging import RENDER_SUFFIX, load, render
+from .model import Look, Monitor, MonitorId, MonitorNotAttachedError
 
 
 def find_attached(backend: Backend, monitor_id: MonitorId) -> Monitor:
@@ -44,29 +44,28 @@ def apply_wallpaper(
     backend: Backend,
     monitor_id: MonitorId,
     image: Path,
-    mode: ImageMode | None,
+    look: Look,
     render_dir: Path,
 ) -> Path:
     """
-    Set `image` on the monitor; returns the file actually handed to the OS.
+    Render `image` with `look` at the monitor's exact resolution and set the
+    render on it; returns the render's path.
 
-    If the backend can't apply `mode` per monitor, the image is rendered to
-    the monitor's exact resolution first. Such an image looks right in any
-    fill/fit/stretch global mode, but not in tile or span (which other
-    wallpaper tools, e.g. John's Background Switcher, use for one combined
-    image), so the global mode is switched to FILL in that case.
+    The backend only ever gets exact-size images: they look the same in any
+    system position, so every look works on every platform.
 
     Raises:
-        MonitorNotAttachedError: the monitor is not attached right now.
+        MonitorNotAttachedError: the monitor is not attached right now, or
+            its resolution changed while rendering.
+        ImageLoadError: the image can't be loaded.
     """
     monitor = find_attached(backend, monitor_id)
-    if mode is None or backend.per_monitor_modes:
-        backend.set_wallpaper(monitor.id, image, mode)
-        return image
     assert monitor.rect is not None
-    rendered = render_file(
-        image, monitor.rect.size, mode, rendered_path(render_dir, monitor)
-    )
+    size = monitor.rect.size
+    destination = rendered_path(render_dir, monitor)
+    rendered = render(load(image, size), size, size, look)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    rendered.save(destination, "BMP")
     # Re-check: rendering a big image takes time, the monitor may have gone,
     # and its size may have changed.
     current = find_attached(backend, monitor_id)
@@ -74,7 +73,5 @@ def apply_wallpaper(
         raise MonitorNotAttachedError(
             f"{current.name} changed resolution while rendering; try again"
         )
-    if backend.global_mode() is None:
-        backend.set_global_mode(ImageMode.FILL)
-    backend.set_wallpaper(current.id, rendered)
-    return rendered
+    backend.set_wallpaper(current.id, destination)
+    return destination

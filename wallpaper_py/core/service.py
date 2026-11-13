@@ -45,6 +45,7 @@ from .marks import MarkFile, MarkFileBusyError
 from .model import (
     Clock,
     ImageLoadError,
+    Look,
     Monitor,
     MonitorId,
     MonitorNotAttachedError,
@@ -186,6 +187,8 @@ class PlaylistService:
         self._max_tick_gap = max(MAX_TICK_GAP, 2 * tick_period)
         self._pause_reason: str | None = None
         self._postponed: set[str] = set()
+        # Each attached monitor's size at the last tick.
+        self._sizes: dict[MonitorId, tuple[int, int]] = {}
 
     # -- scheduling ----------------------------------------------------------
 
@@ -227,6 +230,7 @@ class PlaylistService:
         monitors = self._backend.monitors()
         members = self._members(monitors)
         self._store.keep_applied(m.id for m in monitors if m.attached)
+        self._forget_resized(monitors)
         try:
             removed = self._removed()
         except MarkFileBusyError as err:
@@ -290,6 +294,19 @@ class PlaylistService:
         if current is None:  # held or manual, nothing shown yet
             return None
         return self._fill_in(playlist, attached, current.path)
+
+    def _forget_resized(self, monitors: Sequence[Monitor]) -> None:
+        """
+        Forget what a monitor whose resolution changed shows, so it gets its
+        image again, rendered for the new size.
+        """
+        sizes = {m.id: m.rect.size for m in monitors if m.rect is not None}
+        for monitor in monitors:
+            old = self._sizes.get(monitor.id)
+            if old is not None and monitor.id in sizes and sizes[monitor.id] != old:
+                log.info("%s changed resolution: rendering again", monitor.name)
+                self._store.forget_applied(monitor.id)
+        self._sizes = sizes
 
     def _accrue(self, playlist: PlaylistConfig, elapsed: float) -> float | None:
         """
@@ -684,7 +701,11 @@ class PlaylistService:
         for monitor in members:
             try:
                 apply_wallpaper(
-                    self._backend, monitor.id, image, playlist.mode, self._render_dir
+                    self._backend,
+                    monitor.id,
+                    image,
+                    Look(playlist.mode),
+                    self._render_dir,
                 )
             except MonitorNotAttachedError as err:
                 log.info("%s: %s", playlist.name, err)
