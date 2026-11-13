@@ -3,7 +3,12 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from wallpaper_py.core.model import ImageMode, MonitorNotAttachedError, Rectangle
+from wallpaper_py.core.model import (
+    ImageMode,
+    MonitorId,
+    MonitorNotAttachedError,
+    Rectangle,
+)
 from wallpaper_py.core.setter import apply_wallpaper, find_attached
 
 from .fakes import FakeBackend, make_monitor
@@ -27,14 +32,15 @@ def fixture_backend() -> FakeBackend:
     )
 
 
-def main_id(backend: FakeBackend) -> str:
+def main_id(backend: FakeBackend) -> MonitorId:
     return backend.monitors()[0].id
 
 
 class TestFindAttached:
     def test_matches_id_case_insensitively(self, backend: FakeBackend) -> None:
         monitor_id = main_id(backend)
-        assert find_attached(backend, monitor_id.upper()).name == "Main"
+        upper = MonitorId(str(monitor_id).upper())
+        assert find_attached(backend, upper).name == "Main"
 
     def test_detached_monitor_is_rejected(self, backend: FakeBackend) -> None:
         monitor_id = main_id(backend)
@@ -44,7 +50,7 @@ class TestFindAttached:
 
     def test_unknown_monitor_is_rejected(self, backend: FakeBackend) -> None:
         with pytest.raises(MonitorNotAttachedError):
-            find_attached(backend, "nope")
+            find_attached(backend, MonitorId("nope"))
 
 
 class TestApplyWallpaper:

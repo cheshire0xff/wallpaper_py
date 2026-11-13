@@ -39,6 +39,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import lru_cache
 from importlib import resources
+from typing import override
 
 from PySide6.QtCore import QByteArray, QEvent, QRect, QRectF, QSize, Qt, Signal, Slot
 from PySide6.QtGui import (
@@ -433,11 +434,13 @@ class IconButton(QToolButton):
             )
         )
 
+    @override
     def changeEvent(self, event: QEvent) -> None:  # pylint: disable=invalid-name
         super().changeEvent(event)
         if palette_changed(event):
             self._tint()
 
+    @override
     def paintEvent(self, event: QPaintEvent) -> None:  # pylint: disable=invalid-name
         if self._on:
             painter = QPainter(self)
@@ -469,6 +472,7 @@ class PaintedButton(QAbstractButton):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self._keyboard_focus = False
 
+    @override
     def focusInEvent(self, event: QFocusEvent) -> None:  # pylint: disable=invalid-name
         super().focusInEvent(event)
         self._keyboard_focus = event.reason() in (
@@ -489,10 +493,12 @@ class PaintedButton(QAbstractButton):
         painter.drawRoundedRect(area, RADIUS_SMALL, RADIUS_SMALL)
         painter.restore()
 
+    @override
     def enterEvent(self, event: QEnterEvent) -> None:  # pylint: disable=invalid-name
         super().enterEvent(event)
         self.update()
 
+    @override
     def leaveEvent(self, event: QEvent) -> None:  # pylint: disable=invalid-name
         super().leaveEvent(event)
         self.update()
@@ -517,6 +523,7 @@ class TextButton(PaintedButton):
         metrics = QFontMetrics(self.font())
         self.setFixedSize(metrics.horizontalAdvance(text) + space(), space(3.5))
 
+    @override
     def paintEvent(self, event: QPaintEvent) -> None:  # pylint: disable=invalid-name
         del event
         derived = tones()
@@ -558,6 +565,7 @@ class Divider(QWidget):
             self.setFixedWidth(1)
             self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Expanding)
 
+    @override
     def paintEvent(self, event: QPaintEvent) -> None:  # pylint: disable=invalid-name
         del event
         painter = QPainter(self)
@@ -578,6 +586,7 @@ class _Tab(PaintedButton):
             QFontMetrics(bold).horizontalAdvance(text) + space(4.5), space(5.5)
         )
 
+    @override
     def paintEvent(self, event: QPaintEvent) -> None:  # pylint: disable=invalid-name
         del event
         derived = tones()
@@ -676,11 +685,13 @@ class Panel(QWidget):
             )
         self.setPalette(palette)
 
+    @override
     def changeEvent(self, event: QEvent) -> None:  # pylint: disable=invalid-name
         super().changeEvent(event)
         if palette_changed(event):
             self._apply()
 
+    @override
     def paintEvent(self, event: QPaintEvent) -> None:  # pylint: disable=invalid-name
         del event
         painter = QPainter(self)
@@ -716,6 +727,7 @@ class FieldCombo(QComboBox):
     text is drawn here, in the Text colour, as a line edit's is.
     """
 
+    @override
     def paintEvent(self, event: QPaintEvent) -> None:  # pylint: disable=invalid-name
         del event
         painter = QStylePainter(self)
@@ -757,6 +769,7 @@ class ValueLabel(QLabel):
     def _align(self) -> None:
         self.setContentsMargins(field_text_x(self), 0, 0, 0)
 
+    @override
     def changeEvent(self, event: QEvent) -> None:  # pylint: disable=invalid-name
         super().changeEvent(event)
         if event.type() == QEvent.Type.StyleChange:
@@ -772,6 +785,7 @@ class Chip(QLabel):
         self.setContentsMargins(space(), 2, space(), 2)
         self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
 
+    @override
     def paintEvent(self, event: QPaintEvent) -> None:  # pylint: disable=invalid-name
         del event
         derived = tones()
@@ -822,12 +836,14 @@ class ImageView(QWidget):
     def height_for(self, width: int) -> int:
         return round(width / self._aspect)
 
+    @override
     def resizeEvent(self, event: QResizeEvent) -> None:  # pylint: disable=invalid-name
         super().resizeEvent(event)
         height = self.height_for(event.size().width())
         if height != self.height():  # only the width drives this: no loop
             self.setFixedHeight(height)
 
+    @override
     def paintEvent(self, event: QPaintEvent) -> None:  # pylint: disable=invalid-name
         del event
         derived = tones()

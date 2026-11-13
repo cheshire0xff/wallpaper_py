@@ -10,6 +10,7 @@ from PIL import Image
 from wallpaper_py.commands import error_reply, execute, open_service, overview
 from wallpaper_py.core import paths
 from wallpaper_py.core.config import Order
+from wallpaper_py.core.model import MonitorId
 from wallpaper_py.core.service import (
     Change,
     ChangeReason,
@@ -31,6 +32,8 @@ from wallpaper_py.protocol import (
     PickResult,
     PlaylistView,
     PrevResult,
+    PruneRequest,
+    PruneResult,
     RemoveResult,
     Reply,
     Request,
@@ -38,23 +41,33 @@ from wallpaper_py.protocol import (
     StatusResult,
 )
 
-from .fakes import FakeBackend, FakePresence, make_images, make_monitor
+from .fakes import (
+    BusyFile,
+    FakeBackend,
+    FakePresence,
+    make_images,
+    make_monitor,
+    fake_id,
+    toml_ids,
+)
 
-CONFIG = """
+CONFIG = f"""
 pause_when_idle = false
 
 [playlists.walls]
+id = "walls-id"
 directory = 'walls'
-monitors = ["Main", "Side"]
+monitors = {toml_ids("Main", "Side")}
 order = "sorted"
 interval = "10m"
 
 [playlists.strip]
+id = "strip-id"
 directory = 'strip'
-monitors = ["Strip"]
+monitors = {toml_ids("Strip")}
 interval = "10m"
 """
-
+STRIP_ID = MonitorId(fake_id("Strip"))  # not listed
 
 MAIN = make_monitor("Main")
 SIDE = make_monitor("Side", attached=False)
@@ -259,14 +272,14 @@ def test_status(service: PlaylistService, tmp_path: Path) -> None:
     )
     assert walls.directory == tmp_path / "walls"
     assert walls.monitors == (
-        MonitorView(selector="Main", name="Main", attached=True, id=MAIN.id),
-        MonitorView(selector="Side", name="Side", attached=False, id=SIDE.id),
+        MonitorView(id=MAIN.id, name="Main", attached=True),
+        MonitorView(id=SIDE.id, name="Side", attached=False),
     )
     assert walls.current == tmp_path / "walls" / "a.jpg" and not walls.favourite
     assert walls.next_in_seconds == 600.0
     assert [p.name for p in walls.upcoming] == ["b.jpg", "a.jpg"]
     assert strip.monitors == (
-        MonitorView(selector="Strip", name="Strip", attached=None),
+        MonitorView(id=STRIP_ID, name=str(STRIP_ID), attached=None),
     )
 
 
@@ -276,19 +289,15 @@ def test_overview(service: PlaylistService, tmp_path: Path) -> None:
             PlaylistView(
                 name="walls",
                 monitors=(
-                    MonitorView(
-                        selector="Main", name="Main", attached=True, id=MAIN.id
-                    ),
-                    MonitorView(
-                        selector="Side", name="Side", attached=False, id=SIDE.id
-                    ),
+                    MonitorView(id=MAIN.id, name="Main", attached=True),
+                    MonitorView(id=SIDE.id, name="Side", attached=False),
                 ),
                 current=None,
                 favourite=False,
             ),
             PlaylistView(
                 name="strip",
-                monitors=(MonitorView(selector="Strip", name="Strip", attached=None),),
+                monitors=(MonitorView(id=STRIP_ID, name=str(STRIP_ID), attached=None),),
                 current=None,
                 favourite=False,
             ),
@@ -315,3 +324,82 @@ def test_overview(service: PlaylistService, tmp_path: Path) -> None:
     assert walls.current == tmp_path / "walls" / "a.jpg"
     assert walls.favourite and walls.attached
     assert not overview(service).playlists[1].attached
+
+
+WALLS_ONLY, STRIP, STRIP_TABLE = CONFIG.partition("[playlists.strip]")
+STRIP_ONLY = f"pause_when_idle = false\n{STRIP}{STRIP_TABLE}"
+
+
+def walls_current(config: Path, backend: FakeBackend) -> Path | None:
+    with open_service(config, backend, FakePresence()) as service:
+        reply = run(service, "status")
+        assert isinstance(reply, StatusResult)
+        return next((p.current for p in reply.playlists if p.name == "walls"), None)
+
+
+def prune(config: Path, backend: FakeBackend) -> Reply:
+    with open_service(config, backend, FakePresence()) as service:
+        return execute(service, PruneRequest()).reply
+
+
+def test_loading_never_drops_state(
+    service: PlaylistService, backend: FakeBackend, tmp_path: Path
+) -> None:
+    """A playlist taken out for a while, or a missing file, loses nothing."""
+    run(service, "next", "walls")
+    shown = service.current(service.config.playlists[0])
+    assert shown is not None
+    config = tmp_path / "config.toml"
+    config.write_text(STRIP_ONLY, encoding="utf-8")  # walls commented out
+    assert walls_current(config, backend) is None
+    config.unlink()  # briefly gone (an editor replacing it)
+    assert walls_current(config, backend) is None
+    config.write_text(CONFIG, encoding="utf-8")
+    assert walls_current(config, backend) == shown
+
+
+def test_prune_drops_exactly_the_playlists_not_in_the_config(
+    service: PlaylistService, backend: FakeBackend, tmp_path: Path
+) -> None:
+    run(service, "next", "walls")
+    run(service, "hold", "strip")  # strip's monitor isn't listed: hold only
+    config = tmp_path / "config.toml"
+    config.write_text(WALLS_ONLY, encoding="utf-8")
+    assert prune(config, backend) == PruneResult(dropped=("strip-id",))
+    assert prune(config, backend) == PruneResult(dropped=())
+    assert walls_current(config, backend) is not None  # kept
+    config.write_text(CONFIG, encoding="utf-8")
+    with open_service(config, backend, FakePresence()) as again:
+        assert not again.held(again.config.playlists[1])  # strip starts afresh
+
+
+def test_prune_refuses_without_a_config_file(
+    service: PlaylistService, backend: FakeBackend, tmp_path: Path
+) -> None:
+    run(service, "next", "walls")
+    config = tmp_path / "config.toml"
+    config.unlink()
+    reply = prune(config, backend)
+    assert isinstance(reply, ErrorReply) and reply.error.kind == "failed"
+    assert "no config file" in reply.error.message
+    config.write_text(CONFIG, encoding="utf-8")
+    assert walls_current(config, backend) is not None  # nothing was dropped
+
+
+def test_a_favourites_list_never_read_is_unknown(
+    tmp_path: Path, backend: FakeBackend, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The toggle can't say "not a favourite" before the list was read."""
+    make_images(tmp_path / "walls", "a.jpg", "b.jpg")
+    config = tmp_path / "config.toml"
+    config.write_text(CONFIG, encoding="utf-8")
+    with open_service(config, backend, FakePresence()) as service:
+        run(service, "next", "walls")
+        run(service, "fav", "walls")
+    busy = BusyFile(paths.data_dir() / "favourites.txt", monkeypatch)
+    with open_service(config, backend, FakePresence()) as service:
+        assert overview(service).playlists[0].favourite is None
+        reply = run(service, "unfav", "walls")
+        assert isinstance(reply, ErrorReply) and "Cannot read" in reply.error.message
+        busy.busy = False
+        assert overview(service).playlists[0].favourite is True

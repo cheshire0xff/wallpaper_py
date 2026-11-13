@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import override
+
 from wallpaper_py.app.ui.client import Client, ReplyCallback
 from wallpaper_py.protocol import CommandRequest, Overview
 
@@ -13,6 +15,7 @@ class FakeClient(Client):
         super().__init__()
         self.calls: list[tuple[CommandRequest, ReplyCallback]] = []
 
+    @override
     def run(self, request: CommandRequest, on_reply: ReplyCallback) -> None:
         self.calls.append((request, on_reply))
 

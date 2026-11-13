@@ -46,7 +46,11 @@ fakes like Phase 1.
     removed from the file automatically; clearing is explicit (edit the
     file, or a later clear command / button);
   - locations are configurable in the TOML config, defaulting to the data
-    dir.
+    dir;
+  - a file that can't be opened (an editor or a virus scan holds it) keeps
+    the last list read; one never read yet is *unknown*, not empty: while
+    to-remove is unknown no image is chosen (ticks wait, next / prev /
+    pick fail), and the overview's `favourite` is null.
 
   To-remove only lists and hides the image from rotation; deleting stays
   with your library script.
@@ -311,7 +315,7 @@ Foundation, implemented (decisions made while building it):
 - Results carry `playlist` (the resolved one: the target may be a monitor),
   `fav` / `unfav` / `remove` also `list_file`, and `status` also
   `warnings`, so the CLI can print what it printed before. Monitors carry
-  `selector` (as in the config) besides `name` and `attached`.
+  their `id` (as in the config) besides `name` and `attached`.
 - Error kinds: `protocol`, `wrong_config`, `config_error`,
   `unknown_target` (playlist or monitor), `not_attached`, `no_images`,
   `nothing_shown`, `failed`, `internal`, and the client-side
@@ -447,12 +451,22 @@ Settings window, implemented (decisions made while building it):
   sends it too), run by `ServiceWorker.execute` itself (it replaces the
   service, so it isn't a `commands.execute` command). Its reply: `warnings`,
   or the config error. The overview is published before the reply.
+- **Loading only reads; `prune` drops.** Opening the service (start,
+  reload, a CLI command run here) never deletes state: a briefly missing
+  config.toml, or a playlist commented out, would otherwise lose its
+  history, deck and hold for good. `prune` (protocol command, `wallpaper
+  prune`, in the app or here like `status`) drops the state of playlist
+  ids not in the config and names them; it refuses when there is no
+  config file.
+- **One rule for a `ConfigError`**: it stops the service wherever it comes
+  from (a tick, a command, the overview; `ServiceWorker._failed`), and
+  commands answer with it until a reload.
 - **`core/config_edit.py`** (Qt-free): `read_settings` takes the editable
   values as written (texts, not parsed, so a bad value in the file can be
   fixed in the form); `render` applies only what differs between the
   settings read and the edited ones, through tomlkit: no change = the same
   bytes; a changed value keeps its trailing comment *in its column*; paths
-  and selectors with backslashes are written as literal strings (basic if
+  and monitor ids with backslashes are written as literal strings (basic if
   the text has a `'`); line endings are kept (CRLF files stay CRLF). A
   rename rewrites only the header line (tomlkit renders headers from the
   table's display name; added playlists are appended after re-parsing). A
@@ -472,18 +486,20 @@ Settings window, implemented (decisions made while building it):
 - **Validation** (`validate`) per field, shown under the field; Save stays
   off and its tooltip and the line beside it say why. A missing folder is
   an error only when it is new or changed, so an unplugged drive doesn't
-  block other edits. A playlist without monitors is an error (the core
-  requires one): delete it or give it a monitor.
+  block other edits. A playlist without monitors is an error: delete it
+  or give it a monitor. No playlists at all is fine (the app rotates
+  nothing), and so is no file: the window starts empty and Save creates
+  it.
 - **Monitors**: the layout window's `MonitorsView`, clickable here
   (`clicked`); a click pops up the playlists, *No playlist* and *New
   playlist…*. Each playlist also has a *Monitors* menu (keyboard
   reachable) listing every monitor ("— now in konachan" for another's) and
-  its unlisted selectors ("not connected": unticking removes them).
-  Choosing moves the monitor, so one playlist per monitor holds by
-  construction (`assign_monitor`). The selector written: the name if no
-  other listed monitor has it, else the id; a monitor that stays keeps its
-  selector as written. Monitors matched by full id or exact name, as
-  `find_exact`.
+  its unlisted monitors (by id, "not connected": unticking removes
+  them). Choosing moves the monitor, so one playlist per monitor holds by
+  construction (`assign_monitor`). The config holds monitor ids only, never
+  names: two monitors of one model share a name, and a name would need
+  rules for which one it means. A new playlist gets a random id
+  (`new_playlist_id`), so it never takes over a deleted one's state.
 - **Saving**: Save and Revert only while something changed; after a save
   the form is rebuilt from the saved text and the app is asked to reload
   (the banner says the outcome). A conflict keeps the edits and offers

@@ -19,8 +19,8 @@ MONITORS = [
         ("  zeromod ", "ZeroMOD"),
         ("zero", "ZeroMOD"),
         ("PLX", "PLX2783H"),
-        (MONITORS[1].id, "PLX2783H"),
-        (MONITORS[1].id.lower(), "PLX2783H"),
+        (str(MONITORS[1].id), "PLX2783H"),
+        (str(MONITORS[1].id).lower(), "PLX2783H"),
     ],
 )
 def test_resolves(selector: str, name: str) -> None:
@@ -42,7 +42,7 @@ def test_identical_names_need_the_full_id() -> None:
     twins = [make_monitor("U2720Q", pnp="DEL1"), make_monitor("U2720Q", pnp="DEL2")]
     with pytest.raises(MonitorSelectionError, match="full id"):
         resolve_monitor(twins, "U2720Q")
-    assert resolve_monitor(twins, twins[1].id) is twins[1]
+    assert resolve_monitor(twins, str(twins[1].id)) is twins[1]
 
 
 @pytest.mark.parametrize("selector", ["0", "1", " 2 ", "2783"])

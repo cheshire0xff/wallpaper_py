@@ -15,6 +15,7 @@ Widgets only report edits; the page owns the settings.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from typing import override
 
 from PySide6.QtCore import QEvent, QPoint, QRectF, Qt, Signal, Slot
 from PySide6.QtGui import QPainter, QPaintEvent, QPalette
@@ -42,9 +43,9 @@ from ...core.config_edit import (
     Field,
     PlaylistSettings,
     Settings,
-    resolve,
+    find_listed,
 )
-from ...core.model import ImageMode
+from ...core.model import ImageMode, MonitorId
 from ...protocol import DesktopMonitor, MonitorView, Overview, PlaylistView
 from . import theme
 
@@ -112,6 +113,7 @@ class Problem(QWidget):
         ratio = self.devicePixelRatioF()
         self._icon.setPixmap(theme.tinted_pixmap("circle-alert", color, 16, ratio))
 
+    @override
     def changeEvent(self, event: QEvent) -> None:  # pylint: disable=invalid-name
         super().changeEvent(event)
         if theme.palette_changed(event):
@@ -230,6 +232,7 @@ class PlaylistSummary(theme.PaintedButton):
         self.setAccessibleName(f"{name}: {summary}{note}. Open")
         self.update()
 
+    @override
     def paintEvent(self, event: QPaintEvent) -> None:  # pylint: disable=invalid-name
         del event
         tones = theme.tones()
@@ -295,6 +298,7 @@ class PlaylistEditor(QWidget):
         super().__init__(parent)
         self.uid = playlist.uid
         self.origin = playlist.origin
+        self.playlist_id = playlist.id
         self._monitors = playlist.monitors
         self._expanded = True
 
@@ -430,6 +434,7 @@ class PlaylistEditor(QWidget):
         return PlaylistSettings(
             uid=self.uid,
             origin=self.origin,
+            id=self.playlist_id,
             name=self.name_edit.text(),
             directory=self.directory_edit.text().strip(),
             monitors=self._monitors,
@@ -438,8 +443,8 @@ class PlaylistEditor(QWidget):
             mode=self.mode_combo.currentData(),
         )
 
-    def set_monitors(self, selectors: tuple[str, ...], text: str) -> None:
-        self._monitors = selectors
+    def set_monitors(self, monitor_ids: tuple[MonitorId, ...], text: str) -> None:
+        self._monitors = monitor_ids
         self.monitors_label.setText(text)
         self.monitors_button.setAccessibleName(f"Choose the monitors: {text}")
 
@@ -514,13 +519,15 @@ class PlaylistEditor(QWidget):
 # -- texts ---------------------------------------------------------------------------
 
 
-def monitors_text(selectors: Sequence[str], listed: Sequence[DesktopMonitor]) -> str:
-    """ "AW3225QF + ZeroMOD (off) + TV (not connected)", or "None"."""
+def monitors_text(
+    monitor_ids: Sequence[MonitorId], listed: Sequence[DesktopMonitor]
+) -> str:
+    """ "AW3225QF + ZeroMOD (off) + <id> (not connected)", or "None"."""
     parts = []
-    for selector in selectors:
-        monitor = resolve(selector, listed)
+    for monitor_id in monitor_ids:
+        monitor = find_listed(monitor_id, listed)
         if monitor is None:
-            parts.append(f"{selector} (not connected)")
+            parts.append(f"{monitor_id} (not connected)")
         elif monitor.geometry is None:
             parts.append(f"{monitor.name} (off)")
         else:
@@ -591,14 +598,13 @@ def drawing(settings: Settings, listed: Sequence[DesktopMonitor]) -> Overview:
     playlists = []
     for playlist in settings.playlists:
         members = []
-        for selector in playlist.monitors:
-            monitor = resolve(selector, listed)
+        for monitor_id in playlist.monitors:
+            monitor = find_listed(monitor_id, listed)
             members.append(
                 MonitorView(
-                    selector=selector,
-                    name=monitor.name if monitor else selector,
-                    attached=(monitor.geometry is not None) if monitor else None,
-                    id=monitor.id if monitor else None,
+                    id=monitor.id if monitor else monitor_id,
+                    name=monitor.name if monitor else str(monitor_id),
+                    attached=monitor.attached if monitor else None,
                 )
             )
         playlists.append(
@@ -615,10 +621,10 @@ def drawing(settings: Settings, listed: Sequence[DesktopMonitor]) -> Overview:
 def unlisted_text(settings: Settings, listed: Sequence[DesktopMonitor]) -> str:
     """The monitors in the config that the desktop doesn't list now."""
     missing = [
-        f"{selector} ({playlist.name})"
+        f"{monitor_id} ({playlist.name})"
         for playlist in settings.playlists
-        for selector in playlist.monitors
-        if resolve(selector, listed) is None
+        for monitor_id in playlist.monitors
+        if find_listed(monitor_id, listed) is None
     ]
     if not missing:
         return ""

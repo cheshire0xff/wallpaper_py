@@ -105,6 +105,13 @@ def test_clicking_the_sidebar_switches_pages(window: MainWindow) -> None:
     window.sidebar.buttons["library"].grab()  # paints the selected item
 
 
+def test_homes_add_button_switches_to_settings(window: MainWindow) -> None:
+    window.show()  # the client's overview has no playlists
+    assert window.home.empty.isVisible()
+    window.home.add_button.click()
+    assert window.current_page() == "settings"
+
+
 def dot(window: MainWindow) -> str:
     """What the status dot shows: ok, paused, error, connecting."""
     return window.sidebar.dot.kind

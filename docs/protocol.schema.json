@@ -127,6 +127,7 @@
               "next": "#/$defs/Request",
               "pick": "#/$defs/PickRequest",
               "prev": "#/$defs/Request",
+              "prune": "#/$defs/PruneRequest",
               "reload": "#/$defs/ReloadRequest",
               "remove": "#/$defs/Request",
               "resume": "#/$defs/Request",
@@ -142,6 +143,9 @@
             },
             {
               "$ref": "#/$defs/PickRequest"
+            },
+            {
+              "$ref": "#/$defs/PruneRequest"
             },
             {
               "$ref": "#/$defs/ReloadRequest"
@@ -339,10 +343,10 @@
       "type": "object"
     },
     "MonitorView": {
-      "description": "A playlist's member, as the config names it.",
+      "description": "A playlist's member. `id` is spelt as the desktop spells it when the\nmonitor is listed (as in `Overview.monitors`), else as the config\ndoes; ids compare case-insensitively (`MonitorId`).",
       "properties": {
-        "selector": {
-          "title": "Selector",
+        "id": {
+          "title": "Id",
           "type": "string"
         },
         "name": {
@@ -359,22 +363,10 @@
             }
           ],
           "title": "Attached"
-        },
-        "id": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Id"
         }
       },
       "required": [
-        "selector",
+        "id",
         "name",
         "attached"
       ],
@@ -574,8 +566,15 @@
           "title": "Current"
         },
         "favourite": {
-          "title": "Favourite",
-          "type": "boolean"
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Favourite"
         },
         "held": {
           "default": false,
@@ -677,8 +676,15 @@
           "title": "Current"
         },
         "favourite": {
-          "title": "Favourite",
-          "type": "boolean"
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Favourite"
         },
         "held": {
           "default": false,
@@ -728,6 +734,43 @@
         "change"
       ],
       "title": "PrevResult",
+      "type": "object"
+    },
+    "PruneRequest": {
+      "additionalProperties": false,
+      "description": "Drop the state of playlist ids no longer in the config.",
+      "properties": {
+        "command": {
+          "const": "prune",
+          "default": "prune",
+          "title": "Command",
+          "type": "string"
+        }
+      },
+      "title": "PruneRequest",
+      "type": "object"
+    },
+    "PruneResult": {
+      "description": "The state of playlist ids no longer in the config was dropped.",
+      "properties": {
+        "command": {
+          "const": "prune",
+          "default": "prune",
+          "title": "Command",
+          "type": "string"
+        },
+        "dropped": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Dropped",
+          "type": "array"
+        }
+      },
+      "required": [
+        "dropped"
+      ],
+      "title": "PruneResult",
       "type": "object"
     },
     "ReloadRequest": {
@@ -836,6 +879,9 @@
               "$ref": "#/$defs/ResumeResult"
             },
             {
+              "$ref": "#/$defs/PruneResult"
+            },
+            {
               "$ref": "#/$defs/ReloadResult"
             }
           ],
@@ -851,6 +897,7 @@
               "pick": "#/$defs/PickResult",
               "hold": "#/$defs/HoldResult",
               "resume": "#/$defs/ResumeResult",
+              "prune": "#/$defs/PruneResult",
               "reload": "#/$defs/ReloadResult"
             }
           }

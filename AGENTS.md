@@ -38,11 +38,52 @@ steps there for new desktop-facing behaviour, for the user to try.
 - Only the service thread touches `PlaylistService`; everything goes
   through `ServiceWorker.execute`. Nothing on that thread may block on a
   client or spin a nested event loop.
-- mypy is strict; pydantic models for anything (de)serialized.
+- Every method that overrides a base method (ours, Qt's, the standard
+  library's) is marked `@override` (`typing`); mypy enforces it
+  (`explicit-override`). A misspelt Qt event handler is then an error,
+  not a method Qt never calls.
+- mypy is strict; pydantic models for anything (de)serialized, also
+  files people write by hand: the keys and types of config.toml are
+  `ConfigFile` / `PlaylistTable` in `core/config.py` (a new key goes
+  there, and in `_PROBLEMS` for its error message), not `isinstance`
+  checks. Hand-written code checks only what values mean (durations,
+  paths, uniqueness). Use `StrictInt` / `StrictStr` / `StrictBool` for
+  values people type: lax pydantic takes `true` as an int and `0` as
+  `Literal[False]`.
+- config.toml is written by the settings window; people aren't expected
+  to edit it by hand. It holds monitors by id only (never names: two
+  monitors of one model share one) and generated playlist ids. A hand
+  edit is still checked like any other, but don't add rules or helpers
+  just to make hand editing convenient. No file, or no playlists, is a
+  valid config that rotates nothing.
 - Pre-release: no migrations or backward compatibility for stored state or
   the protocol; change it in place.
+- Files people write by hand (config.toml, the list files) are UTF-8
+  without a byte order mark, nothing else; a BOM is a `ConfigError` that
+  says so (`config.decode_text`). This is on purpose: don't add BOM
+  tolerance (`utf-8-sig`), and don't report it in reviews.
 - When you rename something named in docs/app-wiring.md, update the doc:
   `tests/test_docs.py` checks it.
+
+## Code reviews
+
+Findings are what goes wrong for the user in normal use: a crash, lost or
+wrong data, an error nobody sees, a wallpaper that doesn't change when it
+should. Only these count toward the number of findings.
+
+After them, list the rest under one heading, "Low severity", grouped by
+kind, one line each, nothing to fix by default:
+
+- clock skew, timestamps in the future, and other environment faults the
+  app can't see;
+- a repeated cheap check or query, a log line twice, a local variable or
+  other style-only changes.
+
+Don't report at all:
+
+- hand edits of config.toml made easier or friendlier (it is written by
+  the settings window), and files from before a change (no migrations);
+- a decision already written down in this file or in docs/.
 
 ## Qt for Python rules (easy to miss, costly when missed)
 

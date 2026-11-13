@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Literal, get_args
+from typing import Literal, get_args, override
 
 from pydantic import ValidationError, field_validator
 from PySide6.QtCore import QObject, Signal, Slot
@@ -81,6 +81,7 @@ class UiServer(ipc.LineServer):
         if overview.config is not None:
             self._config_path = overview.config
 
+    @override
     def _received(self, connection_id: int, line: bytes) -> None:
         try:
             request = ShowRequest.model_validate_json(line)
@@ -104,6 +105,7 @@ class UiServer(ipc.LineServer):
     def _answer(self, connection_id: int, error: str | None) -> None:
         self.finish(connection_id, ipc.encode(ShowReply(error=error)))
 
+    @override
     def _too_long(self) -> bytes:
         return ipc.encode(ShowReply(error="Request too long"))
 

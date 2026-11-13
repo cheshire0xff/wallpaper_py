@@ -33,9 +33,15 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, Slot
 
-from ..commands import error_reply, execute, open_service, overview
+from ..commands import (
+    error_reply,
+    execute,
+    open_service,
+    overview,
+)
 from ..core.backend import Backend
-from ..core.model import WallpaperError
+from ..core.config import ConfigError
+from ..core.model import AppError, WallpaperError
 from ..core.presence import Presence
 from ..core.service import Change, PlaylistService
 from ..protocol import (
@@ -48,6 +54,7 @@ from ..protocol import (
     ReloadRequest,
     ReloadResult,
     Reply,
+    TargetRequest,
 )
 from .ipc import CommandServer
 
@@ -141,12 +148,8 @@ class ServiceWorker(QObject):
                 for change in self._service.tick():
                     log.info("%s", change.describe())
                     self._announce(change)
-            except WallpaperError as err:
-                log.warning("%s", err)
-            # The loop must outlive surprises (e.g. a COM error while a
-            # monitor is switching); logged in full, the next tick retries.
-            except Exception:  # pylint: disable=broad-exception-caught
-                log.exception("Tick failed")
+            except Exception as err:  # pylint: disable=broad-exception-caught
+                self._failed("Tick", err)
         self._publish()
         self.ticked.emit()
 
@@ -165,14 +168,36 @@ class ServiceWorker(QObject):
             try:
                 reply, change = execute(self._service, request)
             except Exception as err:  # pylint: disable=broad-exception-caught
-                log.exception("Command %s failed", request.command)
-                reply, change = error_reply(err), None
+                reply, change = self._failed(f"Command {request.command}", err), None
             if change is not None:
                 self._announce(change)
         if request.command != "status":
-            log.info("%s %s: %r", request.command, request.target or "", reply)
+            target = request.target if isinstance(request, TargetRequest) else None
+            log.info("%s %s: %r", request.command, target or "", reply)
         self._publish()
         return reply
+
+    def _failed(self, what: str, error: Exception) -> ErrorReply:
+        """
+        The one handler for an error from the running service (a command, a
+        tick, the overview); returns what a command answers.
+
+        - ConfigError: the config or a list file went bad while running
+          (e.g. saved with a byte order mark). The service stops, as for a
+          broken config at start; commands answer with the error and the
+          overview shows it until a reload succeeds.
+        - Any other WallpaperError: expected (a command already answered
+          it); logged, the next tick retries.
+        - Anything else: a bug, logged in full. The loop must outlive
+          surprises (e.g. a COM error while a monitor is switching).
+        """
+        if isinstance(error, ConfigError):
+            self._fail(error)
+        elif isinstance(error, WallpaperError):
+            log.warning("%s: %s", what, error)
+        else:
+            log.exception("%s failed", what)  # called from an except block
+        return error_reply(error)
 
     @Slot(int, object)
     def submit(self, request_id: int, request: CommandRequest) -> None:
@@ -213,7 +238,7 @@ class ServiceWorker(QObject):
                     settings.tick_period,
                 )
             )
-        except WallpaperError as err:
+        except AppError as err:
             self._fail(err)
             return
         except Exception as err:  # pylint: disable=broad-exception-caught
@@ -240,20 +265,22 @@ class ServiceWorker(QObject):
 
     def _publish(self) -> None:
         """Emit the overview if it changed (the tray redraws its menu)."""
-        if self._service is None:
-            current = Overview(
-                error=self._error.error.message if self._error else None,
-                config=self._settings.config_path,
-            )
-        else:
+        current: Overview | None = None
+        if self._service is not None:
             try:
                 current = overview(self._service)
                 current = current.model_copy(
                     update={"config": self._settings.config_path}
                 )
-            except Exception:  # pylint: disable=broad-exception-caught
-                log.exception("Reading the overview failed")
-                return
+            except Exception as err:  # pylint: disable=broad-exception-caught
+                self._failed("Reading the overview", err)
+                if self._service is not None:  # still running: keep the last
+                    return
+        if current is None:  # no service, or overview() just stopped it
+            current = Overview(
+                error=self._error.error.message if self._error else None,
+                config=self._settings.config_path,
+            )
         if current != self._overview:
             self._overview = current
             self.overview_changed.emit(current)

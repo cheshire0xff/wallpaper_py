@@ -44,7 +44,7 @@ def data_locations(config_path: Path | None, config: Config | None) -> list[Loca
     locations = [Location("Config file", config_path)] if config_path else []
     return [
         *locations,
-        Location("State database", paths.state_db()),
+        Location("State database", paths.state_db(config_path or paths.config_file())),
         Location("Favourites", favourites or paths.data_dir() / "favourites.txt"),
         Location("To remove", to_remove or paths.data_dir() / "to-remove.txt"),
         Location("App log", paths.log_file()),

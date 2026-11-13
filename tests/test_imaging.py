@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from wallpaper_py.core.imaging import fill_box, fit_size, render, render_file
+from wallpaper_py.core.imaging import fill_box, fit_size, load, render, render_file
 from wallpaper_py.core.model import ImageMode
 
 RED, GREEN, BLUE, BLACK = (255, 0, 0), (0, 255, 0), (0, 0, 255), (0, 0, 0)
@@ -90,3 +90,15 @@ def test_large_jpeg_is_rendered_at_target_size(tmp_path: Path) -> None:
     with Image.open(out) as img:
         assert img.size == (300, 100)
         assert close_to(img.getpixel((150, 50)), GREEN, tol=20)
+
+
+def test_a_jpeg_turned_by_exif_is_not_decoded_too_small(tmp_path: Path) -> None:
+    """Stored 800x600 on its side: upright it is 600x800, enough for 400x300."""
+    source = tmp_path / "phone.jpg"
+    exif = Image.Exif()
+    exif[0x0112] = 6  # turn 90 degrees to show it upright
+    stripes(800, 600).save(source, quality=90, exif=exif)
+    img = load(source, (400, 300))
+    assert img.size[0] < img.size[1]  # upright
+    # Half scale (400x300 as stored) would be 300x400 upright: too narrow.
+    assert img.size[0] >= 400 and img.size[1] >= 300

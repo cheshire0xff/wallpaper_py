@@ -16,7 +16,7 @@ changes (the system switching light / dark).
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, override
 
 from PySide6.QtCore import QEvent, QRectF, Qt, Signal, Slot
 from PySide6.QtGui import (
@@ -80,6 +80,7 @@ class NavButton(theme.PaintedButton):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setFixedHeight(theme.space(5))
 
+    @override
     def paintEvent(self, event: QPaintEvent) -> None:  # pylint: disable=invalid-name
         del event
         tones = theme.tones()
@@ -128,6 +129,7 @@ class StatusDot(QWidget):
         self.kind = kind
         self.update()
 
+    @override
     def paintEvent(self, event: QPaintEvent) -> None:  # pylint: disable=invalid-name
         del event
         tones = theme.tones()
@@ -246,6 +248,7 @@ class MainWindow(QWidget):
         self._apply_tones()
         self.show_page("home")
         self.sidebar.page_chosen.connect(self.show_page)
+        self.home.page_wanted.connect(self.show_page)
         self.settings.modified.connect(self._modified)
         client.overview_changed.connect(self._show_status)
         client.failed.connect(self._show_failure)
@@ -302,6 +305,7 @@ class MainWindow(QWidget):
         """The tones the window was last drawn with."""
         return self._applied
 
+    @override
     def changeEvent(self, event: QEvent) -> None:  # pylint: disable=invalid-name
         super().changeEvent(event)
         if theme.palette_changed(event):
@@ -309,6 +313,7 @@ class MainWindow(QWidget):
 
     # -- closing -----------------------------------------------------------------
 
+    @override
     def closeEvent(self, event: QCloseEvent) -> None:  # pylint: disable=invalid-name
         if self.settings.dirty():
             self.show_page("settings")  # the question is about what is shown

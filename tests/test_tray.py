@@ -9,9 +9,17 @@ from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QMenu
 
 from wallpaper_py.app.icon import IconState, app_icon
-from wallpaper_py.app.tray import Tray, activate, fill_menu, icon_state, tooltip
+from wallpaper_py.app.tray import (
+    NO_PLAYLISTS_NOTE,
+    Tray,
+    activate,
+    fill_menu,
+    icon_state,
+    tooltip,
+)
 from wallpaper_py.app.ui.launcher import PageName
 from wallpaper_py.app.worker import ServiceHost, ServiceSettings
+from wallpaper_py.core.model import MonitorId
 from wallpaper_py.protocol import (
     CommandRequest,
     ErrorReply,
@@ -28,7 +36,7 @@ from .fakes import FakeAutostart, FakeBackend, FakePresence
 
 
 def monitor(name: str, attached: bool | None) -> MonitorView:
-    return MonitorView(selector=name, name=name, attached=attached)
+    return MonitorView(id=MonitorId(name), name=name, attached=attached)
 
 
 WALLS = PlaylistView(
@@ -182,6 +190,14 @@ def test_favourite_marks_when_not_marked(menu: QMenu) -> None:
     assert actions.calls == [queued("fav", "walls")]
 
 
+def test_favourite_is_off_while_the_list_is_unknown(menu: QMenu) -> None:
+    """favourites.txt not read yet: neither fav nor unfav is known to fit."""
+    unknown = WALLS.model_copy(update={"favourite": None})
+    fill(menu, Overview(playlists=(unknown,)), Actions())
+    favourite = find(menu, "Favourite")
+    assert not favourite.isChecked() and not favourite.isEnabled()
+
+
 def test_app_items(menu: QMenu) -> None:
     actions = Actions()
     actions.autostart = True
@@ -216,6 +232,18 @@ def test_starting_and_error_states(menu: QMenu) -> None:
     assert not items(menu)[0].isEnabled()
 
 
+def test_no_playlists_item_opens_settings(menu: QMenu) -> None:
+    actions = Actions()
+    fill(menu, Overview(), actions)
+    first = items(menu)[0]
+    assert first.text() == "No playlists yet: add one…"
+    first.trigger()
+    assert actions.calls == [("page", "settings")]
+    for overview in (Overview(error="bad config"), Overview(playlists=(WALLS,))):
+        fill_menu(menu, overview, False)
+        assert "No playlists yet: add one…" not in [a.text() for a in items(menu)]
+
+
 def test_long_names_are_elided_in_the_middle(menu: QMenu) -> None:
     long = PlaylistView(
         name="p", monitors=(), current=Path("x" * 100 + ".png"), favourite=False
@@ -227,6 +255,7 @@ def test_long_names_are_elided_in_the_middle(menu: QMenu) -> None:
 
 def test_tooltip_and_icon_state() -> None:
     assert tooltip(None) == "wallpaper_py\nStarting..."
+    assert tooltip(Overview()) == "wallpaper_py\nNo playlists yet"
     assert tooltip(Overview(playlists=(WALLS, STRIP), paused="idle")) == (
         "wallpaper_py\nwalls: a & b.jpg\nstrip (manual): -\nPaused: idle"
     )
@@ -290,6 +319,54 @@ def test_tray_notifies_failed_commands(
     monkeypatch.setattr(tray, "notify", notes.append)
     tray.run(queued("next", "walls"))
     assert notes == ["None attached"]
+
+
+def test_starting_without_playlists_notifies_once_and_opens_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    host = ServiceHost(
+        ServiceSettings(tmp_path, lambda: FakeBackend([]), FakePresence, nullcontext)
+    )
+    pages: list[PageName] = []
+    tray = Tray(
+        host, FakeAutostart(), [], tmp_path, lambda: None, open_window=pages.append
+    )
+    shown: list[str] = []
+    monkeypatch.setattr(tray, "_show_message", lambda m, _: shown.append(m))
+    host.overview_changed.emit(Overview(error="bad config"))  # not started yet
+    host.overview_changed.emit(Overview())
+    host.overview_changed.emit(Overview())
+    assert shown == ["bad config", NO_PLAYLISTS_NOTE]  # once
+    tray._message_clicked()  # pylint: disable=protected-access
+    assert pages == ["settings"]
+
+
+def test_other_notifications_open_nothing_when_clicked(tmp_path: Path) -> None:
+    host = ServiceHost(
+        ServiceSettings(tmp_path, lambda: FakeBackend([]), FakePresence, nullcontext)
+    )
+    pages: list[PageName] = []
+    tray = Tray(
+        host, FakeAutostart(), [], tmp_path, lambda: None, open_window=pages.append
+    )
+    host.overview_changed.emit(Overview())  # the no-playlists note
+    tray.notify("None attached")  # shown over it
+    tray._message_clicked()  # pylint: disable=protected-access
+    assert not pages
+
+
+def test_starting_with_playlists_does_not_notify(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    host = ServiceHost(
+        ServiceSettings(tmp_path, lambda: FakeBackend([]), FakePresence, nullcontext)
+    )
+    tray = Tray(host, FakeAutostart(), [], tmp_path, lambda: None, open_window=print)
+    shown: list[str] = []
+    monkeypatch.setattr(tray, "_show_message", lambda m, _: shown.append(m))
+    host.overview_changed.emit(Overview(playlists=(WALLS,)))
+    host.overview_changed.emit(Overview())  # the playlists deleted later
+    assert not shown
 
 
 def test_reload_config_notifies_once(

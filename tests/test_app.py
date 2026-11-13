@@ -105,6 +105,7 @@ def test_cli_without_config_reaches_an_app_on_another_config(
     def terminal() -> None:
         results["plain"] = run_python(qtbot, CLI, data, "next")
         other = str(tmp_path / "other.toml")
+        Path(other).write_text("", encoding="utf-8")
         results["other"] = run_python(qtbot, CLI, data, "--config", other, "next")
         results["reload"] = run_python(qtbot, CLI, data, "reload")
         QCoreApplication.quit()

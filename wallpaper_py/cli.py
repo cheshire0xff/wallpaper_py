@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import math
 import os
 import sys
 import time
@@ -31,7 +32,7 @@ from .commands import error_reply, execute, open_service
 from .core import paths
 from .core.backend import Backend
 from .core.config import format_duration
-from .core.model import ImageMode, Monitor, WallpaperError
+from .core.model import AppError, ImageMode, Monitor, WallpaperError
 from .core.presence import Presence
 from .core.selection import resolve_monitor
 from .core.setter import apply_wallpaper
@@ -48,6 +49,8 @@ from .protocol import (
     PickResult,
     PlaylistDetails,
     PrevResult,
+    PruneRequest,
+    PruneResult,
     ReloadRequest,
     ReloadResult,
     RemoveResult,
@@ -157,7 +160,7 @@ class Context:
                 if isinstance(request, ReloadRequest):  # nothing to restart
                     return ReloadResult(warnings=tuple(service.config.warnings()))
                 return execute(service, request).reply
-        except WallpaperError as err:
+        except AppError as err:
             return error_reply(err)
 
 
@@ -209,11 +212,13 @@ class Text(NamedTuple):
 
 
 def cmd_playlist(ctx: Context, args: argparse.Namespace) -> int:
-    """status, pick, reload and the TARGET_COMMANDS: in the app, or here."""
+    """status, pick, prune, reload and the TARGET_COMMANDS: in the app, or here."""
     target: str | None = getattr(args, "target", None)
     request: CommandRequest
     if args.command == "pick":
         request = PickRequest(target=target, image=args.image)
+    elif args.command == "prune":
+        request = PruneRequest()
     elif args.command == "reload":
         request = ReloadRequest()
     else:
@@ -282,6 +287,8 @@ def format_reply(reply: Reply) -> Text:
         case ReloadResult():
             warnings = "\n".join(f"Warning: {w}" for w in reply.warnings)
             return Text(0, "Config reloaded", warnings)
+        case PruneResult():
+            return Text(0, _prune_text(reply.dropped))
     raise AssertionError(f"Unhandled reply {reply!r}")
 
 
@@ -298,7 +305,7 @@ def format_status(
                 state = "not found"
             else:
                 state = "attached" if monitor.attached else "detached"
-            members.append(f"{monitor.selector} ({state})")
+            members.append(f"{monitor.name} ({state})")
         lines.append(f"  monitors:  {', '.join(members)}")
         lines.append(f"  directory: {playlist.directory}")
         lines.append(f"  current:   {playlist.current or '-'}")
@@ -312,6 +319,15 @@ def format_status(
     else:
         lines.append("Rotation active")
     return "\n".join(lines)
+
+
+def _prune_text(dropped: Sequence[str]) -> str:
+    if not dropped:
+        return "Nothing to drop: every playlist with state is in the config"
+    return (
+        "Dropped the state (history, shuffle deck, hold) of playlist ids "
+        f"no longer in the config: {', '.join(dropped)}"
+    )
 
 
 def _hold_text(reply: HoldResult | ResumeResult) -> str:
@@ -372,7 +388,7 @@ def cmd_ui(ctx: Context, args: argparse.Namespace) -> int:
     setup_logging(paths.ui_log_file())
     try:
         return run_ui(UiOptions(ctx.config, args.page))
-    except WallpaperError as err:  # started by the tray, nobody sees stderr
+    except AppError as err:  # started by the tray, nobody sees stderr
         logging.getLogger(__name__).error("%s", err)
         raise
 
@@ -402,8 +418,8 @@ def image_mode(value: str) -> ImageMode:
 
 def positive_seconds(value: str) -> float:
     seconds = float(value)
-    if seconds <= 0:
-        raise argparse.ArgumentTypeError("must be more than 0")
+    if not math.isfinite(seconds) or seconds <= 0:  # nan and inf parse as floats
+        raise argparse.ArgumentTypeError("must be a number of seconds, more than 0")
     return seconds
 
 
@@ -414,7 +430,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "-c",
         "--config",
-        type=Path,
+        type=absolute_path,
         default=None,
         help=(
             f"playlist config file (default: {paths.config_file()}); for "
@@ -426,7 +442,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "log what the command does to stderr: whether it reached the "
-            "running app or started one, and the raw reply (run, tray and ui "
+            "running app or ran here without one, and the raw reply (run, tray and ui "
             "always log)"
         ),
     )
@@ -485,6 +501,11 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser(
         "reload", help="read the config file again (after editing it)"
     ).set_defaults(handler=cmd_playlist)
+    sub.add_parser(
+        "prune",
+        help="drop the state (history, shuffle deck, hold) of playlists no "
+        "longer in the config",
+    ).set_defaults(handler=cmd_playlist)
 
     target_help = "playlist name, or a monitor it drives; optional with one playlist"
     helps = {
@@ -516,8 +537,16 @@ def main(
     presence_factory: PresenceFactory = get_presence,
     app_client: AppClient = send_to_app,
 ) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
     handler: Callable[[Context, argparse.Namespace], int] = args.handler
+    if args.config is not None and not args.config.is_file():
+        # A command given a missing file: a typo, which would otherwise run
+        # an empty config and keep state for it. The app and the windows
+        # start on it anyway: autostart may name a file that is briefly
+        # gone, and with no console nobody would see why nothing started.
+        if handler not in (cmd_app, cmd_ui):
+            parser.error(f"no config file at {args.config}")
     if args.verbose and handler not in (cmd_app, cmd_ui):  # those set up their own
         # pylint: disable=import-outside-toplevel
         from .app.processes import setup_logging
@@ -531,7 +560,7 @@ def main(
     )
     try:
         return handler(ctx, args)
-    except WallpaperError as err:
+    except AppError as err:
         print(f"error: {err}", file=sys.stderr)
         return 1
 

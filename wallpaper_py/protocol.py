@@ -3,7 +3,8 @@ The app's socket protocol as pydantic models: what goes over the wire, and
 nothing else (no logic, no Qt). See docs/protocol.md.
 
 - In: an `Envelope` holding a `Request` (a playlist command), a
-  `PickRequest` (`pick`, which also carries an image), a `ReloadRequest`
+  `PickRequest` (`pick`, which also carries an image), a `PruneRequest`
+  (drop the state of playlists no longer in the config), a `ReloadRequest`
   (read the config file again) or `Subscribe`.
 - Out: a `Reply`, which is data only: one result model per command, tagged
   on `command`, or an `ErrorReply`. The CLI formats its text from these;
@@ -27,7 +28,7 @@ from typing import Annotated, Any, Literal, get_args
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
 
 from .core.config import Order
-from .core.model import ImageMode
+from .core.model import ImageMode, MonitorId
 from .core.service import Change
 
 PROTOCOL = 2
@@ -36,8 +37,9 @@ PROTOCOL = 2
 Command = Literal["status", "next", "prev", "fav", "unfav", "remove", "hold", "resume"]
 # Of those, the ones that act on a target (playlist or monitor): all but status.
 TARGET_COMMANDS: tuple[Command, ...] = get_args(Command)[1:]
-# Every command: also `pick` and `reload`, which have request models of their own.
-AnyCommand = Literal[Command, "pick", "reload"]
+# Every command: also `pick`, `prune` and `reload`, which have request
+# models of their own.
+AnyCommand = Literal[Command, "pick", "prune", "reload"]
 COMMANDS: tuple[AnyCommand, ...] = get_args(AnyCommand)
 
 
@@ -78,6 +80,12 @@ class PickRequest(Strict):
         return image
 
 
+class PruneRequest(Strict):
+    """Drop the state of playlist ids no longer in the config."""
+
+    command: Literal["prune"] = "prune"
+
+
 class ReloadRequest(Strict):
     """Read the config file again (after it was edited)."""
 
@@ -85,9 +93,11 @@ class ReloadRequest(Strict):
 
 
 # The requests the playlist service runs (what `commands.execute` takes).
-ServiceRequest = Request | PickRequest
+ServiceRequest = Request | PickRequest | PruneRequest
+# Of those, the ones that name a target (playlist or monitor).
+TargetRequest = Request | PickRequest
 # Every request answered with one reply; the app runs `reload` itself.
-CommandRequest = Request | PickRequest | ReloadRequest
+CommandRequest = Request | PickRequest | PruneRequest | ReloadRequest
 
 
 class Subscribe(Strict):
@@ -101,7 +111,7 @@ class Envelope(Strict):
 
     v: int = PROTOCOL
     request: Annotated[
-        Request | PickRequest | ReloadRequest | Subscribe,
+        Request | PickRequest | PruneRequest | ReloadRequest | Subscribe,
         Field(discriminator="command"),
     ]
     # The config file the sender means: the app refuses another one. None:
@@ -128,12 +138,15 @@ def check_protocol(version: int, receiver: str) -> int:
 
 
 class MonitorView(Message):
-    """A playlist's member, as the config names it."""
+    """
+    A playlist's member. `id` is spelt as the desktop spells it when the
+    monitor is listed (as in `Overview.monitors`), else as the config
+    does; ids compare case-insensitively (`MonitorId`).
+    """
 
-    selector: str  # as written in the config
-    name: str  # the monitor's name if listed, else the selector
+    id: MonitorId
+    name: str  # the monitor's name if listed, else the id
     attached: bool | None  # None: not listed right now
-    id: str | None = None  # the listed monitor's id (see `Overview.monitors`)
 
 
 class Geometry(Message):
@@ -148,16 +161,22 @@ class Geometry(Message):
 class DesktopMonitor(Message):
     """A monitor the desktop lists, whether a playlist drives it or not."""
 
-    id: str
+    id: MonitorId
     name: str
     geometry: Geometry | None  # None: detached (known but switched off)
+
+    @property
+    def attached(self) -> bool:
+        return self.geometry is not None
 
 
 class PlaylistView(Message):
     name: str
     monitors: tuple[MonitorView, ...]
     current: Path | None
-    favourite: bool  # the current image is in favourites
+    # The current image is in favourites. None: favourites.txt has not
+    # been read yet (another program holds it), so it isn't known.
+    favourite: bool | None
     held: bool = False  # held by `hold`: ticks don't change it (never if manual)
     manual: bool = False  # interval "manual": only next / prev / pick change it
 
@@ -231,6 +250,13 @@ class PickResult(Message):
     change: Change
 
 
+class PruneResult(Message):
+    """The state of playlist ids no longer in the config was dropped."""
+
+    command: Literal["prune"] = "prune"
+    dropped: tuple[str, ...]  # their ids; empty: there were none
+
+
 class ReloadResult(Message):
     """The config was read again and the playlists restarted from it."""
 
@@ -261,6 +287,7 @@ Result = Annotated[
     | PickResult
     | HoldResult
     | ResumeResult
+    | PruneResult
     | ReloadResult,
     Field(discriminator="command"),
 ]

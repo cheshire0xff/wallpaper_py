@@ -28,6 +28,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import override
 
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, Signal, Slot
 from PySide6.QtGui import (
@@ -44,6 +45,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
+from ...core.model import MonitorId
 from ...protocol import DesktopMonitor, Overview
 from . import theme
 
@@ -97,7 +99,7 @@ def arrange(
     monitors: Sequence[DesktopMonitor],
     width: float,
     height: float,
-    last_sizes: Mapping[str, tuple[int, int]] | None = None,
+    last_sizes: Mapping[MonitorId, tuple[int, int]] | None = None,
     label_height: float = LABEL_HEIGHT,
 ) -> list[Placed]:
     """
@@ -136,7 +138,8 @@ def _bounds(boxes: Sequence[Box]) -> Box:
 
 
 def _desktop_boxes(
-    monitors: Sequence[DesktopMonitor], last_sizes: Mapping[str, tuple[int, int]]
+    monitors: Sequence[DesktopMonitor],
+    last_sizes: Mapping[MonitorId, tuple[int, int]],
 ) -> list[tuple[DesktopMonitor, Box]]:
     """In desktop pixels: attached where they are, detached to the right."""
     boxes: list[tuple[DesktopMonitor, Box]] = []
@@ -158,13 +161,12 @@ def _desktop_boxes(
     return boxes
 
 
-def playlists_by_monitor(overview: Overview) -> dict[str, str]:
+def playlists_by_monitor(overview: Overview) -> dict[MonitorId, str]:
     """Monitor id -> the playlist that drives it."""
-    result: dict[str, str] = {}
+    result: dict[MonitorId, str] = {}
     for playlist in overview.playlists:
         for member in playlist.monitors:
-            if member.id is not None:
-                result.setdefault(member.id, playlist.name)
+            result.setdefault(member.id, playlist.name)
     return result
 
 
@@ -186,7 +188,7 @@ class MonitorsView(QWidget):
     # pylint: disable=too-many-instance-attributes
 
     hovered = Signal(object)  # the playlist under the pointer, or None
-    clicked = Signal(str)  # a monitor's id (only while clickable)
+    clicked = Signal(object)  # a monitor's MonitorId (only while clickable)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -194,10 +196,10 @@ class MonitorsView(QWidget):
         self._highlight: str | None = None  # playlist outlined in the accent
         self._hovered: str | None = None
         self._clickable = False
-        self._pressed: str | None = None  # monitor id under a press
+        self._pressed: MonitorId | None = None  # monitor under a press
         self.setMouseTracking(True)
         self._images: dict[Path, QPixmap] = {}
-        self._last_sizes: dict[str, tuple[int, int]] = {}
+        self._last_sizes: dict[MonitorId, tuple[int, int]] = {}
         self._heights = (MIN_HEIGHT, MAX_HEIGHT, HEIGHT_RATIO)
         self._compact = False
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -266,6 +268,7 @@ class MonitorsView(QWidget):
         if height != self.height():
             self.setFixedHeight(height)
 
+    @override
     def resizeEvent(self, event: QResizeEvent) -> None:  # pylint: disable=invalid-name
         super().resizeEvent(event)
         # Taller as the window widens; the drawing itself redraws in paintEvent.
@@ -315,6 +318,7 @@ class MonitorsView(QWidget):
             return None
         return playlists_by_monitor(self._overview).get(monitor.id)
 
+    @override
     def mouseMoveEvent(
         self, event: QMouseEvent
     ) -> None:  # pylint: disable=invalid-name
@@ -329,6 +333,7 @@ class MonitorsView(QWidget):
             )
             self.setCursor(shape)
 
+    @override
     def mousePressEvent(
         self, event: QMouseEvent
     ) -> None:  # pylint: disable=invalid-name
@@ -337,6 +342,7 @@ class MonitorsView(QWidget):
         left = event.button() == Qt.MouseButton.LeftButton
         self._pressed = monitor.id if monitor is not None and left else None
 
+    @override
     def mouseReleaseEvent(
         self, event: QMouseEvent
     ) -> None:  # pylint: disable=invalid-name
@@ -346,6 +352,7 @@ class MonitorsView(QWidget):
         if self._clickable and monitor is not None and monitor.id == pressed:
             self.clicked.emit(monitor.id)
 
+    @override
     def leaveEvent(self, event: QEvent) -> None:  # pylint: disable=invalid-name
         super().leaveEvent(event)
         self._set_hovered(None)
@@ -371,6 +378,7 @@ class MonitorsView(QWidget):
             self._label_height(),
         )
 
+    @override
     def paintEvent(self, event: QPaintEvent) -> None:  # pylint: disable=invalid-name
         del event
         painter = QPainter(self)
@@ -388,7 +396,7 @@ class MonitorsView(QWidget):
             member.id: playlist.current
             for playlist in self._overview.playlists
             for member in playlist.monitors
-            if member.id is not None and playlist.current is not None
+            if playlist.current is not None
         }
         for item in placed:
             image = images.get(item.monitor.id)

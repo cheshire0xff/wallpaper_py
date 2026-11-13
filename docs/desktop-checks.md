@@ -46,6 +46,15 @@ With the real config (a mirrored group and a single monitor):
    to `favourites.txt` / `to-remove.txt`.
 4. After a reboot (or quitting and starting the app), each monitor gets its
    current image back and shuffle continues where it was.
+5. **A list file held open at start.** Quit the app; in PowerShell hold
+   to-remove.txt open without sharing:
+   `$f = [IO.File]::Open("<data dir>\to-remove.txt", 'Open', 'Read', 'None')`.
+   Start the app: the log says once that no image is chosen until the
+   to-remove list can be read, nothing changes past the interval, and
+   `wallpaper next` answers with that error. `$f.Close()`: within a tick
+   rotation goes on, never to an image in the list. The same with
+   favourites.txt: the tray's and Home's *Favourite* are off and disabled
+   until it can be read.
 
 ## 3. Pause on lock and idle
 
@@ -76,6 +85,12 @@ monitor.
    answered, and `status` ends with *Rotation active*.
 3. `wallpaper tray` while one runs exits without starting a second (after
    about 5 s: it waits in case a CLI command holds the lock).
+4. **Prune.** Comment out a playlist in config.toml and *Reload config*,
+   then put it back and reload: it continues with its history (loading
+   never drops state). Take it out again and run `wallpaper prune`, with
+   the app running and without: it names the dropped id; a second run has
+   nothing to drop. With config.toml renamed away, `wallpaper prune`
+   refuses (no config file) and drops nothing.
 
 ## 6. Tray
 
@@ -229,11 +244,41 @@ config.toml first (copy it next to itself).
 11. With the app started on a custom config (`wallpaper -c other.toml
     tray`), plain `wallpaper next` and `wallpaper ui settings` (no `-c`)
     reach it, and the page edits other.toml.
+12. **A rename keeps the playlist's state.** Hold konachan, note its
+    current image, rename it to *anime* in Settings and Save: the same
+    image stays on its monitors, it is still held, and *Previous* goes
+    back through the same history. Rename it back by hand in the file and
+    *Reload config*: the same again (the state goes by `id`, not the name).
+13. **First start without a config.** Move config.toml away and start
+    the app: no error; a notification says "No playlists yet", and
+    clicking it opens the window on Settings. The tray menu starts with
+    *No playlists yet: add one…* (opens Settings), the tooltip says "No
+    playlists yet", Home shows *Add one in Settings* (switches to
+    Settings), and `wallpaper status` warns "No playlists yet". In
+    Settings, click a monitor, *New playlist…*, choose a folder, Save:
+    the file is created (with the monitor's id and a random playlist id),
+    the monitor starts rotating, and the tray item and Home's button are
+    gone. Restart the app: no notification now. Put the old config back
+    afterwards.
+15. **A monitor moved to another port** (Windows). Move a monitor's cable
+    to another port with the app running: Windows gives it a new id, so
+    its playlist stops changing (the old id shows as off) and every other
+    playlist keeps going. Assign the monitor again in Settings: it rotates
+    again, with the playlist's history.
+16. **Playlist ids.** Delete fantasy in Settings and add a new playlist
+    in the same edit, on the ZeroMOD: Save writes it with a new random
+    `id`, and it starts with an empty history (not fantasy's). By hand,
+    delete the new playlist's `id` line and *Reload config*: the error
+    gives a line to add. Restore the config afterwards.
+14. **Only UTF-8 without BOM.** Save favourites.txt as "UTF-16 LE" (or
+    "UTF-8 with BOM") in Notepad: within a tick the tray shows the error
+    naming the file, and the file is left as it is. Save it as UTF-8 and
+    *Reload config*: running again, the favourites as before.
 
 ## 9. Pick, hold and manual
 
-The state database's schema changed (version 2): an older `state.sqlite3`
-is refused with a message naming the file to delete (in the tray, and from
+The state database's schema changed (version 4: playlists are kept by
+their text `id`): an older `state.sqlite3` is refused with a message naming the file to delete (in the tray, and from
 any CLI command). Delete it first; only history and shuffle state are lost.
 
 The behaviour behind every step below is already tested with the fake

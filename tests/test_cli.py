@@ -23,7 +23,7 @@ from wallpaper_py.protocol import (
     StatusResult,
 )
 
-from .fakes import FakeBackend, FakePresence, make_images, make_monitor
+from .fakes import FakeBackend, FakePresence, make_monitor, write_config
 
 
 @pytest.fixture(name="backend")
@@ -101,6 +101,9 @@ def test_set_by_number_is_refused(
         ["set", "missing.png", "-m", "main"],
         ["set", "{image}", "-m", "main", "--mode", "tile"],
         ["set", "{image}"],
+        ["run", "--poll", "nan"],
+        ["run", "--poll", "inf"],
+        ["run", "--poll", "0"],
     ],
 )
 def test_bad_arguments_exit_with_usage_error(
@@ -114,18 +117,11 @@ def test_bad_arguments_exit_with_usage_error(
 class TestPlaylistCommands:
     @pytest.fixture(name="config")
     def fixture_config(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-        monkeypatch.setattr(paths, "state_db", lambda: tmp_path / "state.sqlite3")
-        monkeypatch.setattr(paths, "data_dir", lambda: tmp_path / "data")
-        make_images(tmp_path / "walls", "a.jpg", "b.jpg", "c.jpg")
-        config = tmp_path / "config.toml"
-        config.write_text(
-            "[playlists.walls]\n"
-            "directory = 'walls'\n"
-            'monitors = ["Main"]\n'
-            'order = "sorted"\n'
-            'interval = "10m"\n',
-            encoding="utf-8",
+        monkeypatch.setattr(
+            paths, "state_db", lambda _config: tmp_path / "state.sqlite3"
         )
+        monkeypatch.setattr(paths, "data_dir", lambda: tmp_path / "data")
+        config = write_config(tmp_path)
         return config
 
     def run(self, backend: FakeBackend, config: Path, *argv: str) -> int:
@@ -214,14 +210,83 @@ class TestPlaylistCommands:
         missing = tmp_path / "elsewhere" / "missing.png"
         assert captured.err == f"error: No such image file: {missing}\n"
 
-    def test_missing_config_is_explained(
+    def test_a_config_file_given_must_exist(
         self,
         backend: FakeBackend,
         tmp_path: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        assert self.run(backend, tmp_path / "none.toml", "next") == 1
-        assert "No config file" in capsys.readouterr().err
+        """Only the default file may be missing (first start): this is a typo."""
+        with pytest.raises(SystemExit):
+            self.run(backend, tmp_path / "confg.toml", "next")
+        assert f"no config file at {tmp_path / 'confg.toml'}" in capsys.readouterr().err
+        assert not (tmp_path / "state.sqlite3").exists()
+
+    def test_the_app_starts_on_a_config_file_gone_missing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Autostart names it; with no console, an error would go unseen."""
+        started: list[Path] = []
+
+        def app(ctx: cli.Context, _: object) -> int:
+            started.append(ctx.config_path)
+            return 0
+
+        monkeypatch.setattr(cli, "cmd_app", app)
+        assert cli.main(["--config", str(tmp_path / "gone.toml"), "tray"]) == 0
+        assert started == [tmp_path / "gone.toml"]
+
+    def test_no_config_file_is_no_playlists(
+        self,
+        backend: FakeBackend,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """The default file (isolated_paths), before Settings writes it."""
+        assert not paths.config_file().exists()
+        argv = ["next"]
+        assert cli.main(argv, lambda: backend, FakePresence) == 1
+        assert "`wallpaper ui settings`" in capsys.readouterr().err
+
+    def test_prune(
+        self,
+        backend: FakeBackend,
+        config: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        assert self.run(backend, config, "next") == 0
+        text = config.read_text(encoding="utf-8")
+        config.write_text(text.replace("walls-id", "new-id"), encoding="utf-8")
+        assert self.run(backend, config, "status") == 0  # loading keeps it
+        assert self.run(backend, config, "prune") == 0
+        assert self.run(backend, config, "prune") == 0
+        out = capsys.readouterr().out.splitlines()
+        assert out[-2:] == [
+            "Dropped the state (history, shuffle deck, hold) of playlist ids no "
+            "longer in the config: walls-id",
+            "Nothing to drop: every playlist with state is in the config",
+        ]
+
+    def test_prune_refuses_without_a_config_file(
+        self,
+        backend: FakeBackend,
+        config: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """The default file, gone for a moment (a --config one must exist)."""
+        monkeypatch.setattr(paths, "config_file", lambda: config)
+
+        def command(name: str) -> int:
+            return cli.main([name], lambda: backend, FakePresence)
+
+        assert command("next") == 0
+        text = config.read_text(encoding="utf-8")
+        config.unlink()
+        assert command("prune") == 1
+        assert "no config file" in capsys.readouterr().err
+        config.write_text(text, encoding="utf-8")
+        assert command("next") == 0
+        assert capsys.readouterr().out == "walls: b.jpg on Main\n"  # kept
 
     def test_next_on_detached_monitor_fails_cleanly(
         self, config: Path, capsys: pytest.CaptureFixture[str]
@@ -327,7 +392,11 @@ def test_ui_pages_match_the_launcher() -> None:
     assert cli.build_parser().parse_args(["ui", "library"]).page == "library"
 
 
-def test_reload_and_which_config_is_sent(capsys: pytest.CaptureFixture[str]) -> None:
+def test_reload_and_which_config_is_sent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "x.toml").write_text("", encoding="utf-8")
     sent: list[tuple[CommandRequest, Path | None]] = []
 
     def app_client(
@@ -341,7 +410,8 @@ def test_reload_and_which_config_is_sent(capsys: pytest.CaptureFixture[str]) -> 
     # No --config: none is sent, so the running app's own is meant.
     assert sent == [(ReloadRequest(), None)]
     assert cli.main(["--config", "x.toml", "reload"], app_client=app_client) == 0
-    assert sent[-1][1] == Path("x.toml")
+    # Absolute: the app would read a relative one against its own directory.
+    assert sent[-1][1] == Path.cwd() / "x.toml"
 
 
 def test_ui_without_config_follows_the_app(monkeypatch: pytest.MonkeyPatch) -> None:

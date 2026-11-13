@@ -2,6 +2,7 @@
 
 # pylint: disable=redefined-outer-name
 
+import logging
 import random
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -11,9 +12,11 @@ from PIL import Image
 
 from wallpaper_py.core.config import Config, Order, PlaylistConfig
 from wallpaper_py.core.library import Library
+from wallpaper_py.core.marks import MarkFileBusyError
 from wallpaper_py.core.model import (
     ImageLoadError,
     ImageMode,
+    MonitorId,
     MonitorNotAttachedError,
 )
 from wallpaper_py.core.selection import MonitorSelectionError
@@ -25,7 +28,15 @@ from wallpaper_py.core.service import (
 )
 from wallpaper_py.core.store import Store
 
-from .fakes import FakeBackend, FakeClock, FakePresence, make_images, make_monitor
+from .fakes import (
+    BusyFile,
+    FakeBackend,
+    FakeClock,
+    FakePresence,
+    make_images,
+    make_monitor,
+    fake_id,
+)
 
 INTERVAL = 60.0
 STEP = 5.0  # seconds between ticks, like `wallpaper run`
@@ -88,13 +99,19 @@ def env(tmp_path: Path) -> Env:
         playlists=(
             PlaylistConfig(
                 "konachan",
+                "1",
                 tmp_path / "konachan",
-                ("AW3225QF", "PLX2783H"),
+                (MonitorId(fake_id("AW3225QF")), MonitorId(fake_id("PLX2783H"))),
                 INTERVAL,
                 Order.SHUFFLE,
             ),
             PlaylistConfig(
-                "fantasy", tmp_path / "fantasy", ("ZeroMOD",), INTERVAL, Order.SORTED
+                "fantasy",
+                "2",
+                tmp_path / "fantasy",
+                (MonitorId(fake_id("ZeroMOD")),),
+                INTERVAL,
+                Order.SORTED,
             ),
         ),
         favourites_file=tmp_path / "lists" / "favourites.txt",
@@ -347,10 +364,23 @@ def test_state_survives_a_restart(env: Env) -> None:
 def test_find_playlist(env: Env) -> None:
     assert env.service.find_playlist("Konachan") is env.konachan
     assert env.service.find_playlist("zero") is env.fantasy  # part of a name
+    # Windows spells an id in different cases in different APIs.
+    assert env.service.find_playlist(fake_id("ZeroMOD").lower()) is env.fantasy
     with pytest.raises(PlaylistError, match="konachan, fantasy"):
         env.service.find_playlist(None)
     with pytest.raises(MonitorSelectionError):
         env.service.find_playlist("nope")
+
+
+def test_no_playlists_is_a_service_that_rotates_nothing(env: Env) -> None:
+    env.config = replace(env.config, playlists=())
+    env.restart()
+    assert not env.tick_for(INTERVAL) and not env.backend.set_calls
+    assert not env.service.status()
+    with pytest.raises(PlaylistError, match="No playlists yet"):
+        env.service.find_playlist(None)
+    with pytest.raises(PlaylistError, match="not in any playlist"):
+        env.service.find_playlist("AW3225QF")
 
 
 def test_status(env: Env) -> None:
@@ -464,7 +494,7 @@ def test_pick_with_no_monitor_attached_changes_nothing(env: Env) -> None:
     with pytest.raises(MonitorNotAttachedError):
         env.service.pick(env.konachan, real_image(env.tmp / "elsewhere" / "x.png"))
     assert env.service.current(env.konachan) == current
-    assert len(env.store.history_before("konachan")) == 1  # nothing was added
+    assert len(env.store.history_before("1")) == 1  # nothing was added
 
 
 # -- hold and manual -------------------------------------------------------------
@@ -541,3 +571,125 @@ def test_manual_playlist_never_changes_by_itself(env: Env) -> None:
     with pytest.raises(ManualPlaylistError, match="nothing to resume"):
         env.service.resume(manual)
     assert not env.service.held(manual)
+
+
+def test_two_monitors_of_one_model_are_told_apart(env: Env) -> None:
+    """Same name, other id: only the one in the config gets its images."""
+    env.service.tick()
+    shown = len(env.backend.set_calls)
+    env.backend.relist(make_monitor("ZeroMOD", x=9000, pnp="OTHER"))
+    env.tick_for(INTERVAL)
+    targets = {c.monitor_id for c in env.backend.set_calls[shown:]}
+    assert MonitorId(fake_id("ZeroMOD")) in targets
+    assert MonitorId(fake_id("ZeroMOD", pnp="OTHER")) not in targets
+
+
+def test_a_monitor_on_another_port_waits_to_be_assigned(env: Env) -> None:
+    """Windows gives it a new id: the playlist waits, nothing else gets it."""
+    env.service.tick()
+    old = env.backend.unlist("ZeroMOD")
+    env.backend.relist(replace(old, rect=None))  # the old port, detached
+    env.backend.relist(make_monitor("ZeroMOD", x=3840, pnp="ZEROMOD-DP2"))
+    shown = len(env.backend.set_calls)
+    env.tick_for(INTERVAL)
+    assert all(
+        "ZEROMOD" not in str(c.monitor_id) for c in env.backend.set_calls[shown:]
+    )
+    with pytest.raises(MonitorNotAttachedError):
+        env.service.next(env.fantasy)
+    [_, fantasy] = env.service.status()
+    [member] = fantasy.members
+    assert member.monitor is not None and not member.monitor.attached
+
+
+def test_a_monitor_id_in_another_case_is_the_same_monitor(env: Env) -> None:
+    aw = fake_id("AW3225QF")
+    konachan = replace(env.konachan, monitors=(MonitorId(aw.lower()), MonitorId(aw)))
+    env.config = replace(env.config, playlists=(konachan, env.fantasy))
+    env.restart()
+    [change] = [c for c in env.service.tick() if c.playlist == "konachan"]
+    assert change.shown_on == ("AW3225QF",)  # once
+    assert env.service.next(konachan).shown_on == ("AW3225QF",)
+    assert env.service.find_playlist("AW3225QF") == konachan
+    # The backend gets the id as the desktop spells it.
+    assert {str(c.monitor_id) for c in env.backend.set_calls} >= {aw}
+
+
+def test_state_of_a_playlist_no_longer_in_the_config_goes_on_request(
+    env: Env,
+) -> None:
+    konachan, fantasy = env.config.playlists
+    env.service.tick()
+    env.service.hold(fantasy)
+    shown = env.service.current(fantasy)
+    env.config = replace(env.config, playlists=(konachan,))  # fantasy taken out
+    env.restart()
+    # Loading drops nothing: back in the config, it carries on.
+    env.config = replace(env.config, playlists=(konachan, fantasy))
+    env.restart()
+    assert env.service.current(fantasy) == shown
+    assert env.service.held(fantasy)
+
+    env.config = replace(env.config, playlists=(konachan,))
+    env.restart()
+    assert env.service.prune_state() == ["2"]  # fantasy, only
+    assert env.service.current(env.konachan) is not None  # in the config: kept
+    assert not env.store.history_before("2")
+    assert not env.store.playlist_state("2").held
+    assert not env.service.prune_state()
+
+
+def test_prune_refuses_without_a_config_file(env: Env) -> None:
+    """An empty config from no file must not wipe every playlist's state."""
+    env.service.tick()
+    env.config = replace(env.config, playlists=(), from_file=False)
+    env.restart()
+    with pytest.raises(PlaylistError, match="no config file"):
+        env.service.prune_state()
+    assert env.store.history_before("1") and env.store.history_before("2")
+
+
+def test_a_renamed_playlist_keeps_its_state(env: Env) -> None:
+    """The state goes by the config's id: a new name changes nothing."""
+    env.service.tick()
+    env.service.hold(env.konachan)
+    current = env.service.current(env.konachan)
+    renamed = replace(env.konachan, name="anime")
+    env.config = replace(env.config, playlists=(renamed, env.fantasy))
+    env.restart()
+    assert env.service.current(renamed) == current
+    assert env.service.held(renamed)
+    assert not env.service.prune_state()
+
+
+def test_a_to_remove_list_never_read_stops_choosing(
+    env: Env, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Unknown is not empty: an image listed for removal must not be shown."""
+    env.service.tick()
+    listed = env.tmp / "lists" / "to-remove.txt"
+    listed.parent.mkdir()
+    listed.write_text(f"{env.tmp / 'fantasy' / 'f2.png'}\n", encoding="utf-8")
+    busy = BusyFile(listed, monkeypatch)
+    env.restart()  # a new process: it has never read the list
+    calls = len(env.backend.set_calls)
+
+    caplog.set_level(logging.WARNING)
+    assert not env.tick_for(2 * INTERVAL)  # due, but nothing is chosen
+    assert len(env.backend.set_calls) == calls
+    unknown = [r for r in caplog.records if "until the to-remove list" in r.message]
+    assert len(unknown) == 1  # logged once, retried every tick
+    for command in (env.service.next, env.service.previous):
+        with pytest.raises(MarkFileBusyError, match="until the to-remove list"):
+            command(env.fantasy)
+    with pytest.raises(MarkFileBusyError, match="until the to-remove list"):
+        env.service.pick(env.fantasy, env.tmp / "fantasy" / "f10.png")
+    [_, fantasy] = env.service.status()
+    assert fantasy.upcoming == ()  # it would list f2.png
+    assert len(env.backend.set_calls) == calls
+
+    busy.busy = False  # readable: rotation goes on, past f2.png
+    # The time it waited counted: overdue, it changes on the very next tick.
+    env.clock.advance(STEP)
+    changes = [c for c in env.service.tick() if c.playlist == "fantasy"]
+    assert changes[0].image.name == "f10.png"

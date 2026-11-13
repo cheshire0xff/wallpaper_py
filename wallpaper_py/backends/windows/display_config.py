@@ -2,8 +2,9 @@
 Friendly monitor names (from EDID) keyed by monitor device path.
 
 QueryDisplayConfig + DisplayConfigGetDeviceInfo(GET_TARGET_NAME) return the
-same device path that IDesktopWallpaper uses as monitor id, so names map to
-ids directly, without matching on positions (which change when a monitor
+same device path that IDesktopWallpaper uses as monitor id (in another
+case: MonitorId compares case-insensitively), so names map to ids
+directly, without matching on positions (which change when a monitor
 detaches).
 """
 
@@ -14,6 +15,8 @@ assert sys.platform == "win32"  # pylint: disable=wrong-import-position
 # pylint: disable=wrong-import-position,wrong-import-order,invalid-name
 import ctypes
 from ctypes import wintypes
+
+from wallpaper_py.core.model import MonitorId
 
 QDC_ONLY_ACTIVE_PATHS = 0x2
 DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME = 2
@@ -146,9 +149,9 @@ def _active_paths() -> list[DISPLAYCONFIG_PATH_INFO]:
     return []
 
 
-def monitor_names() -> dict[str, str]:
-    """{device path (lower-case): friendly name} for active monitors."""
-    names: dict[str, str] = {}
+def monitor_names() -> dict[MonitorId, str]:
+    """{device path: friendly name} for active monitors."""
+    names: dict[MonitorId, str] = {}
     for path in _active_paths():
         target = DISPLAYCONFIG_TARGET_DEVICE_NAME()
         target.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME
@@ -159,5 +162,5 @@ def monitor_names() -> dict[str, str]:
             continue
         device_path = target.monitorDevicePath
         if device_path and target.monitorFriendlyDeviceName:
-            names[device_path.lower()] = target.monitorFriendlyDeviceName
+            names[MonitorId(device_path)] = target.monitorFriendlyDeviceName
     return names

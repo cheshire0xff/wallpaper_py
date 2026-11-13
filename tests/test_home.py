@@ -39,6 +39,7 @@ from wallpaper_py.app.ui.thumbnails import (
     ThumbnailLoader,
 )
 from wallpaper_py.core.config import Order
+from wallpaper_py.core.model import MonitorId
 from wallpaper_py.core.service import Change
 from wallpaper_py.protocol import (
     DesktopMonitor,
@@ -58,30 +59,36 @@ from wallpaper_py.protocol import (
 from .fake_client import FakeClient as BaseFakeClient
 
 AW = DesktopMonitor(
-    id="aw", name="AW3225QF", geometry=Geometry(x=0, y=0, width=3840, height=2160)
+    id=MonitorId("aw"),
+    name="AW3225QF",
+    geometry=Geometry(x=0, y=0, width=3840, height=2160),
 )
 PLX = DesktopMonitor(
-    id="plx", name="PLX2783H", geometry=Geometry(x=-1920, y=0, width=1920, height=1080)
+    id=MonitorId("plx"),
+    name="PLX2783H",
+    geometry=Geometry(x=-1920, y=0, width=1920, height=1080),
 )
-ZERO = DesktopMonitor(id="zero", name="ZeroMOD", geometry=None)  # switched off
+ZERO = DesktopMonitor(
+    id=MonitorId("zero"), name="ZeroMOD", geometry=None
+)  # switched off
 TV = DesktopMonitor(
-    id="tv", name="TV", geometry=Geometry(x=3840, y=0, width=1920, height=1080)
+    id=MonitorId("tv"),
+    name="TV",
+    geometry=Geometry(x=3840, y=0, width=1920, height=1080),
 )
 
 KONACHAN = PlaylistView(
     name="konachan",
     monitors=(
-        MonitorView(selector="AW3225QF", name="AW3225QF", attached=True, id="aw"),
-        MonitorView(selector="PLX", name="PLX2783H", attached=True, id="plx"),
+        MonitorView(id=MonitorId("aw"), name="AW3225QF", attached=True),
+        MonitorView(id=MonitorId("plx"), name="PLX2783H", attached=True),
     ),
     current=Path("/p/konachan/123.jpg"),
     favourite=False,
 )
 FANTASY = PlaylistView(
     name="fantasy",
-    monitors=(
-        MonitorView(selector="ZeroMOD", name="ZeroMOD", attached=False, id="zero"),
-    ),
+    monitors=(MonitorView(id=MonitorId("zero"), name="ZeroMOD", attached=False),),
     current=Path("/p/fantasy/7.png"),
     favourite=False,
     manual=True,
@@ -112,7 +119,7 @@ def aspect(box: Box) -> float:
 
 
 def test_negative_positions_are_scaled_to_fit_keeping_aspect() -> None:
-    placed = {p.monitor.id: p.box for p in arrange([AW, PLX], 1000, 400)}
+    placed = {str(p.monitor.id): p.box for p in arrange([AW, PLX], 1000, 400)}
     aw, plx = placed["aw"], placed["plx"]
     # The PLX2783H at -1920,0 is left of the AW3225QF at 0,0, touching it.
     assert plx.x < aw.x and plx.right == pytest.approx(aw.x)
@@ -138,25 +145,29 @@ def test_scaling_follows_the_area() -> None:
 
 def test_stacked_monitors() -> None:
     top = DesktopMonitor(
-        id="t", name="T", geometry=Geometry(x=0, y=-1080, width=1920, height=1080)
+        id=MonitorId("t"),
+        name="T",
+        geometry=Geometry(x=0, y=-1080, width=1920, height=1080),
     )
     bottom = DesktopMonitor(
-        id="b", name="B", geometry=Geometry(x=0, y=0, width=1920, height=1080)
+        id=MonitorId("b"),
+        name="B",
+        geometry=Geometry(x=0, y=0, width=1920, height=1080),
     )
-    placed = {p.monitor.id: p.box for p in arrange([top, bottom], 800, 600)}
+    placed = {str(p.monitor.id): p.box for p in arrange([top, bottom], 800, 600)}
     assert placed["t"].bottom == pytest.approx(placed["b"].y)
     assert placed["t"].x == pytest.approx(placed["b"].x)
 
 
 def test_detached_monitors_go_right_of_the_arrangement() -> None:
     placed = arrange([AW, ZERO, PLX], 1200, 400)
-    by_id = {p.monitor.id: p for p in placed}
+    by_id = {str(p.monitor.id): p for p in placed}
     assert not by_id["zero"].attached and by_id["aw"].attached
     zero, aw = by_id["zero"].box, by_id["aw"].box
     assert zero.x > aw.right  # with a gap
     assert aspect(zero) == pytest.approx(16 / 9)  # never seen: 1920 x 1080
     # Its last known size, if it was seen attached.
-    strip = arrange([AW, ZERO], 1200, 400, {"zero": (1920, 480)})
+    strip = arrange([AW, ZERO], 1200, 400, {MonitorId("zero"): (1920, 480)})
     assert aspect(strip[1].box) == pytest.approx(4)
 
 
@@ -168,9 +179,13 @@ def test_only_detached_monitors() -> None:
 
 def test_captions_and_monitors_in_no_playlist() -> None:
     by_monitor = playlists_by_monitor(OVERVIEW)
-    assert by_monitor == {"aw": "konachan", "plx": "konachan", "zero": "fantasy"}
+    assert {str(m): p for m, p in by_monitor.items()} == {
+        "aw": "konachan",
+        "plx": "konachan",
+        "zero": "fantasy",
+    }
     assert caption(AW, "konachan") == ("AW3225QF", "3840×2160 · konachan")
-    assert caption(TV, by_monitor.get("tv")) == ("TV", "1920×1080 · no playlist")
+    assert caption(TV, by_monitor.get(TV.id)) == ("TV", "1920×1080 · no playlist")
     assert caption(ZERO, "fantasy") == ("ZeroMOD", "off · fantasy")
 
 
@@ -186,7 +201,7 @@ def compact_view(qtbot: QtBot, overview: Overview, width: int) -> MonitorsView:
 
 
 def captions(view: MonitorsView) -> dict[str, tuple[str, ...]]:
-    return {p.monitor.id: view.caption_lines(p) for p in view.placed()}
+    return {str(p.monitor.id): view.caption_lines(p) for p in view.placed()}
 
 
 def assert_captions_overlap_no_monitor(view: MonitorsView) -> None:
@@ -245,16 +260,18 @@ def test_compact_captions_elide_each_line_and_stay_off_other_monitors(
 ) -> None:
     long_name = KONACHAN.model_copy(update={"name": "a-rather-long-playlist-name"})
     top = DesktopMonitor(
-        id="t",
+        id=MonitorId("t"),
         name="TopMonitor",
         geometry=Geometry(x=0, y=-1080, width=1920, height=1080),
     )
     bottom = DesktopMonitor(
-        id="b", name="Bottom", geometry=Geometry(x=0, y=0, width=1920, height=1080)
+        id=MonitorId("b"),
+        name="Bottom",
+        geometry=Geometry(x=0, y=0, width=1920, height=1080),
     )
     members = (
-        MonitorView(selector="T", name="TopMonitor", attached=True, id="t"),
-        MonitorView(selector="B", name="Bottom", attached=True, id="b"),
+        MonitorView(id=MonitorId("t"), name="TopMonitor", attached=True),
+        MonitorView(id=MonitorId("b"), name="Bottom", attached=True),
     )
     stacked = Overview(
         playlists=(long_name.model_copy(update={"monitors": members}),),
@@ -274,7 +291,7 @@ def test_monitors_view_draws_every_monitor(qtbot: QtBot) -> None:
     qtbot.addWidget(view)
     view.resize(900, 300)
     view.show_overview(OVERVIEW)
-    assert {p.monitor.id for p in view.placed()} == {"aw", "plx", "zero", "tv"}
+    assert {str(p.monitor.id) for p in view.placed()} == {"aw", "plx", "zero", "tv"}
     assert "TV: 1920×1080 · no playlist" in view.accessibleDescription()
     assert "ZeroMOD: off · fantasy" in view.accessibleDescription()
     view.grab()  # paints without error
@@ -416,7 +433,7 @@ def test_window_draws_the_overview(
     assert fantasy.chip.text() == "Manual" and not fantasy.chip.isHidden()
     assert fantasy.hold_button.isHidden()  # hold doesn't apply to manual
     assert not konachan.hold_button.isHidden()
-    assert {p.monitor.id for p in page.monitors_view.placed()} == {
+    assert {str(p.monitor.id) for p in page.monitors_view.placed()} == {
         "aw",
         "plx",
         "zero",
@@ -476,7 +493,7 @@ def test_hover_highlights_a_playlist_in_the_drawing_and_its_row(
     konachan.hovered.emit(None)
     assert view.highlight() is None and not konachan.highlighted()
     # Pointing at a monitor highlights its row; one in no playlist, nothing.
-    boxes = {p.monitor.id: p.box for p in view.placed()}
+    boxes = {str(p.monitor.id): p.box for p in view.placed()}
 
     def centre(monitor_id: str) -> QPoint:
         box = boxes[monitor_id]
@@ -575,6 +592,17 @@ def test_errors_show_in_the_row(page: HomePage, client: FakeClient) -> None:
     change = Change("fantasy", Path("/p/fantasy/8.png"), "next", ("ZeroMOD",))
     on_reply(NextResult(playlist="fantasy", change=change))
     assert row.message.isHidden()
+
+
+def test_no_playlists_offers_settings(page: HomePage, client: FakeClient) -> None:
+    client.publish(Overview())
+    assert page.empty.isVisible()
+    wanted: list[str] = []
+    page.page_wanted.connect(wanted.append)
+    page.add_button.click()
+    assert wanted == ["settings"]
+    client.publish(OVERVIEW)
+    assert page.empty.isHidden()
 
 
 def test_config_error_and_unreachable_app(page: HomePage, client: FakeClient) -> None:

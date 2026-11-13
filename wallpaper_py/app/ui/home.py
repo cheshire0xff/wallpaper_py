@@ -10,7 +10,8 @@ down locally until the next overview. Buttons send the playlist commands;
 their toggles (favourite, hold) show the app's state from the overview,
 never the click. A command's error shows in its row, not as a dialog.
 Pointing at a row (or at a monitor) highlights the playlist in both: a
-faint fill on the row, an accent outline on its monitors.
+faint fill on the row, an accent outline on its monitors. Without
+playlists, it says so, with a button to Settings (`page_wanted`).
 
 Image details (dimensions, file size) and thumbnails are read from the
 files by `ThumbnailLoader`, off the UI thread.
@@ -22,7 +23,7 @@ import time
 import weakref
 from collections.abc import Callable
 from pathlib import Path
-from typing import cast
+from typing import cast, override
 
 from PySide6.QtCore import QEvent, QRectF, QSize, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QEnterEvent, QPainter, QPaintEvent, QPalette
@@ -170,6 +171,7 @@ class ElidedLabel(QLabel):
         super().__init__(parent)
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
 
+    @override
     def paintEvent(self, event: QPaintEvent) -> None:  # pylint: disable=invalid-name
         del event
         painter = QPainter(self)
@@ -316,9 +318,10 @@ class PlaylistRow(QWidget):
         self.file.setText(current.name if current else "Nothing shown yet")
         self.file.setToolTip(str(current) if current else "")
         shown = current is not None
-        self.fav_button.setEnabled(shown)
+        # favourite None: favourites.txt can't be read yet (not known).
+        self.fav_button.setEnabled(shown and view.favourite is not None)
         self.remove_button.setEnabled(shown)
-        self.fav_button.set_on(view.favourite)
+        self.fav_button.set_on(bool(view.favourite))
         self.fav_button.set_label(
             "Remove from favourites" if view.favourite else "Favourite"
         )
@@ -398,14 +401,17 @@ class PlaylistRow(QWidget):
     def highlighted(self) -> bool:
         return self._highlighted
 
+    @override
     def enterEvent(self, event: QEnterEvent) -> None:  # pylint: disable=invalid-name
         super().enterEvent(event)
         self.hovered.emit(self._view.name)
 
+    @override
     def leaveEvent(self, event: QEvent) -> None:  # pylint: disable=invalid-name
         super().leaveEvent(event)
         self.hovered.emit(None)
 
+    @override
     def paintEvent(self, event: QPaintEvent) -> None:  # pylint: disable=invalid-name
         del event
         tones = theme.tones()
@@ -420,6 +426,7 @@ class PlaylistRow(QWidget):
             painter.drawRoundedRect(rect, theme.RADIUS, theme.RADIUS)
         painter.end()
 
+    @override
     def changeEvent(self, event: QEvent) -> None:  # pylint: disable=invalid-name
         super().changeEvent(event)
         if theme.palette_changed(event):
@@ -472,9 +479,11 @@ class _ReplyTo:
 
 
 class HomePage(QWidget):
-    """See the module docstring."""
+    """See the module docstring. `page_wanted`: a page to switch to."""
 
     # pylint: disable=too-many-instance-attributes
+
+    page_wanted = Signal(str)  # PageName
 
     def __init__(
         self,
@@ -509,7 +518,9 @@ class HomePage(QWidget):
         self.monitors_view = MonitorsView(self)
         self.monitors_view.set_heights(220, 360, 0.3)
         self.monitors_view.hovered.connect(self._hover)
-        self.empty = theme.muted("No playlists in the config yet.", self)
+        self.empty = QWidget(self)
+        self.add_button = theme.TextButton("Add one in Settings", self.empty)
+        self.add_button.clicked.connect(self._open_settings)
         self._rows_box = QVBoxLayout()
         self._rows_box.setSpacing(0)
         self._build()
@@ -548,6 +559,12 @@ class HomePage(QWidget):
         layout.addSpacing(theme.space())
         playlists = theme.heading("Playlists", content)
         layout.addWidget(playlists)
+        empty = QHBoxLayout(self.empty)
+        empty.setContentsMargins(0, 0, 0, 0)
+        empty.setSpacing(theme.space())
+        empty.addWidget(theme.muted("No playlists yet.", self.empty))
+        empty.addWidget(self.add_button)
+        empty.addStretch(1)
         layout.addWidget(self.empty)
         layout.addLayout(self._rows_box)
         layout.addStretch(1)
@@ -636,6 +653,10 @@ class HomePage(QWidget):
             self._rows_box.insertWidget(index, row)
             row.set_divider(index > 0)
         self.empty.setVisible(not names and not overview.error)
+
+    @Slot()
+    def _open_settings(self) -> None:
+        self.page_wanted.emit("settings")
 
     @Slot(object)
     def _hover(self, playlist: str | None) -> None:

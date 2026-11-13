@@ -16,7 +16,7 @@ except `subscribe`, which keeps the connection open: the app then writes
 one event per line until it quits.
 
 Clients: `send()` blocks (the CLI; `None` means no app is running, and the
-CLI then starts one); `LineRequest` is event driven (the tray and the UI
+CLI then runs the command itself); `LineRequest` is event driven (the tray and the UI
 process, which must not block their event loop). The command server lives
 on the app's service thread and runs each request there as it arrives.
 """
@@ -29,6 +29,7 @@ import os
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import override
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
 from PySide6.QtCore import QObject, QTimer, Signal, Slot
@@ -435,10 +436,12 @@ class CommandServer(LineServer):
             if not self.send(connection_id, line):
                 self._subscribers.discard(connection_id)
 
+    @override
     def close(self) -> None:
         super().close()
         self._subscribers.clear()
 
+    @override
     def _received(self, connection_id: int, line: bytes) -> None:
         try:
             envelope = decode_request(line)
@@ -463,9 +466,11 @@ class CommandServer(LineServer):
         else:
             self.received.emit(connection_id, request)
 
+    @override
     def _too_long(self) -> bytes:
         return encode(ErrorReply.make("protocol", "Request too long"))
 
+    @override
     def _forget(self, connection_id: int) -> None:
         super()._forget(connection_id)
         self._subscribers.discard(connection_id)

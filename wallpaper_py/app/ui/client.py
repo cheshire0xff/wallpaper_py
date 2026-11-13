@@ -8,7 +8,7 @@ How windows talk to the app: `Client`, the only thing they may use.
 
 Windows never see the service, `ServiceWorker` or a socket. `SocketClient`
 implements it over the app's socket for the UI process: it subscribes (and
-starts the app first if none runs, like the CLI), and runs each command on
+starts the app first if none runs, which the CLI never does), and runs each command on
 a connection of its own. Everything is event driven: the UI thread never
 waits.
 """
@@ -19,6 +19,7 @@ import logging
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import override
 
 from PySide6.QtCore import QObject, QTimer, Signal, Slot
 from PySide6.QtNetwork import QLocalSocket
@@ -102,6 +103,7 @@ class SocketClient(Client):
         self._over = True
         self._drop_socket()
 
+    @override
     def run(self, request: CommandRequest, on_reply: ReplyCallback) -> None:
         def answered(line: bytes) -> None:
             try:

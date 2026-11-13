@@ -21,6 +21,8 @@ BACKGROUND = (0, 0, 0)
 # ~25 MB per 4K render, two slots per monitor (see core.setter).
 RENDER_SUFFIX = ".bmp"
 
+_ORIENTATION = 0x0112  # the EXIF tag
+
 
 Box = tuple[float, float, float, float]
 
@@ -35,7 +37,10 @@ def load(source: Path, size: tuple[int, int]) -> Image.Image:
     try:
         with Image.open(source) as img:
             # JPEG only: decode at the smallest DCT scale that is still >= size.
-            img.draft("RGB", size)
+            # The scale is chosen on the stored image: one EXIF turns on its
+            # side (orientations 5-8) needs the size turned as well.
+            sideways = img.getexif().get(_ORIENTATION, 1) in (5, 6, 7, 8)
+            img.draft("RGB", size[::-1] if sideways else size)
             oriented = ImageOps.exif_transpose(img) or img
             return oriented.convert("RGB")  # always a copy, detached from the file
     except (OSError, SyntaxError, ValueError, Image.DecompressionBombError) as err:

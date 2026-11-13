@@ -40,15 +40,16 @@ protocol.py                   the socket protocol as pydantic models: requests, 
                               result per command, errors, events, Overview. Qt-free
         │
 core/                         pure Python, no Qt, no platform APIs
-  model.py       Monitor, Rectangle, ImageMode, error types
+  model.py       Monitor, MonitorId, Rectangle, ImageMode, error types
   backend.py     Backend protocol (the only thing platforms implement)
   selection.py   user-typed monitor selector -> Monitor (names/ids, never numbers)
   setter.py      put an image on a monitor safely (re-checks, renders if needed)
   imaging.py     fill / fit / stretch rendering to an exact size
   paths.py       per-user config, data and cache locations (per OS, never shared)
-  config.py      the human-edited TOML: playlists, monitors, pausing
+  config.py      the TOML config (written by Settings): playlists, monitors, pausing
+                 (tomllib, keys and types as pydantic models; meaning checked after)
   config_edit.py editing that file in place (tomlkit): only what changed is
-                 written, comments kept; validation, selectors, conflicts
+                 written, comments kept; validation, monitor ids, conflicts
   library.py     recursive image scan (natural order, cached), path keys
   order.py       next image: sorted walk, or the persisted shuffle deck
   store.py       SQLite: history, deck, per-playlist and per-monitor state
@@ -92,6 +93,10 @@ Rules:
   - No method shadows an inherited Qt method (e.g. a slot called
     `update` on a widget): PySide then connects it as a plain callable,
     without thread affinity (PYSIDE-2990).
+  - A method that does override a Qt virtual (an event handler,
+    `QRunnable.run`) is marked `@override`, like every override (mypy's
+    `explicit-override`): a misspelt one, which Qt would silently never
+    call, is a mypy error.
   - `sender()` only for same-thread connections (invalid for a direct
     call from another thread); disconnect only our own connections.
   - The worker's `QThread.started` slot only sets up and returns, so the
@@ -161,7 +166,18 @@ in a different process from the server (tests use child processes,
 `tests/clients.py`).
 
 Config errors don't stop the app: it shows the error in the tray and
-answers commands with it until *Reload config* succeeds.
+answers commands with it until *Reload config* succeeds. A `ConfigError`
+stops the service wherever it comes from (opening it, a tick, a command, the
+overview, e.g. a list file saved with a BOM while running): all go through
+`ServiceWorker._failed`.
+
+Two kinds of expected error, both `AppError`: a `WallpaperError` fails one
+operation and the rest goes on; a `ConfigError` (not a `WallpaperError`, so
+`except WallpaperError` lets it through) stops whatever runs on the config.
+A list file that won't decode but changed in the last few seconds may be
+half-written by a script: it is busy, not broken, until it settles.
+`--config` must name a file that exists; only the default may be missing
+(first start).
 
 UI process (`wallpaper ui [home|library|settings]`, `app/ui/`): one main
 window with a sidebar (Home, Library, Settings) runs in a process of its
@@ -228,7 +244,14 @@ State lives in two places, by design:
 - **Favourites / to-remove** live only in their `.txt` files. Every change
   re-reads the file, applies one add or remove and writes it atomically;
   reads reload when the file's mtime/size changes. Entries for missing
-  images are hidden, never pruned automatically.
+  images are hidden, never pruned automatically. A file that has never
+  been read (another program holds it) is *unknown*, not empty: while
+  to-remove is unknown no image is chosen (ticks wait, `next` / `prev` /
+  `pick` fail), and an unknown favourite is `null` in the overview.
+- **Loading only reads.** The state of a playlist id no longer in the
+  config stays (a briefly missing file or a playlist commented out loses
+  nothing) until the `prune` command drops it; `prune` refuses when there
+  is no config file.
 
 A change is *peek, show, commit*: the next image is chosen without consuming
 it, set on every attached member, and only then written to history / the
@@ -268,7 +291,21 @@ e.g. `\\?\DISPLAY#DELA246#...`). Measured on the developer's machine (see
 - then lists it again under the same device path, but detached.
 
 So neither index nor position is an identity. `Monitor.rect is None` means
-known-but-detached. Consequences in code:
+known-but-detached.
+
+Ids are `MonitorId` (`core/model.py`), never plain strings: Windows spells
+one id in different cases in different APIs (IDesktopWallpaper,
+DisplayConfig), and a config written by hand or by an older listing may
+use either. A `MonitorId` keeps the spelling it was made from (`str()`
+gives it back, for the backend and for display) and compares and hashes
+case-insensitively, so plain `==`, `in` and dict keys are right everywhere
+(config, config_edit, the service, the protocol, the backends); no code
+lower-cases an id by hand. In pydantic models (config.toml, the protocol)
+it reads and writes a plain string; SQLite stores its `key` (case-folded).
+Where a protocol model shows a playlist's member (`MonitorView.id`), it is
+spelt as the desktop spells it when listed, else as the config does.
+
+Consequences in code:
 
 - `selection.resolve_monitor` refuses numbers.
 - `setter.apply_wallpaper` re-queries the backend right before setting, and

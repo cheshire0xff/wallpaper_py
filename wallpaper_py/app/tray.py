@@ -14,6 +14,7 @@ actions.
     fantasy (manual) · ZeroMOD (off)
     ...
     ───
+    No playlists yet: add one…  (only without playlists; opens Settings)
     Paused: idle              (only while paused)
     Open wallpaper_py         (the window on Home, in the UI process,
     Library                    started if needed; on Library)
@@ -25,7 +26,9 @@ actions.
 
 The menu is drawn from the service's latest `Overview` and never waits on
 the service: actions are queued to it, and the menu redraws when the next
-overview arrives. Errors from actions show as a notification.
+overview arrives. Errors from actions show as a notification. If the app
+starts without playlists, a notification says so once, and clicking it
+opens Settings.
 
 Each item carries plain data saying what it asks for (`QAction.setData`),
 and one slot (`Tray._triggered`, on `QMenu.triggered`) does it. No closures
@@ -65,6 +68,8 @@ log = logging.getLogger(__name__)
 
 APP_TITLE = "wallpaper_py"
 MAX_TEXT = 60  # characters in a menu item before eliding
+NO_PLAYLISTS_ITEM = "No playlists yet: add one…"
+NO_PLAYLISTS_NOTE = "No playlists yet. Click here to add one in Settings."
 
 
 class MenuActions(Protocol):
@@ -136,6 +141,9 @@ def fill_menu(menu: QMenu, overview: Overview | None, autostart: bool) -> QActio
         if overview.error:
             item = menu.addAction(_label(f"Error: {overview.error}", 2 * MAX_TEXT))
             item.setEnabled(False)
+        elif not overview.playlists:
+            _add(menu, NO_PLAYLISTS_ITEM, "settings")
+            menu.addSeparator()
         if overview.paused:
             menu.addAction(f"Paused: {overview.paused}").setEnabled(False)
     _add(menu, f"Open {APP_TITLE}", "home")
@@ -173,8 +181,9 @@ def _add_playlist(menu: QMenu, playlist: PlaylistView) -> None:
     run("Previous", "prev").setEnabled(playlist.attached)
     favourite = run("Favourite", "unfav" if playlist.favourite else "fav")
     favourite.setCheckable(True)
-    favourite.setChecked(playlist.favourite)
-    favourite.setEnabled(current is not None)
+    favourite.setChecked(bool(playlist.favourite))
+    # None: favourites.txt can't be read yet, so neither way is known.
+    favourite.setEnabled(current is not None and playlist.favourite is not None)
     run("Remove (list and skip)", "remove").setEnabled(current is not None)
     if not playlist.manual:  # a manual playlist never rotates: nothing to hold
         hold = run("Hold", "resume" if playlist.held else "hold")
@@ -214,6 +223,8 @@ def tooltip(overview: Overview | None) -> str:
         lines.append("Starting...")
     elif overview.error:
         lines.append("Error: see the menu")
+    elif not overview.playlists:
+        lines.append("No playlists yet")
     else:
         for playlist in overview.playlists:
             name = playlist.current.name if playlist.current else "-"
@@ -256,6 +267,8 @@ class Tray(QObject):
         self._error_shown: str | None = None
         self._reloading = False  # the reload's reply tells what happened
         self._stale = False
+        self._started = False  # a first overview without an error came
+        self._message_opens: PageName | None = None  # clicking the notification
 
         self.menu = QMenu()
         self.menu.triggered.connect(self._triggered)
@@ -264,6 +277,7 @@ class Tray(QObject):
         self._icon = QSystemTrayIcon()
         self._icon.setContextMenu(self.menu)
         self._icon.activated.connect(self._activated)
+        self._icon.messageClicked.connect(self._message_clicked)
         self._autostart_action = fill_menu(self.menu, None, self.autostart_enabled())
         self._update_icon()
         host.overview_changed.connect(self.show_overview)
@@ -287,6 +301,13 @@ class Tray(QObject):
         ):
             self.notify(overview.error)
         self._error_shown = overview.error
+        if not self._started and not overview.error:
+            self._started = True
+            if not overview.playlists:
+                self._show_message(
+                    NO_PLAYLISTS_NOTE, QSystemTrayIcon.MessageIcon.Information
+                )
+                self._message_opens = "settings"
         if self.menu.isVisible():
             self._stale = True  # never rebuild under the cursor
         else:
@@ -378,9 +399,16 @@ class Tray(QObject):
     def notify(self, message: str) -> None:
         """A warning balloon (and the log)."""
         log.warning("%s", message)
-        self._icon.showMessage(
-            APP_TITLE, message, QSystemTrayIcon.MessageIcon.Warning, 10_000
-        )
+        self._show_message(message, QSystemTrayIcon.MessageIcon.Warning)
+
+    def _show_message(self, message: str, icon: QSystemTrayIcon.MessageIcon) -> None:
+        self._message_opens = None  # this one opens nothing when clicked
+        self._icon.showMessage(APP_TITLE, message, icon, 10_000)
+
+    @Slot()
+    def _message_clicked(self) -> None:
+        if self._message_opens is not None:
+            self._open_window(self._message_opens)
 
     def _update_icon(self) -> None:
         state = icon_state(self._overview)

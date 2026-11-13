@@ -15,6 +15,7 @@ from pytestqt.qtbot import QtBot
 
 from wallpaper_py.app import ipc
 from wallpaper_py.app.worker import ServiceHost, ServiceSettings
+from wallpaper_py.core import paths
 from wallpaper_py.core.service import Change
 from wallpaper_py.protocol import (
     ChangedEvent,
@@ -29,6 +30,8 @@ from wallpaper_py.protocol import (
     PickRequest,
     PickResult,
     PrevResult,
+    PruneRequest,
+    PruneResult,
     ReloadRequest,
     ReloadResult,
     Reply,
@@ -36,7 +39,7 @@ from wallpaper_py.protocol import (
     Subscribe,
 )
 
-from .fakes import FakeBackend, FakePresence, make_monitor, write_config
+from .fakes import FakeBackend, FakePresence, make_monitor, settled, write_config
 from .hosts import connect, make_host, read_lines
 
 
@@ -201,12 +204,12 @@ def test_socket_answers_during_and_after_reloads(
 
     # A broken config: the socket answers with the error.
     text = config.read_text(encoding="utf-8")
-    config.unlink()
+    config.write_text("[playlists.a\n", encoding="utf-8")
     with qtbot.waitSignal(host.overview_changed):
         host.reload()
     reply = send(qtbot, name, config, Request(command="next"))
     assert isinstance(reply, ErrorReply) and reply.error.kind == "config_error"
-    assert "No config file" in reply.error.message
+    assert "Cannot read" in reply.error.message
 
     config.write_text(text, encoding="utf-8")
     with qtbot.waitSignal(host.overview_changed):
@@ -246,10 +249,10 @@ def test_config_error_then_reload(
     qtbot: QtBot, host: ServiceHost, config: Path
 ) -> None:
     text = config.read_text(encoding="utf-8")
-    config.unlink()
+    config.write_text("[playlists.a\n", encoding="utf-8")
     overview = start(qtbot, host)
-    assert overview.error is not None and "No config file" in overview.error
-    assert "No config file" in error(submit(qtbot, host, Request(command="next")))
+    assert overview.error is not None and "Cannot read" in overview.error
+    assert "Cannot read" in error(submit(qtbot, host, Request(command="next")))
 
     config.write_text(text, encoding="utf-8")
     with qtbot.waitSignal(host.overview_changed) as blocker:
@@ -356,6 +359,29 @@ def test_reload_answers_with_its_result(
     assert replies == [ReloadResult()]
 
 
+def test_a_list_file_that_is_not_utf8_stops_the_service(
+    qtbot: QtBot, host: ServiceHost, name: str, config: Path, tmp_path: Path
+) -> None:
+    start(qtbot, host)
+    listed = tmp_path / "user" / "data" / "to-remove.txt"
+    listed.parent.mkdir(parents=True, exist_ok=True)
+
+    # It goes bad while the app runs: the next tick stops the service.
+    listed.write_text("a.jpg\n", encoding="utf-16")
+    settled(listed)
+    with qtbot.waitSignal(host.overview_changed) as blocker:
+        host.request_tick()
+    assert "not UTF-8" in blocker.args[0].error
+    reply = send(qtbot, name, config, Request(command="next"))
+    assert isinstance(reply, ErrorReply) and reply.error.kind == "config_error"
+
+    # Still bad at a reload: the same error; fixed: running again.
+    reply = send(qtbot, name, config, ReloadRequest())
+    assert isinstance(reply, ErrorReply) and reply.error.kind == "config_error"
+    listed.write_text("", encoding="utf-8")
+    assert send(qtbot, name, config, ReloadRequest()) == ReloadResult()
+
+
 def test_a_request_without_a_config_means_the_apps(
     qtbot: QtBot, host: ServiceHost, name: str
 ) -> None:
@@ -364,3 +390,69 @@ def test_a_request_without_a_config_means_the_apps(
     assert envelope.config is None
     socket = connect(qtbot, name, ipc.encode(envelope))
     assert shown(answer(qtbot, socket)) == "b.jpg"
+
+
+def test_a_renamed_playlist_keeps_its_state(
+    qtbot: QtBot, host: ServiceHost, name: str, config: Path
+) -> None:
+    """Its state goes by its id, which a rename keeps: nothing to move."""
+    start(qtbot, host)
+    assert shown(send(qtbot, name, config, Request(command="next"))) == "b.jpg"
+    text = config.read_text(encoding="utf-8")
+    config.write_text(text.replace("[playlists.walls]", "[playlists.art]"), "utf-8")
+    with qtbot.waitSignal(host.overview_changed) as blocker:
+        reply = send(qtbot, name, config, ReloadRequest())
+    assert reply == ReloadResult()
+    [playlist] = blocker.args[0].playlists
+    assert playlist.name == "art" and playlist.current.name == "b.jpg"
+    # The history too: prev goes back, where a new playlist has none.
+    assert shown(send(qtbot, name, config, Request(command="prev"))) == "a.jpg"
+
+
+def test_no_config_file_runs_without_playlists(
+    qtbot: QtBot, host: ServiceHost, config: Path
+) -> None:
+    """The first start: the settings window creates the file."""
+    config.unlink()
+    overview = start(qtbot, host)
+    assert overview.error is None and overview.playlists == ()
+    assert overview.monitors  # listed, for the settings window to assign
+    assert "No playlists yet" in error(submit(qtbot, host, Request(command="next")))
+
+
+def test_a_config_error_from_a_command_stops_the_service(
+    qtbot: QtBot,
+    host: ServiceHost,
+    name: str,
+    config: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The same rule as for a tick: the service stops, the reply says why."""
+    start(qtbot, host)
+    listed = paths.data_dir() / "to-remove.txt"
+    listed.parent.mkdir(parents=True, exist_ok=True)
+    listed.write_text("a.jpg\n", encoding="utf-8-sig")  # Notepad's BOM
+    settled(listed)
+
+    with qtbot.waitSignal(host.overview_changed) as blocker:
+        reply = send(qtbot, name, config, Request(command="next"))  # reads it
+    assert isinstance(reply, ErrorReply) and reply.error.kind == "config_error"
+    assert "byte order mark" in reply.error.message
+    assert blocker.args[0].error == reply.error.message
+    assert send(qtbot, name, config, Request(command="status")) == reply
+    assert not [r for r in caplog.records if r.exc_info]  # no traceback: expected
+
+    listed.write_text("", encoding="utf-8")
+    assert send(qtbot, name, config, ReloadRequest()) == ReloadResult()
+
+
+def test_prune_over_the_socket(
+    qtbot: QtBot, host: ServiceHost, name: str, config: Path
+) -> None:
+    start(qtbot, host)
+    text = config.read_text(encoding="utf-8")
+    config.write_text(text.replace("walls-id", "new-id"), encoding="utf-8")
+    assert send(qtbot, name, config, ReloadRequest()) == ReloadResult()
+    reply = send(qtbot, name, config, PruneRequest())
+    assert reply == PruneResult(dropped=("walls-id",))
+    assert submit(qtbot, host, PruneRequest()) == PruneResult(dropped=())

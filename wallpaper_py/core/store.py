@@ -6,7 +6,10 @@ in their .txt files (see core.marks).
 The database is the single source of truth, so a one-shot CLI command
 (`wallpaper next`) and a running `wallpaper run` in another process see the
 same state. WAL mode lets them read while the other writes. State is per OS
-(see core.paths) and holds full native paths.
+and per config file (see core.paths.state_db) and holds full native paths.
+
+Playlists are keyed by their `id` from the config, not their name: a
+renamed playlist keeps its state with nothing to move.
 
 History is in `position` order (not by id): a picked image goes right after
 the cursor, between older entries.
@@ -20,15 +23,15 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from .model import WallpaperError
+from .model import MonitorId, WallpaperError
 
 # Pre-release: the schema changes in place, without migrations. A database
 # of another version is refused (see Store._check_version).
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 4
 
 _SCHEMA = (
     """CREATE TABLE playlist (
-        name     TEXT PRIMARY KEY,
+        id       TEXT PRIMARY KEY,     -- the config's id
         cursor   INTEGER,                  -- history.id shown now, NULL at first
         elapsed  REAL NOT NULL DEFAULT 0,  -- active seconds since the last change
         deck_pos REAL NOT NULL DEFAULT -1, -- shuffle: position of the last card drawn
@@ -49,11 +52,19 @@ _SCHEMA = (
         PRIMARY KEY (playlist, position)
     ) WITHOUT ROWID""",
     """CREATE TABLE applied (
-        monitor_id TEXT PRIMARY KEY,      -- lower-case
+        monitor_id TEXT PRIMARY KEY,      -- MonitorId.key
         playlist   TEXT NOT NULL,
         path       TEXT NOT NULL,         -- the original image, not the render
         applied_at REAL NOT NULL
     )""",
+)
+
+# Where a playlist's id is stored: (table, column).
+_PLAYLIST_COLUMNS = (
+    ("playlist", "id"),
+    ("history", "playlist"),
+    ("deck", "playlist"),
+    ("applied", "playlist"),
 )
 
 # Positions closer than this are renumbered before inserting between them
@@ -136,10 +147,10 @@ class Store:
 
     # -- playlist ----------------------------------------------------------
 
-    def playlist_state(self, name: str) -> PlaylistState:
+    def playlist_state(self, playlist: str) -> PlaylistState:
         row = self._db.execute(
-            "SELECT cursor, elapsed, deck_pos, held FROM playlist WHERE name = ?",
-            (name,),
+            "SELECT cursor, elapsed, deck_pos, held FROM playlist WHERE id = ?",
+            (playlist,),
         ).fetchone()
         if row is None:
             return PlaylistState(cursor=None, elapsed=0.0, deck_pos=-1.0)
@@ -147,103 +158,120 @@ class Store:
             cursor=row[0], elapsed=row[1], deck_pos=row[2], held=bool(row[3])
         )
 
-    def _ensure_playlist(self, name: str) -> None:
+    def _ensure_playlist(self, playlist: str) -> None:
         self._db.execute(
-            "INSERT INTO playlist (name) VALUES (?) ON CONFLICT DO NOTHING", (name,)
+            "INSERT INTO playlist (id) VALUES (?) ON CONFLICT DO NOTHING", (playlist,)
         )
 
-    def add_elapsed(self, name: str, seconds: float) -> float:
+    def add_elapsed(self, playlist: str, seconds: float) -> float:
         with self.transaction():
-            self._ensure_playlist(name)
+            self._ensure_playlist(playlist)
             (elapsed,) = self._db.execute(
-                "UPDATE playlist SET elapsed = elapsed + ? WHERE name = ? "
+                "UPDATE playlist SET elapsed = elapsed + ? WHERE id = ? "
                 "RETURNING elapsed",
-                (seconds, name),
+                (seconds, playlist),
             ).fetchone()
         return float(elapsed)
 
-    def set_cursor(self, name: str, history_id: int) -> None:
+    def set_cursor(self, playlist: str, history_id: int) -> None:
         """Show `history_id` now; the interval starts again."""
         with self.transaction():
-            self._ensure_playlist(name)
+            self._ensure_playlist(playlist)
             self._db.execute(
-                "UPDATE playlist SET cursor = ?, elapsed = 0 WHERE name = ?",
-                (history_id, name),
+                "UPDATE playlist SET cursor = ?, elapsed = 0 WHERE id = ?",
+                (history_id, playlist),
             )
 
-    def set_held(self, name: str, held: bool) -> bool:
+    def set_held(self, playlist: str, held: bool) -> bool:
         """Hold or resume the playlist; False if it already was so."""
         with self.transaction():
-            self._ensure_playlist(name)
+            self._ensure_playlist(playlist)
             cursor = self._db.execute(
-                "UPDATE playlist SET held = ? WHERE name = ? AND held != ?",
-                (held, name, held),
+                "UPDATE playlist SET held = ? WHERE id = ? AND held != ?",
+                (held, playlist, held),
             )
         return cursor.rowcount > 0
 
-    def set_deck_pos(self, name: str, position: float) -> None:
+    def set_deck_pos(self, playlist: str, position: float) -> None:
         with self.transaction():
-            self._ensure_playlist(name)
+            self._ensure_playlist(playlist)
             self._db.execute(
-                "UPDATE playlist SET deck_pos = ? WHERE name = ?", (position, name)
+                "UPDATE playlist SET deck_pos = ? WHERE id = ?", (position, playlist)
             )
+
+    def prune_playlists(self, keep: Iterable[str]) -> list[str]:
+        """Drop the state of every playlist not in `keep`; returns their ids."""
+        kept = set(keep)
+        with self.transaction():
+            # A playlist may have rows in some tables only.
+            known = " UNION ".join(
+                f"SELECT {column} FROM {table}" for table, column in _PLAYLIST_COLUMNS
+            )
+            rows = self._db.execute(known).fetchall()
+            stale = sorted(playlist for (playlist,) in rows if playlist not in kept)
+            for playlist in stale:
+                for table, column in _PLAYLIST_COLUMNS:
+                    self._db.execute(
+                        f"DELETE FROM {table} WHERE {column} = ?", (playlist,)
+                    )
+        return stale
 
     # -- history -----------------------------------------------------------
 
-    def append_history(self, name: str, path: Path, shown_at: float) -> int:
+    def append_history(self, playlist: str, path: Path, shown_at: float) -> int:
         """A new entry after all others of the playlist."""
         (last,) = self._db.execute(
-            "SELECT max(position) FROM history WHERE playlist = ?", (name,)
+            "SELECT max(position) FROM history WHERE playlist = ?", (playlist,)
         ).fetchone()
-        return self._add_history(name, path, shown_at, (last or 0.0) + 1)
+        return self._add_history(playlist, path, shown_at, (last or 0.0) + 1)
 
     def insert_history(
-        self, name: str, after: int | None, path: Path, shown_at: float
+        self, playlist: str, after: int | None, path: Path, shown_at: float
     ) -> int:
         """
         A new entry right after entry `after`, before the entries that
         followed it; at the end if `after` is None or the last entry.
         """
         with self.transaction():
-            bounds = None if after is None else self._gap_after(name, after)
+            bounds = None if after is None else self._gap_after(playlist, after)
             if bounds is not None and bounds[1] - bounds[0] < _MIN_GAP:
                 assert after is not None
-                self._renumber_history(name)
-                bounds = self._gap_after(name, after)
+                self._renumber_history(playlist)
+                bounds = self._gap_after(playlist, after)
             if bounds is None:
-                return self.append_history(name, path, shown_at)
+                return self.append_history(playlist, path, shown_at)
             low, high = bounds
-            return self._add_history(name, path, shown_at, (low + high) / 2)
+            return self._add_history(playlist, path, shown_at, (low + high) / 2)
 
-    def _gap_after(self, name: str, history_id: int) -> tuple[float, float] | None:
+    def _gap_after(self, playlist: str, history_id: int) -> tuple[float, float] | None:
         """The positions of entry `history_id` and of the one after it, if any."""
         row = self._db.execute(
             "SELECT h.position, (SELECT min(position) FROM history "
             "WHERE playlist = h.playlist AND position > h.position) "
             "FROM history h WHERE h.id = ? AND h.playlist = ?",
-            (history_id, name),
+            (history_id, playlist),
         ).fetchone()
         if row is None or row[1] is None:
             return None
         return float(row[0]), float(row[1])
 
-    def _renumber_history(self, name: str) -> None:
+    def _renumber_history(self, playlist: str) -> None:
         """Positions 1, 2, 3, ... in the same order."""
         self._db.execute(
             "WITH ranked AS (SELECT id, row_number() OVER "
             "(ORDER BY position, id) AS n FROM history WHERE playlist = ?) "
             "UPDATE history SET position = ranked.n FROM ranked "
             "WHERE history.id = ranked.id",
-            (name,),
+            (playlist,),
         )
 
     def _add_history(
-        self, name: str, path: Path, shown_at: float, position: float
+        self, playlist: str, path: Path, shown_at: float, position: float
     ) -> int:
         cursor = self._db.execute(
             "INSERT INTO history (playlist, path, shown_at, position) "
             "VALUES (?, ?, ?, ?)",
-            (name, str(path), shown_at, position),
+            (playlist, str(path), shown_at, position),
         )
         assert cursor.lastrowid is not None
         return cursor.lastrowid
@@ -255,129 +283,129 @@ class Store:
         return _history(row) if row else None
 
     def history_after(
-        self, name: str, history_id: int, limit: int = 500
+        self, playlist: str, history_id: int, limit: int = 500
     ) -> list[HistoryEntry]:
         """Entries after `history_id` in the history's order, nearest first."""
         rows = self._db.execute(
             "SELECT id, path, shown_at FROM history WHERE playlist = ? AND "
             "position > (SELECT position FROM history WHERE id = ?) "
             "ORDER BY position LIMIT ?",
-            (name, history_id, limit),
+            (playlist, history_id, limit),
         )
         return [_history(row) for row in rows]
 
     def history_before(
-        self, name: str, history_id: int | None = None, limit: int = 500
+        self, playlist: str, history_id: int | None = None, limit: int = 500
     ) -> list[HistoryEntry]:
         """Entries before `history_id` (default: all), nearest first."""
         if history_id is None:
             rows = self._db.execute(
                 "SELECT id, path, shown_at FROM history WHERE playlist = ? "
                 "ORDER BY position DESC LIMIT ?",
-                (name, limit),
+                (playlist, limit),
             )
         else:
             rows = self._db.execute(
                 "SELECT id, path, shown_at FROM history WHERE playlist = ? AND "
                 "position < (SELECT position FROM history WHERE id = ?) "
                 "ORDER BY position DESC LIMIT ?",
-                (name, history_id, limit),
+                (playlist, history_id, limit),
             )
         return [_history(row) for row in rows]
 
-    def latest_history(self, name: str) -> HistoryEntry | None:
-        entries = self.history_before(name, limit=1)
+    def latest_history(self, playlist: str) -> HistoryEntry | None:
+        entries = self.history_before(playlist, limit=1)
         return entries[0] if entries else None
 
     # -- shuffle deck --------------------------------------------------------
 
-    def deck_paths(self, name: str) -> set[str]:
+    def deck_paths(self, playlist: str) -> set[str]:
         """Every card of the current cycle, drawn or not."""
-        rows = self._db.execute("SELECT path FROM deck WHERE playlist = ?", (name,))
+        rows = self._db.execute("SELECT path FROM deck WHERE playlist = ?", (playlist,))
         return {path for (path,) in rows}
 
-    def deck_after(self, name: str, position: float) -> list[tuple[float, Path]]:
+    def deck_after(self, playlist: str, position: float) -> list[tuple[float, Path]]:
         """Cards not drawn yet, in order."""
         rows = self._db.execute(
             "SELECT position, path FROM deck "
             "WHERE playlist = ? AND position > ? ORDER BY position",
-            (name, position),
+            (playlist, position),
         )
         return [(pos, Path(path)) for pos, path in rows]
 
-    def new_deck(self, name: str, paths: Sequence[Path]) -> None:
+    def new_deck(self, playlist: str, paths: Sequence[Path]) -> None:
         """Replace the deck with `paths` in this order; nothing drawn yet."""
         with self.transaction():
-            self._ensure_playlist(name)
-            self._db.execute("DELETE FROM deck WHERE playlist = ?", (name,))
+            self._ensure_playlist(playlist)
+            self._db.execute("DELETE FROM deck WHERE playlist = ?", (playlist,))
             self._db.executemany(
                 "INSERT INTO deck (playlist, position, path) VALUES (?, ?, ?)",
-                ((name, float(i), str(p)) for i, p in enumerate(paths)),
+                ((playlist, float(i), str(p)) for i, p in enumerate(paths)),
             )
             self._db.execute(
-                "UPDATE playlist SET deck_pos = -1 WHERE name = ?", (name,)
+                "UPDATE playlist SET deck_pos = -1 WHERE id = ?", (playlist,)
             )
 
-    def insert_cards(self, name: str, cards: Iterable[tuple[float, Path]]) -> None:
+    def insert_cards(self, playlist: str, cards: Iterable[tuple[float, Path]]) -> None:
         with self.transaction():
             self._db.executemany(
                 "INSERT INTO deck (playlist, position, path) VALUES (?, ?, ?)",
-                ((name, pos, str(path)) for pos, path in cards),
+                ((playlist, pos, str(path)) for pos, path in cards),
             )
 
-    def card_position(self, name: str, path: Path) -> float | None:
+    def card_position(self, playlist: str, path: Path) -> float | None:
         """Where `path` is in the deck, if it is."""
         row = self._db.execute(
             "SELECT position FROM deck WHERE playlist = ? AND path = ?",
-            (name, str(path)),
+            (playlist, str(path)),
         ).fetchone()
         return None if row is None else float(row[0])
 
-    def first_card_position(self, name: str) -> float | None:
+    def first_card_position(self, playlist: str) -> float | None:
         (position,) = self._db.execute(
-            "SELECT min(position) FROM deck WHERE playlist = ?", (name,)
+            "SELECT min(position) FROM deck WHERE playlist = ?", (playlist,)
         ).fetchone()
         return None if position is None else float(position)
 
-    def move_card(self, name: str, path: Path, position: float) -> None:
+    def move_card(self, playlist: str, path: Path, position: float) -> None:
         self._db.execute(
             "UPDATE deck SET position = ? WHERE playlist = ? AND path = ?",
-            (position, name, str(path)),
+            (position, playlist, str(path)),
         )
 
     # -- applied images ------------------------------------------------------
 
-    def applied(self, monitor_id: str) -> Path | None:
+    def applied(self, monitor_id: MonitorId) -> Path | None:
         row = self._db.execute(
-            "SELECT path FROM applied WHERE monitor_id = ?", (monitor_id.lower(),)
+            "SELECT path FROM applied WHERE monitor_id = ?", (monitor_id.key,)
         ).fetchone()
         return Path(row[0]) if row else None
 
     def set_applied(
-        self, monitor_id: str, playlist: str, path: Path, applied_at: float
+        self, monitor_id: MonitorId, playlist: str, path: Path, applied_at: float
     ) -> None:
         self._db.execute(
             "INSERT OR REPLACE INTO applied (monitor_id, playlist, path, applied_at) "
             "VALUES (?, ?, ?, ?)",
-            (monitor_id.lower(), playlist, str(path), applied_at),
+            (monitor_id.key, playlist, str(path), applied_at),
         )
 
-    def keep_applied(self, monitor_ids: Iterable[str]) -> None:
+    def keep_applied(self, monitor_ids: Iterable[MonitorId]) -> None:
         """Forget what every *other* monitor shows (they are detached)."""
-        keep = {m.lower() for m in monitor_ids}
+        keep = {m.key for m in monitor_ids}
         rows = self._db.execute("SELECT monitor_id FROM applied").fetchall()
         self._db.executemany(
             "DELETE FROM applied WHERE monitor_id = ?",
             ((m,) for (m,) in rows if m not in keep),
         )
 
-    def forget_applied(self, monitor_id: str | None = None) -> None:
+    def forget_applied(self, monitor_id: MonitorId | None = None) -> None:
         """Forget what one monitor (or every monitor) shows."""
         if monitor_id is None:
             self._db.execute("DELETE FROM applied")
         else:
             self._db.execute(
-                "DELETE FROM applied WHERE monitor_id = ?", (monitor_id.lower(),)
+                "DELETE FROM applied WHERE monitor_id = ?", (monitor_id.key,)
             )
 
 

@@ -9,11 +9,11 @@ the source of truth, so hand edits, comments, order and formatting survive.
 - `validate(edited, ...)`: problems per field, for the window to show next
   to the field. The caller then checks the rendered text with the core's
   own parser (`config.loads_config`) before writing it.
-- `choose_selector`, `assign_monitor`, `remove_selector`: which selector to
-  write for a monitor, and moving monitors between playlists so that a
-  monitor is in one playlist at most.
-- `read_file`, `write_file`: the file as text (line endings kept), and an
-  atomic write that refuses if the file changed since it was read.
+- `assign_monitor`, `remove_monitor`: moving monitors (by id) between
+  playlists so that a monitor is in one playlist at most.
+- `read_file`, `write_file`: the file as text (line endings kept; no file
+  reads as empty), and an atomic write that refuses if the file changed
+  since it was read.
 
 Pure Python like the rest of `core`: no Qt, no platform APIs.
 """
@@ -22,13 +22,14 @@ from __future__ import annotations
 
 import os
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
-from enum import Enum
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Protocol
 
 import tomlkit
+import pydantic
+from pydantic import ConfigDict, StrictStr
 from tomlkit.container import Container
 from tomlkit.exceptions import TOMLKitError
 from tomlkit.items import (
@@ -45,8 +46,19 @@ from tomlkit.items import (
 )
 from tomlkit.toml_document import TOMLDocument
 
-from .config import MANUAL, MIN_INTERVAL_S, ConfigError, Order, parse_duration
-from .model import ImageMode, WallpaperError
+from .config import (
+    MANUAL,
+    MIN_INTERVAL_S,
+    ConfigError,
+    ConfigFile,
+    Order,
+    PlaylistTable,
+    decode_text,
+    new_playlist_id,
+    parse_duration,
+    validate_file,
+)
+from .model import ImageMode, MonitorId, WallpaperError
 
 PLAYLISTS = "playlists"
 # A playlist name the window writes must be a bare TOML key (no quoting
@@ -76,8 +88,9 @@ class PlaylistSettings:
     uid: int  # identity while editing (never written)
     origin: str | None  # its table's key in the file read; None: added
     name: str
+    id: str  # keys its state in the app (core.config); never changed here
     directory: str
-    monitors: tuple[str, ...]  # selectors: names or full ids
+    monitors: tuple[MonitorId, ...]
     interval: str  # a duration ("30m"), or MANUAL
     order: Order = Order.SHUFFLE
     mode: ImageMode | None = None  # None: as is (no `mode` key)
@@ -112,26 +125,42 @@ class Settings:
 # -- reading -------------------------------------------------------------------------
 
 
+class _EditablePlaylist(PlaylistTable):
+    """
+    A playlist table as the window reads it: a missing key is for the form
+    to fill in, and a key it doesn't know is left as it is in the file.
+    """
+
+    model_config = ConfigDict(extra="ignore", frozen=True)
+
+    directory: StrictStr = ""
+    monitors: tuple[MonitorId, ...] = ()  # none yet: for the form to fill
+    interval: StrictStr = ""
+
+
+class _EditableFile(ConfigFile):
+    """The file as the window reads it (see _EditablePlaylist)."""
+
+    model_config = ConfigDict(extra="ignore", frozen=True)
+
+    playlists: Mapping[str, _EditablePlaylist] = pydantic.Field(default_factory=dict)
+
+
 def read_settings(text: str) -> Settings:
     """The editable values of a config text; raises ConfigEditError."""
     doc = _parse(text)
-    root = doc.unwrap()
-    playlists = tuple(
-        _read_playlist(uid, name, table)
-        for uid, (name, table) in enumerate(_tables(doc))
-    )
-    locked = root.get("pause_when_locked", True)
-    if not isinstance(locked, bool):
-        raise ConfigEditError("pause_when_locked must be true or false")
-    idle = root.get("pause_when_idle", DEFAULT_IDLE)
-    if idle is not False and not isinstance(idle, str):
-        raise ConfigEditError("pause_when_idle must be a duration like '5m', or false")
+    _tables(doc)  # only [playlists.NAME] tables can be edited
+    file = validate_file(_EditableFile, doc.unwrap(), ConfigEditError)
+    idle = file.pause_when_idle
     return Settings(
-        playlists=playlists,
-        pause_when_locked=locked,
-        pause_when_idle=None if idle is False else str(idle).strip(),
-        favourites_file=_path_text(root, "favourites_file"),
-        to_remove_file=_path_text(root, "to_remove_file"),
+        playlists=tuple(
+            _read_playlist(uid, name, table)
+            for uid, (name, table) in enumerate(file.playlists.items())
+        ),
+        pause_when_locked=file.pause_when_locked,
+        pause_when_idle=idle.strip() if isinstance(idle, str) else None,
+        favourites_file=file.favourites_file or "",
+        to_remove_file=file.to_remove_file or "",
     )
 
 
@@ -165,44 +194,19 @@ def _tables(doc: TOMLDocument) -> list[tuple[str, Table]]:
     return tables
 
 
-def _read_playlist(uid: int, name: str, table: Table) -> PlaylistSettings:
-    raw = table.unwrap()
-    where = f"[playlists.{name}]"
-    monitors = raw.get("monitors", [])
-    if isinstance(monitors, str):
-        monitors = [monitors]
-    if not isinstance(monitors, list) or not all(isinstance(m, str) for m in monitors):
-        raise ConfigEditError(f"{where} monitors must be a list of monitor names")
-    interval = raw.get("interval", "")
-    directory = raw.get("directory", "")
-    if not isinstance(interval, str) or not isinstance(directory, str):
-        raise ConfigEditError(f"{where} directory and interval must be strings")
-    interval = interval.strip()
+def _read_playlist(uid: int, name: str, table: _EditablePlaylist) -> PlaylistSettings:
+    interval = table.interval.strip()
     return PlaylistSettings(
         uid=uid,
         origin=name,
         name=name,
-        directory=directory,
-        monitors=tuple(monitors),
+        id=table.id,
+        directory=table.directory,
+        monitors=table.monitors,
         interval=MANUAL if interval.lower() == MANUAL else interval,
-        order=_enum(Order, raw.get("order", Order.SHUFFLE.value), f"{where} order"),
-        mode=_enum(ImageMode, raw["mode"], f"{where} mode") if "mode" in raw else None,
+        order=table.order,
+        mode=table.mode,
     )
-
-
-def _enum[E: Enum](enum: type[E], value: Any, what: str) -> E:
-    try:
-        return enum(str(value).strip().lower())
-    except ValueError as err:
-        choices = ", ".join(str(m.value) for m in enum)
-        raise ConfigEditError(f"{what} must be one of: {choices}") from err
-
-
-def _path_text(root: dict[str, Any], key: str) -> str:
-    value = root.get(key, "")
-    if not isinstance(value, str):
-        raise ConfigEditError(f"{key} must be a path")
-    return value
 
 
 # -- writing -------------------------------------------------------------------------
@@ -273,7 +277,8 @@ def _write_playlist(table: Table, old: PlaylistSettings, new: PlaylistSettings) 
         like = _existing(table, "directory")
         _set(table, "directory", _string(new.directory, like, path=True))
     if new.monitors != old.monitors:
-        _set(table, "monitors", _selectors(new.monitors, _existing(table, "monitors")))
+        like = _existing(table, "monitors")
+        _set(table, "monitors", _monitor_ids(new.monitors, like))
     if new.order != old.order:
         _set(table, "order", _string(new.order.value, _existing(table, "order")))
     if new.interval != old.interval:
@@ -292,8 +297,9 @@ def _add_playlist(doc: TOMLDocument, playlist: PlaylistSettings) -> None:
     section = doc[PLAYLISTS]
     assert isinstance(section, Table)
     table = tomlkit.table()
+    table.append("id", playlist.id)
     table.append("directory", _string(playlist.directory, path=True))
-    table.append("monitors", _selectors(playlist.monitors, None))
+    table.append("monitors", _monitor_ids(playlist.monitors, None))
     table.append("order", playlist.order.value)
     table.append("interval", playlist.interval)
     if playlist.mode is not None:
@@ -441,11 +447,12 @@ def _literal_ok(value: str) -> bool:
     )
 
 
-def _selectors(selectors: Sequence[str], like: Item | None) -> Array:
+def _monitor_ids(monitor_ids: Sequence[MonitorId], like: Item | None) -> Array:
     array = tomlkit.array()
-    for selector in selectors:
-        # Ids hold backslashes: literal strings keep them readable.
-        array.append(_string(selector, path="\\" in selector))
+    for monitor_id in monitor_ids:
+        # Windows ids hold backslashes: literal strings keep them readable.
+        text = str(monitor_id)
+        array.append(_string(text, path="\\" in text))
     if like is not None and "\n" in like.as_string():
         array.multiline(True)
     return array
@@ -471,7 +478,7 @@ class NamedMonitor(Protocol):
     """A monitor the desktop lists (protocol.DesktopMonitor, core Monitor)."""
 
     @property
-    def id(self) -> str: ...
+    def id(self) -> MonitorId: ...
 
     @property
     def name(self) -> str: ...
@@ -493,7 +500,7 @@ def validate(
     written = {p.uid: p.directory for p in base.playlists} if base else {}
     errors: dict[Field, str] = {}
     seen_names: dict[str, str] = {}
-    owners: dict[str, str] = {}  # monitor (id, or selector if not listed) -> playlist
+    owners: dict[MonitorId, str] = {}  # monitor -> playlist
     for playlist in settings.playlists:
         uid = playlist.uid
         if (problem := _name_problem(playlist, seen_names)) is not None:
@@ -510,11 +517,10 @@ def validate(
             errors[(uid, INTERVAL)] = problem
         if (problem := _monitors_problem(playlist, listed, owners)) is not None:
             errors[(uid, MONITORS)] = problem
-    if not settings.playlists:
-        errors[(None, PLAYLISTS)] = "Add at least one playlist"
     if settings.pause_when_idle is not None:
         try:
-            parse_duration(settings.pause_when_idle)
+            if parse_duration(settings.pause_when_idle) <= 0:  # as config.py
+                errors[(None, IDLE)] = "Must be more than 0; untick it to never pause"
         except ConfigError as err:
             errors[(None, IDLE)] = str(err)
     for key in (FAVOURITES, TO_REMOVE):
@@ -561,16 +567,15 @@ def interval_problem(interval: str) -> str | None:
 def _monitors_problem(
     playlist: PlaylistSettings,
     listed: Sequence[NamedMonitor],
-    owners: dict[str, str],
+    owners: dict[MonitorId, str],
 ) -> str | None:
     if not playlist.monitors:
         return "No monitor: choose one, or delete the playlist"
-    for selector in playlist.monitors:
-        monitor = resolve(selector, listed)
-        key = monitor.id if monitor is not None else selector.strip().lower()
-        first = owners.setdefault(key, playlist.name)
+    for monitor_id in playlist.monitors:
+        first = owners.setdefault(monitor_id, playlist.name)
         if first != playlist.name:
-            label = monitor.name if monitor is not None else selector
+            monitor = find_listed(monitor_id, listed)
+            label = monitor.name if monitor is not None else str(monitor_id)
             return f"{label} is also in {first}; a monitor follows one playlist"
     return None
 
@@ -583,82 +588,50 @@ def _resolve(text: str, config_dir: Path) -> Path:
 # -- monitors ------------------------------------------------------------------------
 
 
-def resolve[M: NamedMonitor](selector: str, listed: Sequence[M]) -> M | None:
-    """
-    The listed monitor a selector names: its full id, else its exact name
-    (case-insensitive, as core.selection.find_exact); None if it names none,
-    or a name several monitors share.
-    """
-    wanted = selector.strip().lower()
-    for matches in (
-        [m for m in listed if m.id.lower() == wanted],
-        [m for m in listed if m.name.lower() == wanted],
-    ):
-        if len(matches) == 1:
-            return matches[0]
-        if matches:
-            return None
-    return None
+def find_listed[M: NamedMonitor](
+    monitor_id: MonitorId, listed: Sequence[M]
+) -> M | None:
+    """The listed monitor with this id; None if it isn't listed now."""
+    return next((m for m in listed if m.id == monitor_id), None)
 
 
-def choose_selector(monitor: NamedMonitor, listed: Sequence[NamedMonitor]) -> str:
-    """Its name if no other listed monitor has it, else its full id."""
-    same = [m for m in listed if m.name.lower() == monitor.name.lower()]
-    return monitor.name if len(same) <= 1 else monitor.id
-
-
-def owner(
-    settings: Settings, monitor: NamedMonitor, listed: Sequence[NamedMonitor]
-) -> PlaylistSettings | None:
-    """The playlist the monitor is in (the first, should several name it)."""
-    for playlist in settings.playlists:
-        for selector in playlist.monitors:
-            found = resolve(selector, listed)
-            if found is not None and found.id == monitor.id:
-                return playlist
-    return None
+def owner(settings: Settings, monitor_id: MonitorId) -> PlaylistSettings | None:
+    """The playlist the monitor is in (the first, should several have it)."""
+    return next((p for p in settings.playlists if monitor_id in p.monitors), None)
 
 
 def assign_monitor(
-    settings: Settings,
-    monitor: NamedMonitor,
-    listed: Sequence[NamedMonitor],
-    target: int | None,
+    settings: Settings, monitor_id: MonitorId, target: int | None
 ) -> Settings:
     """
-    Make playlist `target` (a uid; None: no playlist) drive `monitor`,
-    taking it out of any other playlist. A playlist that keeps the monitor
-    keeps its selector as written; a new one gets `choose_selector`.
+    Make playlist `target` (a uid; None: no playlist) drive the monitor,
+    taking it out of any other playlist.
     """
     playlists = []
     for playlist in settings.playlists:
-        others = tuple(
-            s
-            for s in playlist.monitors
-            if (found := resolve(s, listed)) is None or found.id != monitor.id
-        )
+        others = tuple(m for m in playlist.monitors if m != monitor_id)
         if playlist.uid == target:
             if len(others) == len(playlist.monitors):  # not in it yet
-                others += (choose_selector(monitor, listed),)
+                others += (monitor_id,)
             else:
-                others = playlist.monitors  # in it already: as written
+                others = playlist.monitors  # in it already: as it was
         playlists.append(replace(playlist, monitors=others))
     return replace(settings, playlists=tuple(playlists))
 
 
-def remove_selector(settings: Settings, uid: int, selector: str) -> Settings:
-    """Take a selector out of a playlist (e.g. a monitor not listed now)."""
+def remove_monitor(settings: Settings, uid: int, monitor_id: MonitorId) -> Settings:
+    """Take a monitor out of a playlist (e.g. one not listed now)."""
     playlist = settings.playlist(uid)
     if playlist is None:
         return settings
-    kept = tuple(s for s in playlist.monitors if s != selector)
+    kept = tuple(m for m in playlist.monitors if m != monitor_id)
     return settings.replace_playlist(replace(playlist, monitors=kept))
 
 
 def new_playlist(
-    settings: Settings, uid: int, monitors: tuple[str, ...] = ()
+    settings: Settings, uid: int, monitors: tuple[MonitorId, ...] = ()
 ) -> PlaylistSettings:
-    """A playlist to add: a free name, the usual defaults, no folder yet."""
+    """A playlist to add: a free name, a new id, the usual defaults, no folder yet."""
     taken = {p.name.lower() for p in settings.playlists}
     name, number = "playlist", 1
     while name in taken:
@@ -668,6 +641,7 @@ def new_playlist(
         uid=uid,
         origin=None,
         name=name,
+        id=new_playlist_id(),
         directory="",
         monitors=monitors,
         interval=NEW_INTERVAL,
@@ -680,27 +654,32 @@ def new_playlist(
 
 
 def read_file(path: Path) -> str:
-    """The file's text exactly (line endings kept); raises OSError, ConfigEditError."""
+    """
+    The file's text exactly (line endings kept); "" if there is no file (the
+    app runs that as a config without playlists).
+
+    Raises:
+        OSError, ConfigEditError: the file can't be read, or isn't UTF-8.
+    """
     try:
-        return path.read_bytes().decode("utf-8")
-    except UnicodeDecodeError as err:
-        raise ConfigEditError(f"{path} is not UTF-8 text: {err}") from err
+        return decode_text(path.read_bytes(), path)
+    except FileNotFoundError:
+        return ""
+    except ConfigError as err:
+        raise ConfigEditError(str(err)) from err
 
 
 def write_file(path: Path, text: str, expected: str) -> None:
     """
     Replace the file with `text` atomically (temp file + replace), only if
     it still holds `expected` (what was read): else ConfigConflictError,
-    and nothing is written.
+    and nothing is written. Creates the file, and its directory, if missing.
     """
-    try:
-        current: str | None = read_file(path)
-    except FileNotFoundError:
-        current = None
-    if current != expected:
+    if read_file(path) != expected:
         raise ConfigConflictError(
             f"{path.name} changed on disk since it was read here; nothing was " f"saved"
         )
+    path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + ".tmp")
     temporary.write_bytes(text.encode("utf-8"))
     os.replace(temporary, path)

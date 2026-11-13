@@ -38,6 +38,9 @@ include = ["wallpaper_py*"]
 
 [tool.mypy]
 strict = true
+# every method that overrides one says so (@override): a misspelt or
+# removed base method is then an error, not a method nobody calls.
+enable_error_code = ["explicit-override"]
 
 [[tool.mypy.overrides]]
 # comtypes creates COM methods at runtime, so its own (1.5+) type hints can't

@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Protocol
 
-from .model import ImageMode, Monitor
+from .model import ImageMode, Monitor, MonitorId
 
 
 class Backend(Protocol):
@@ -24,7 +24,7 @@ class Backend(Protocol):
         """All known monitors, including detached ones (rect is None)."""
 
     def set_wallpaper(
-        self, monitor_id: str, image: Path, mode: ImageMode | None = None
+        self, monitor_id: MonitorId, image: Path, mode: ImageMode | None = None
     ) -> None:
         """
         Set `image` on one monitor.

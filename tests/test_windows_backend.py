@@ -18,8 +18,8 @@ pytestmark = pytest.mark.windows
 
 def test_monitors_have_stable_ids_names_and_sizes() -> None:
     monitors = WindowsBackend().monitors()
-    ids = [m.id.lower() for m in monitors]
-    assert all(ids), "stale entries with empty ids must be filtered out"
+    ids = [m.id for m in monitors]
+    assert all(str(i) for i in ids), "stale entries with empty ids must be filtered out"
     assert len(ids) == len(set(ids))
     for monitor in monitors:
         assert monitor.name

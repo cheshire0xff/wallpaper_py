@@ -24,6 +24,7 @@ from collections import OrderedDict
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import override
 
 from PySide6.QtCore import QObject, QRunnable, QSize, Qt, QThreadPool, Signal, Slot
 from PySide6.QtGui import QImage, QImageIOHandler, QImageReader, QPixmap
@@ -119,6 +120,7 @@ class _Job(QRunnable):
         self._relay = relay
         self._wanted = wanted
 
+    @override
     def run(self) -> None:
         if self.path not in self._wanted.paths:
             return  # no longer wanted while it waited in the queue

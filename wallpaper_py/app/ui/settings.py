@@ -34,7 +34,7 @@ import weakref
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Literal
+from typing import Literal, override
 
 from PySide6.QtCore import QEvent, Qt, Signal, Slot
 from PySide6.QtGui import QAction, QActionGroup, QCursor, QDesktopServices, QPalette
@@ -67,17 +67,17 @@ from ...core.config_edit import (
     PlaylistSettings,
     Settings,
     assign_monitor,
-    choose_selector,
+    find_listed,
     new_playlist,
     owner,
     read_file,
     read_settings,
-    remove_selector,
+    remove_monitor,
     render,
-    resolve,
     validate,
     write_file,
 )
+from ...core.model import MonitorId
 from ...protocol import (
     DesktopMonitor,
     ErrorReply,
@@ -118,16 +118,16 @@ NEW: Literal["new"] = "new"
 class Assign:
     """Make `target` drive a monitor: a playlist (uid), None, or a NEW one."""
 
-    monitor: str  # id
+    monitor: MonitorId
     target: int | None | Literal["new"]
 
 
 @dataclass(frozen=True)
 class Unlist:
-    """Take a selector (a monitor not connected now) out of a playlist."""
+    """Take a monitor not connected now (its id) out of a playlist."""
 
     playlist: int
-    selector: str
+    monitor: MonitorId
 
 
 # -- the questions (modal; tests replace them) ---------------------------------------
@@ -440,6 +440,7 @@ class SettingsPage(QWidget):
             palette.setColor(group, QPalette.ColorRole.ButtonText, tones.on_accent)
         self.save_button.setPalette(palette)
 
+    @override
     def changeEvent(self, event: QEvent) -> None:  # pylint: disable=invalid-name
         super().changeEvent(event)
         if theme.palette_changed(event):
@@ -488,16 +489,8 @@ class SettingsPage(QWidget):
         if self.path is None:
             return
         try:
-            text = read_file(self.path)
+            text = read_file(self.path)  # "" if there is none yet
             base = read_settings(text)
-        except FileNotFoundError:
-            self._unload()
-            self._set_banner(
-                f"There is no config file at {self.path} yet. Create one (see "
-                f"docs/config.example.toml), then load it here.",
-                "file",
-                button=True,
-            )
         except (OSError, ConfigEditError) as err:
             self._unload()
             self._set_banner(
@@ -701,7 +694,7 @@ class SettingsPage(QWidget):
                 button=True,
             )
             return False
-        except OSError as err:
+        except (OSError, ConfigEditError) as err:  # e.g. saved with a BOM since
             self._set_banner(f"Can't write {self.path}: {err}", "file")
             return False
         self._use(text, read_settings(text))
@@ -799,16 +792,16 @@ class SettingsPage(QWidget):
         self.idle_edit.setEnabled(on)
         self._refresh()
 
-    def _monitor(self, monitor_id: str) -> DesktopMonitor | None:
-        return next((m for m in self._listed if m.id == monitor_id), None)
+    def _monitor(self, monitor_id: MonitorId) -> DesktopMonitor | None:
+        return find_listed(monitor_id, self._listed)
 
-    @Slot(str)
-    def _monitor_clicked(self, monitor_id: str) -> None:
+    @Slot(object)
+    def _monitor_clicked(self, monitor_id: MonitorId) -> None:
         menu = self.monitor_menu(monitor_id)
         if menu is not None:
             menu.popup(QCursor.pos())
 
-    def monitor_menu(self, monitor_id: str) -> QMenu | None:
+    def monitor_menu(self, monitor_id: MonitorId) -> QMenu | None:
         """A monitor's choices: each playlist, no playlist, a new one."""
         edited = self.edited()
         monitor = self._monitor(monitor_id)
@@ -816,7 +809,7 @@ class SettingsPage(QWidget):
             return None
         if self.menu is not None:
             self.menu.deleteLater()
-        current = owner(edited, monitor, self._listed)
+        current = owner(edited, monitor.id)
         menu = QMenu(self)
         title = menu.addAction(monitor.name)
         title.setEnabled(False)
@@ -851,7 +844,7 @@ class SettingsPage(QWidget):
         if edited is None or playlist is None:
             return
         for monitor in self._listed:
-            current = owner(edited, monitor, self._listed)
+            current = owner(edited, monitor.id)
             mine = current is not None and current.uid == uid
             text = monitor.name + (" (off)" if monitor.geometry is None else "")
             if current is not None and not mine:
@@ -860,12 +853,12 @@ class SettingsPage(QWidget):
             action.setCheckable(True)
             action.setChecked(mine)
             action.setData(Assign(monitor.id, None if mine else uid))
-        for selector in playlist.monitors:
-            if resolve(selector, self._listed) is None:
-                action = menu.addAction(f"{selector} (not connected)")
+        for monitor_id in playlist.monitors:
+            if find_listed(monitor_id, self._listed) is None:
+                action = menu.addAction(f"{monitor_id} (not connected)")
                 action.setCheckable(True)
                 action.setChecked(True)
-                action.setData(Unlist(uid, selector))
+                action.setData(Unlist(uid, monitor_id))
         if menu.isEmpty():
             menu.addAction("No monitors found").setEnabled(False)
 
@@ -878,22 +871,19 @@ class SettingsPage(QWidget):
         edited = self.edited()
         if edited is None or choice is None:
             return
-        listed = self._listed
         if isinstance(choice, Unlist):
-            self._set_monitors(
-                remove_selector(edited, choice.playlist, choice.selector)
-            )
+            self._set_monitors(remove_monitor(edited, choice.playlist, choice.monitor))
             return
-        monitor = self._monitor(choice.monitor)
-        if monitor is None:
+        if self._monitor(choice.monitor) is None:
             return
         if choice.target == NEW:
-            freed = assign_monitor(edited, monitor, listed, None)
+            freed = assign_monitor(edited, choice.monitor, None)
             self._set_monitors(freed)
-            selector = choose_selector(monitor, listed)
-            self._start_playlist(new_playlist(freed, self._take_uid(), (selector,)))
+            self._start_playlist(
+                new_playlist(freed, self._take_uid(), (choice.monitor,))
+            )
             return
-        self._set_monitors(assign_monitor(edited, monitor, listed, choice.target))
+        self._set_monitors(assign_monitor(edited, choice.monitor, choice.target))
 
     def _set_monitors(self, settings: Settings) -> None:
         for playlist in settings.playlists:

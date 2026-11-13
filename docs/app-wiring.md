@@ -118,6 +118,7 @@ Inside the service thread (direct):
 | `CommandServer.subscribed` | `ServiceWorker._welcome` -> `CommandServer.send_event` (the current `Overview`) |
 | a change (tick or command) | `ServiceWorker._announce`: `ServiceWorker.changed` and `CommandServer.broadcast` |
 | a new overview | `ServiceWorker._publish`: `ServiceWorker.overview_changed` and `CommandServer.broadcast` |
+| an error from the service (a command, a tick, the overview) | `ServiceWorker._failed`: a `ConfigError` stops the service (`ServiceWorker._fail`; commands answer with it until a reload), any other is logged |
 
 Inside the UI thread (direct):
 
@@ -129,6 +130,8 @@ Inside the UI thread (direct):
 | *Reload config* | `Tray.reload` -> `ServiceHost.reload`, the `reload` command (reply callback: `Tray._reloaded`: the error or the warnings, one notification) |
 | *Open wallpaper_py* / *Library* / *Settings…* (the page: home, library, settings) | `Tray.open_window` -> `WindowOpener.open` |
 | `WindowOpener.failed` | `Tray.notify` |
+| `QSystemTrayIcon.messageClicked` | `Tray._message_clicked` (after the "No playlists yet" notification at start: `Tray.open_window` on Settings; other notifications open nothing) |
+| *No playlists yet: add one…* (only without playlists) | `Tray.open_window` on Settings |
 
 `ServiceWorker.start` creates the `CommandServer` once, before opening the
 service. `reload` is a command like the others (from the socket, the
@@ -150,6 +153,7 @@ service, which also ends every subscription.
 | `SocketClient.overview_changed`, `SocketClient.failed` | `HomePage.show_overview`, `HomePage.show_error` |
 | `SocketClient.overview_changed`, `SocketClient.failed` | `SettingsPage.show_overview` (the first one names the file to edit; the monitors for the drawing), `SettingsPage.show_error` |
 | `Sidebar.page_chosen` (a page's item clicked) | `MainWindow.show_page` |
+| `HomePage.page_wanted` (*Add one in Settings*, shown without playlists) | `MainWindow.show_page` |
 | `SettingsPage.modified` (unsaved edits come or go) | `MainWindow._modified` (the "*" in the title) |
 | `PlaylistRow.hovered`, `MonitorsView.hovered` (the pointer: a playlist, or None) | `HomePage._hover` -> `MonitorsView.set_highlight`, `PlaylistRow.set_highlighted` |
 | `PlaylistRow.requested` (a button: playlist, command) | `HomePage._send` -> `Client.run` (reply: `HomePage.replied`) |

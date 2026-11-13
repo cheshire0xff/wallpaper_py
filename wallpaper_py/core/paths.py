@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import os
 from pathlib import Path
 
 from platformdirs import (
@@ -27,9 +29,18 @@ def config_file() -> Path:
     return config_dir() / "config.toml"
 
 
-def state_db() -> Path:
-    """SQLite state: history, shuffle decks, per-playlist and per-monitor state."""
-    return data_dir() / "state.sqlite3"
+def state_db(config: Path) -> Path:
+    """
+    SQLite state: history, shuffle decks, per-playlist and per-monitor
+    state. One per config file: playlist ids (core.config) are only unique
+    within one config, so two configs must not share their state. The
+    default config's is state.sqlite3; another's is named after its path.
+    """
+    resolved = os.path.normcase(config.resolve())
+    if resolved == os.path.normcase(config_file().resolve()):
+        return data_dir() / "state.sqlite3"
+    digest = hashlib.sha256(resolved.encode("utf-8")).hexdigest()[:12]
+    return data_dir() / f"state-{digest}.sqlite3"
 
 
 def instance_lock() -> Path:

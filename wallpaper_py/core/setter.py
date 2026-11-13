@@ -7,10 +7,10 @@ from pathlib import Path
 
 from .backend import Backend
 from .imaging import RENDER_SUFFIX, render_file
-from .model import ImageMode, Monitor, MonitorNotAttachedError
+from .model import ImageMode, Monitor, MonitorId, MonitorNotAttachedError
 
 
-def find_attached(backend: Backend, monitor_id: str) -> Monitor:
+def find_attached(backend: Backend, monitor_id: MonitorId) -> Monitor:
     """
     Re-query the backend and return the monitor if it is attached *now*.
 
@@ -18,11 +18,11 @@ def find_attached(backend: Backend, monitor_id: str) -> Monitor:
     any time (e.g. switched off), and an old snapshot must never be trusted.
     """
     for monitor in backend.monitors():
-        if monitor.id.lower() == monitor_id.lower():
+        if monitor.id == monitor_id:
             if not monitor.attached:
                 raise MonitorNotAttachedError(f"{monitor.name} is not attached")
             return monitor
-    raise MonitorNotAttachedError(f"No monitor with id {monitor_id!r}")
+    raise MonitorNotAttachedError(f"No monitor with id {str(monitor_id)!r}")
 
 
 def rendered_path(render_dir: Path, monitor: Monitor) -> Path:
@@ -32,7 +32,7 @@ def rendered_path(render_dir: Path, monitor: Monitor) -> Path:
     Windows may not re-read a wallpaper whose path did not change, so the
     new render goes to whichever slot is not currently shown.
     """
-    key = hashlib.sha1(monitor.id.lower().encode()).hexdigest()[:12]
+    key = hashlib.sha1(monitor.id.key.encode()).hexdigest()[:12]
     slots = [render_dir / f"{key}-{slot}{RENDER_SUFFIX}" for slot in (0, 1)]
     current = monitor.wallpaper
     if current is not None and Path(current) == slots[0]:
@@ -42,7 +42,7 @@ def rendered_path(render_dir: Path, monitor: Monitor) -> Path:
 
 def apply_wallpaper(
     backend: Backend,
-    monitor_id: str,
+    monitor_id: MonitorId,
     image: Path,
     mode: ImageMode | None,
     render_dir: Path,

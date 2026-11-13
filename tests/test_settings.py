@@ -7,7 +7,9 @@ one playlist open at a time, the Changes row, and the About tab.
 
 from __future__ import annotations
 
+import codecs
 import difflib
+import re
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
@@ -31,7 +33,6 @@ from wallpaper_py.app.ui.settings_form import (
 from wallpaper_py.core import paths
 from wallpaper_py.core.config_edit import DIRECTORY, IDLE, INTERVAL, MONITORS, NAME
 from wallpaper_py.protocol import (
-    DesktopMonitor,
     ErrorReply,
     Geometry,
     Overview,
@@ -45,20 +46,20 @@ from wallpaper_py.protocol import (
 from .fake_client import FakeClient
 from .fakes import FakeBackend, make_monitor, write_config
 from .hosts import make_host
-from .test_config_edit import COMMENTED
+from .test_config_edit import AW as EXAMPLE_AW
+from .test_config_edit import COMMENTED, KONACHAN_ID, ZERO, ZERO_LINE
+from .test_config_edit import PLX as EXAMPLE_PLX
 
-AW = DesktopMonitor(
-    id=r"\\?\DISPLAY#DELA246#1",
-    name="AW3225QF",
-    geometry=Geometry(x=0, y=0, width=3840, height=2160),
+# The example's monitors (ZeroMOD switched off).
+AW = EXAMPLE_AW.model_copy(
+    update={"geometry": Geometry(x=0, y=0, width=3840, height=2160)}
 )
-PLX = DesktopMonitor(
-    id=r"\\?\DISPLAY#PLX#1",
-    name="PLX2783H",
-    geometry=Geometry(x=-1920, y=0, width=1920, height=1080),
+PLX = EXAMPLE_PLX.model_copy(
+    update={"geometry": Geometry(x=-1920, y=0, width=1920, height=1080)}
 )
-ZERO = DesktopMonitor(id=r"\\?\DISPLAY#AUS27B1#1", name="ZeroMOD", geometry=None)
 LISTED = (AW, PLX, ZERO)
+FANTASY_ID = "a3c9f4e2b8d14c6e8f0a2b5d7c9e1f3a"
+NEW_TABLE = re.compile(r'\[playlists\.(\w+)\]\nid = "([0-9a-f]{32})"\n')
 
 
 class FakeDialogs:
@@ -182,34 +183,58 @@ def test_waits_for_the_app_to_say_which_file(
     assert window.banner.isHidden()
 
 
-def test_a_missing_or_unreadable_file_is_explained(
+def test_no_file_yet_and_an_unreadable_one(
     qtbot: QtBot, dialogs: FakeDialogs, tmp_path: Path
 ) -> None:
     client = FakeClient()
-    missing = tmp_path / "none.toml"
-    client.publish(Overview(config=missing, error=f"No config file at {missing}"))
+    path = tmp_path / "new" / "config.toml"
+    client.publish(Overview(monitors=LISTED, config=path))
     window = SettingsPage(client, dialogs.dialogs(), version="1")
     qtbot.addWidget(window)
-    assert "There is no config file at" in window.banner.text()
-    assert not window.banner_button.isHidden() and not window.editors
-    assert not window.save_button.isEnabled()
+    # No file yet: no playlists, ready for the first (Save creates the file).
+    assert window.banner.isHidden() and not window.editors
+    assert window.add_button.isEnabled() and not window.save_button.isEnabled()
 
-    missing.write_text("[playlists.a\n", encoding="utf-8")  # not TOML
-    window.banner_button.click()
+    path.parent.mkdir()
+    path.write_text("[playlists.a\n", encoding="utf-8")  # not TOML
+    window.load_file()
     assert (
         "Can't edit" in window.banner.text()
         and "Not valid TOML" in window.banner.text()
     )
+    assert not window.banner_button.isHidden() and not window.editors
 
-    missing.write_text(
-        "[playlists.a]\ndirectory = '.'\nmonitors = ['ZeroMOD']\ninterval = '5s'\n",
+    path.write_text(
+        "[playlists.a]\nid = 'a'\ndirectory = '.'\nmonitors = ['x']\n"
+        "interval = '5s'\n",
         encoding="utf-8",
     )
+    client.publish(Overview(monitors=LISTED, config=path, error="It is broken"))
     window.banner_button.click()  # valid TOML the core refuses: fix it here
     assert window.editors[0].problems[INTERVAL].message == "At least 10s"
     # Loaded; what the app said last shows again (until a save reloads it).
-    assert window.banner.text().startswith("The app can't use the config: No config")
+    assert window.banner.text() == "The app can't use the config: It is broken"
     assert window.banner_button.isHidden()
+
+
+def test_the_first_save_creates_the_file(
+    qtbot: QtBot, dialogs: FakeDialogs, tmp_path: Path
+) -> None:
+    client = FakeClient()
+    path = tmp_path / "new" / "config.toml"
+    client.publish(Overview(monitors=LISTED, config=path))
+    window = SettingsPage(client, dialogs.dialogs(), version="1")
+    qtbot.addWidget(window)
+    menu = window.monitor_menu(AW.id)
+    assert menu is not None
+    find(menu, "New playlist…").trigger()
+    dialogs.folder = str(tmp_path)
+    editor(window, "playlist").browse_button.click()
+    assert window.save_button.isEnabled()
+    window.save_button.click()
+    text = path.read_text(encoding="utf-8")
+    assert NEW_TABLE.match(text) and f"monitors = ['{AW.id}']\n" in text
+    assert len(reloads(client)) == 1
 
 
 # -- saving --------------------------------------------------------------------------
@@ -329,6 +354,18 @@ def test_a_hand_edit_meanwhile_is_not_overwritten(
     window.save_button.click()
     saved = config.read_text(encoding="utf-8")
     assert '"1h"' in saved and saved.endswith("# added by hand\n")
+
+
+def test_a_file_saved_meanwhile_with_a_bom_is_explained(
+    window: SettingsPage, config: Path
+) -> None:
+    editor(window, "konachan").interval_edit.setText("1h")
+    with_bom = codecs.BOM_UTF8 + config.read_bytes()  # Notepad's "UTF-8 with BOM"
+    config.write_bytes(with_bom)
+    assert window.save() is False
+    assert config.read_bytes() == with_bom
+    assert "byte order mark" in window.banner.text()
+    assert window.dirty()
 
 
 @pytest.mark.parametrize("answer", ["cancel", "discard", "save"])
@@ -523,10 +560,10 @@ def test_a_monitor_moves_to_another_playlist(
     assert editor(window, "fantasy").monitors_label.text() == "ZeroMOD (off) + PLX2783H"
     window.save_button.click()
     assert changes(before, config.read_text(encoding="utf-8")) == [
-        '- monitors = ["AW3225QF", "PLX2783H"]',
-        '+ monitors = ["AW3225QF"]',
-        '- monitors = ["ZeroMOD"]              # the strip',
-        '+ monitors = ["ZeroMOD", "PLX2783H"]  # the strip',
+        f"- monitors = ['{AW.id}', '{PLX.id}']",
+        f"+ monitors = ['{AW.id}']",
+        f"- {ZERO_LINE}  # the strip",
+        f"+ monitors = ['{ZERO.id}', '{PLX.id}'] # the strip",
     ]
 
 
@@ -557,10 +594,12 @@ def test_no_playlist_and_new_playlist(
     window.save_button.click()
     text = config.read_text(encoding="utf-8")
     assert "[playlists.fantasy]" not in text
-    assert text.endswith(
-        "[playlists.strip]\n"
+    found = NEW_TABLE.search(text, text.index("[playlists.strip]"))
+    assert found is not None
+    assert found[2] not in (KONACHAN_ID, FANTASY_ID)  # a new id: a fresh start
+    assert text[found.end() :] == (
         f"directory = '{config.parent / 'fantasy'}'\n"
-        'monitors = ["ZeroMOD"]\n'
+        f"monitors = ['{ZERO.id}']\n"
         'order = "shuffle"\n'
         'interval = "30m"\n'
         'mode = "fill"\n'
@@ -572,8 +611,9 @@ def test_a_monitor_not_connected_stays_until_removed(
 ) -> None:
     client.publish(Overview(monitors=(AW, PLX), config=window.path))  # no ZeroMOD
     fantasy = editor(window, "fantasy")
-    assert fantasy.monitors_label.text() == "ZeroMOD (not connected)"
-    assert "not connected now: ZeroMOD (fantasy)" in window.unlisted.text()
+    gone = f"{ZERO.id} (not connected)"  # its name is unknown: its id
+    assert fantasy.monitors_label.text() == gone
+    assert f"not connected now: {ZERO.id} (fantasy)" in window.unlisted.text()
     assert not window.dirty()
 
     window.fill_monitors_menu(fantasy.monitors_menu, fantasy.uid)
@@ -581,13 +621,13 @@ def test_a_monitor_not_connected_stays_until_removed(
     assert items == [
         ("AW3225QF — now in konachan", False),
         ("PLX2783H — now in konachan", False),
-        ("ZeroMOD (not connected)", True),
+        (gone, True),
     ]
     find(fantasy.monitors_menu, "AW3225QF — now in konachan").trigger()
-    assert fantasy.monitors_label.text() == "ZeroMOD (not connected) + AW3225QF"
+    assert fantasy.monitors_label.text() == f"{gone} + AW3225QF"
     assert editor(window, "konachan").monitors_label.text() == "PLX2783H"
     window.fill_monitors_menu(fantasy.monitors_menu, fantasy.uid)
-    find(fantasy.monitors_menu, "ZeroMOD (not connected)").trigger()
+    find(fantasy.monitors_menu, gone).trigger()
     assert fantasy.monitors_label.text() == "AW3225QF"
     assert window.unlisted.isHidden()
 
@@ -640,7 +680,7 @@ def test_about_lists_the_data_locations(
     assert about.version.text() == "1.0 (abc1234)"
     assert [(l.label, l.path) for l in about.locations] == [
         ("Config file", config),
-        ("State database", paths.state_db()),
+        ("State database", paths.state_db(config)),
         ("Favourites", paths.data_dir() / "favourites.txt"),
         ("To remove", paths.data_dir() / "to-remove.txt"),
         ("App log", paths.log_file()),
@@ -650,7 +690,7 @@ def test_about_lists_the_data_locations(
     ]
     buttons = {b.accessibleName(): b for b in about.findChildren(theme.TextButton)}
     buttons["Copy the path of: State database"].click()
-    assert QGuiApplication.clipboard().text() == str(paths.state_db())
+    assert QGuiApplication.clipboard().text() == str(paths.state_db(config))
     buttons["Open the folder of: Config file"].click()
     # The data folders don't exist in the test: the nearest one that does.
     buttons["Open the folder of: Thumbnail cache"].click()
@@ -705,3 +745,24 @@ def test_edits_and_reloads_the_running_apps_config(
     finally:
         client.close()
         assert host.shutdown(5_000)
+
+
+def test_a_rename_keeps_the_id_and_a_new_playlist_gets_a_new_one(
+    window: SettingsPage, config: Path
+) -> None:
+    editor(window, "konachan").name_edit.setText("anime")
+    window.save_button.click()
+    text = config.read_text(encoding="utf-8")
+    assert f'[playlists.anime]\nid = "{KONACHAN_ID}"\n' in text
+
+    # Never the id of a deleted one: that one's state is not taken over.
+    editor(window, "fantasy").delete_button.click()
+    window.add_button.click()
+    new = editor(window, "playlist")
+    new.directory_edit.setText(str(config.parent / "fantasy"))
+    window.fill_monitors_menu(new.monitors_menu, new.uid)
+    find(new.monitors_menu, "PLX2783H — now in anime").trigger()
+    window.save_button.click()
+    text = config.read_text(encoding="utf-8")
+    found = NEW_TABLE.search(text, text.index("[playlists.playlist]"))
+    assert found is not None and found[2] not in (KONACHAN_ID, FANTASY_ID)

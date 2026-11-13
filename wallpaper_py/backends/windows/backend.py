@@ -13,6 +13,7 @@ from comtypes import COMError
 from wallpaper_py.core.model import (
     ImageMode,
     Monitor,
+    MonitorId,
     MonitorNotAttachedError,
     UnsupportedModeError,
 )
@@ -41,7 +42,7 @@ class WindowsBackend:
         self._dw = IDesktopWallpaper.co_create_instance()
         # EDID names are only reported for attached monitors; remember them
         # so a detached monitor keeps its name.
-        self._known_names: dict[str, str] = {}
+        self._known_names: dict[MonitorId, str] = {}
 
     @property
     def per_monitor_modes(self) -> bool:
@@ -50,29 +51,30 @@ class WindowsBackend:
     def monitors(self) -> list[Monitor]:
         self._known_names.update(monitor_names())
         result: list[Monitor] = []
-        seen: set[str] = set()
+        seen: set[MonitorId] = set()
         for index in range(self._dw.get_monitor_device_path_count()):
             try:
-                monitor_id = self._dw.get_monitor_device_path_at(index)
+                device_path = self._dw.get_monitor_device_path_at(index)
             except COMError:
                 continue
+            monitor_id = MonitorId(device_path)
             # Stale entries with an empty id are always listed; skip them.
-            if not monitor_id or monitor_id.lower() in seen:
+            if not device_path or monitor_id in seen:
                 continue
-            seen.add(monitor_id.lower())
+            seen.add(monitor_id)
             try:
-                rect = self._dw.get_monitor_rect(monitor_id)
+                rect = self._dw.get_monitor_rect(device_path)
             except COMError:
                 rect = None  # known but detached
             try:
-                wallpaper = self._dw.get_wallpaper(monitor_id)
+                wallpaper = self._dw.get_wallpaper(device_path)
             except COMError:
                 wallpaper = ""
             result.append(
                 Monitor(
                     id=monitor_id,
-                    name=self._known_names.get(monitor_id.lower())
-                    or fallback_name(monitor_id),
+                    name=self._known_names.get(monitor_id)
+                    or fallback_name(device_path),
                     rect=rect,
                     wallpaper=Path(wallpaper) if wallpaper else None,
                 )
@@ -80,7 +82,7 @@ class WindowsBackend:
         return result
 
     def set_wallpaper(
-        self, monitor_id: str, image: Path, mode: ImageMode | None = None
+        self, monitor_id: MonitorId, image: Path, mode: ImageMode | None = None
     ) -> None:
         if mode is not None:
             raise UnsupportedModeError(
@@ -88,10 +90,10 @@ class WindowsBackend:
                 "use set_global_mode or a pre-rendered image"
             )
         try:
-            self._dw.get_monitor_rect(monitor_id)
+            self._dw.get_monitor_rect(str(monitor_id))
         except COMError as err:
             raise MonitorNotAttachedError(f"{monitor_id} is not attached") from err
-        self._dw.set_wallpaper(monitor_id, str(image.resolve()))
+        self._dw.set_wallpaper(str(monitor_id), str(image.resolve()))
 
     def set_global_mode(self, mode: ImageMode) -> None:
         self._dw.set_position(Position[mode.name])

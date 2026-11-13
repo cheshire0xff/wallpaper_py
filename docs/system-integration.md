@@ -9,7 +9,7 @@ remove all of it. Nothing here needs admin rights: everything is per user.
 |---|---|---|
 | Start at login | a value in the registry's per-user Run key | a `.desktop` file in `~/.config/autostart` |
 | Your config | `%LOCALAPPDATA%\wallpaper_py\config.toml` | `~/.config/wallpaper_py/config.toml` |
-| State (history, shuffle order) | `%LOCALAPPDATA%\wallpaper_py\state.sqlite3` | `~/.local/share/wallpaper_py/state.sqlite3` |
+| State (history, shuffle order) | `%LOCALAPPDATA%\wallpaper_py\state.sqlite3` (another config file: `state-<hash of its path>.sqlite3`) | `~/.local/share/wallpaper_py/state.sqlite3` (likewise) |
 | Favourites, to-remove lists | `favourites.txt`, `to-remove.txt` next to the state (or where the config says) | same |
 | Logs | `%LOCALAPPDATA%\wallpaper_py\Logs\` | `~/.local/state/wallpaper_py/log/` |
 | Rendered wallpapers (cache) | `%LOCALAPPDATA%\wallpaper_py\Cache\rendered\` | `~/.cache/wallpaper_py/rendered/` |
