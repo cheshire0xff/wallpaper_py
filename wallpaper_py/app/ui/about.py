@@ -68,7 +68,9 @@ def _git_commit(root: Path) -> str | None:
     """`git describe` of the checkout the code runs from (-dirty if edited)."""
     if not (root / ".git").exists():
         return None
-    flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+    flags = 0
+    if sys.platform == "win32":  # an if statement: mypy narrows only these
+        flags = subprocess.CREATE_NO_WINDOW
     try:
         result = subprocess.run(
             ["git", "-C", str(root), "describe", "--always", "--dirty", "--abbrev=7"],
