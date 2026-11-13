@@ -586,8 +586,8 @@ One window, implemented (decisions made while building it):
 - **Closing** with unsaved settings: `MainWindow.closeEvent` shows the
   Settings page, then `SettingsPage.confirm_close` asks Save / Discard /
   Cancel (unchanged logic); the window title carries "*" while modified.
-- Not done: a left click on the tray icon still opens the menu (it could
-  open the window now); the Library page is a placeholder (Phase 5).
+- A left click on the tray icon opens the Home window; the Library page is a
+  placeholder (Phase 5).
 
 ## Phase 5: library window
 

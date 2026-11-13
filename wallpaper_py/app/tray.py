@@ -46,7 +46,7 @@ from pathlib import Path
 from typing import Protocol
 
 from PySide6.QtCore import QObject, QTimer, QUrl, Slot
-from PySide6.QtGui import QAction, QCursor, QDesktopServices, QIcon
+from PySide6.QtGui import QAction, QDesktopServices, QIcon
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
 from ..core.autostart import Autostart
@@ -379,9 +379,8 @@ class Tray(QObject):
 
     @Slot(QSystemTrayIcon.ActivationReason)
     def _activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
-        # Left click opens the menu too (it has *Open wallpaper_py*).
         if reason is QSystemTrayIcon.ActivationReason.Trigger:
-            self.menu.popup(QCursor.pos())
+            self._open_window("home")
 
     def _replied(self, reply: Reply) -> None:
         if isinstance(reply, ErrorReply):

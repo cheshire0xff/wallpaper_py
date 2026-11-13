@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QMenu
+from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
 from wallpaper_py.app.icon import IconState, app_icon
 from wallpaper_py.app.tray import (
@@ -300,6 +300,22 @@ def test_tray_follows_the_overview(tmp_path: Path) -> None:
     assert pages == ["home", "library", "settings"]
     find(tray.menu, "Quit").trigger()
     assert quits == [True]
+
+
+def test_left_click_opens_home_window(tmp_path: Path) -> None:
+    host = ServiceHost(
+        ServiceSettings(tmp_path, lambda: FakeBackend([]), FakePresence, nullcontext)
+    )
+    pages: list[PageName] = []
+    tray = Tray(
+        host, FakeAutostart(), [], tmp_path, lambda: None, open_window=pages.append
+    )
+
+    tray._activated(  # pylint: disable=protected-access
+        QSystemTrayIcon.ActivationReason.Trigger
+    )
+
+    assert pages == ["home"]
 
 
 def test_tray_notifies_failed_commands(
