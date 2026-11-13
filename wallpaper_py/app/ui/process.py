@@ -19,7 +19,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import QCoreApplication, Qt
+from PySide6.QtCore import QCoreApplication, QObject, Qt, Slot
 from PySide6.QtWidgets import QApplication
 
 from ...core import paths
@@ -69,6 +69,28 @@ def run_ui(options: UiOptions) -> int:
         lock.release()
 
 
+class _Closer(QObject):
+    """
+    Quits once the window has closed and no command waits for its reply:
+    the `reload` of a Save chosen on closing is still unsent then.
+    """
+
+    def __init__(self, app: QCoreApplication, client: SocketClient, server: UiServer):
+        super().__init__(client)
+        self._app = app
+        self._client = client
+        self._server = server
+
+    @Slot()
+    def window_closed(self) -> None:
+        self._server.close()  # the window is gone: nothing left to show
+        if self._client.busy():
+            log.info("Window closed; quitting once the app has answered")
+            self._client.idle.connect(self._app.quit)
+        else:
+            self._app.quit()
+
+
 def _wait_for_running_ui(name: str, request: ShowRequest) -> bool:
     deadline = time.monotonic() + SHOW_TIMEOUT_S
     while time.monotonic() < deadline:
@@ -92,7 +114,8 @@ def _run_locked(app: QApplication, options: UiOptions, name: str) -> int:
     window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
     server.show_requested.connect(window.open_page)
     client.overview_changed.connect(server.follow)
-    window.closed.connect(app.quit)
+    closer = _Closer(app, client, server)
+    window.closed.connect(closer.window_closed)
     client.ended.connect(app.quit)  # the app quit: so does its window
 
     log.info("UI started (config: %s)", config_path or "the app's")

@@ -167,7 +167,7 @@ service, which also ends every subscription.
 | `QMenu.triggered` (either menu; the item's data says what) | `SettingsPage._menu_triggered` -> `SettingsPage.choose` |
 | `PlaylistEditor.delete_requested`, `PlaylistEditor.browse_requested` | `SettingsPage._delete_playlist`, `SettingsPage._browse_folder` |
 | *Save* / *Revert* / *Load the file again* | `SettingsPage.save` (via `SettingsPage._save_clicked`), `SettingsPage.revert`, `SettingsPage.load_file` |
-| `MainWindow.closed` (the window closed) | `QApplication.quit` |
+| `MainWindow.closed` (the window closed) | `process._Closer.window_closed`: `UiServer` closes; `QApplication.quit` now, or on `SocketClient.idle` if a command still waits for its reply (`SocketClient.busy`) |
 | `SocketClient.ended` (the app quit) | `QApplication.quit` |
 
 The pages live as long as the window: switching pages keeps everything,
@@ -385,8 +385,10 @@ scope, and quits its thread. In the UI process the closed subscription
 emits `SocketClient.ended`, which quits it too.
 
 Shutdown of the UI process: its window closes -> `MainWindow.closed`
--> `QApplication.quit` -> `UiServer` closes first (no new show requests),
-then the subscription; the lock is released and the process exits, which
+-> `UiServer` closes (no new show requests) -> `QApplication.quit`, at
+once or, if a command is still in flight (the `reload` of a Save chosen
+on closing: it is written on later turns of the event loop), on
+`SocketClient.idle` once its reply came -> the subscription closes; the lock is released and the process exits, which
 gives its memory back. The app runs on.
 
 Requests and ticks run on the same thread, one at a time, in arrival order:

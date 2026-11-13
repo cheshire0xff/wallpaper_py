@@ -697,11 +697,22 @@ class SettingsPage(QWidget):
         except (OSError, ConfigEditError) as err:  # e.g. saved with a BOM since
             self._set_banner(f"Can't write {self.path}: {err}", "file")
             return False
-        self._use(text, read_settings(text))
+        open_name = self._open_name()
+        base = read_settings(text)
+        # Uids are positions in the file, so they shift when a playlist
+        # above is deleted: find the open one again by its (unique) name.
+        self.open_uid = next(
+            (p.uid for p in base.playlists if p.name == open_name), None
+        )
+        self._use(text, base)
         self._set_banner("Saved; asking the app to reload it…", "saved")
         self._client.run(ReloadRequest(), _ReplyTo(self))
         self._refresh()
         return True
+
+    def _open_name(self) -> str | None:
+        editor = self.editors.get(self.open_uid) if self.open_uid is not None else None
+        return editor.settings().name if editor is not None else None
 
     @Slot()
     def revert(self) -> None:

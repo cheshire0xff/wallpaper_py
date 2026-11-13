@@ -216,8 +216,10 @@ config.toml first (copy it next to itself).
    Home and Library and back: the change is still there (the title shows
    "*"). Close the window from Home: it switches to Settings and asks Save
    / Discard / Cancel: *Cancel* keeps the window open on Settings with the
-   change; *Discard* closes without writing; *Save* writes, then closes.
-   With nothing changed, it closes without asking.
+   change; *Discard* closes without writing; *Save* writes, then closes,
+   and the app reloads it (the tray shows the new interval; no
+   `wallpaper reload` needed). With nothing changed, it closes without
+   asking.
 5. Validation shows next to the field, not as a dialog, and *Save* says why
    it is off (hover it, or the line beside it): an interval like `30`, a
    folder that doesn't exist, a name with a space, a playlist with no

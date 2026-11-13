@@ -442,6 +442,26 @@ def test_new_playlist_opens_and_deleting_the_open_one_opens_the_first(
     assert editor(window, "konachan").expanded()
 
 
+def test_the_open_playlist_stays_open_when_one_above_is_deleted(
+    window: SettingsPage, config: Path
+) -> None:
+    window.add_button.click()  # konachan, fantasy, playlist (open)
+    new = editor(window, "playlist")
+    new.directory_edit.setText(str(config.parent / "fantasy"))
+    window.fill_monitors_menu(new.monitors_menu, new.uid)
+    find(new.monitors_menu, "PLX2783H — now in konachan").trigger()
+    window.save_button.click()
+    assert not window.dirty(), window.blocker()
+    assert editor(window, "playlist").expanded()
+
+    # Saved without konachan, the others move up in the file.
+    editor(window, "konachan").delete_button.click()
+    window.save_button.click()
+    assert not window.dirty(), window.blocker()
+    assert editor(window, "playlist").expanded()
+    assert not editor(window, "fantasy").expanded()
+
+
 def test_changes_every_or_manually(window: SettingsPage, config: Path) -> None:
     konachan = editor(window, "konachan")
     row = konachan.changes_row

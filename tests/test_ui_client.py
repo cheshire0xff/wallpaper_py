@@ -67,8 +67,10 @@ def started(qtbot: QtBot, host: ServiceHost) -> None:
 
 def run(qtbot: QtBot, client: SocketClient, request: Request) -> Reply:
     replies: list[Reply] = []
-    client.run(request, replies.append)
-    qtbot.waitUntil(lambda: bool(replies))
+    with qtbot.waitSignal(client.idle):
+        client.run(request, replies.append)
+        assert client.busy() == (not replies)  # unsent: quitting would drop it
+    assert len(replies) == 1 and not client.busy()
     return replies[0]
 
 

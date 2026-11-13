@@ -17,12 +17,14 @@ from __future__ import annotations
 
 import logging
 import time
+import weakref
 from collections.abc import Callable
 from pathlib import Path
 from typing import override
 
 from PySide6.QtCore import QObject, QTimer, Signal, Slot
 from PySide6.QtNetwork import QLocalSocket
+from shiboken6 import Shiboken
 
 from ...core import paths
 from ...protocol import (
@@ -69,12 +71,14 @@ class SocketClient(Client):
     """
     `Client` over the app's socket. `start()` subscribes; if no app runs,
     it calls `start_app` once and retries for START_TIMEOUT_S. `ended`
-    fires when an established subscription closes (the app quit).
+    fires when an established subscription closes (the app quit). `idle`
+    fires when the last command in flight has its reply (see `busy`).
     """
 
     # pylint: disable=too-many-instance-attributes
 
     ended = Signal()
+    idle = Signal()
 
     def __init__(
         self,
@@ -95,6 +99,7 @@ class SocketClient(Client):
         self._buffer = bytearray()
         self._subscribed = False
         self._over = False  # failed, ended or closed: nothing more happens
+        self._in_flight = 0  # commands sent by `run` and not answered yet
 
     def start(self) -> None:
         self._connect()
@@ -103,22 +108,51 @@ class SocketClient(Client):
         self._over = True
         self._drop_socket()
 
+    def busy(self) -> bool:
+        """
+        A command still waits for its reply. Its request is only written on
+        later turns of the event loop, so quitting now would drop it.
+        """
+        return self._in_flight > 0
+
     @override
     def run(self, request: CommandRequest, on_reply: ReplyCallback) -> None:
+        # The callbacks live in the LineRequest, which Qt owns: they hold
+        # this client weakly, or it would never be freed (see AGENTS.md).
+        client = weakref.ref(self)
+
+        def replied(reply: Reply) -> None:
+            this = client()
+            if this is not None and Shiboken.isValid(this):
+                this.reply_done(reply, on_reply)
+            else:
+                on_reply(reply)
+
         def answered(line: bytes) -> None:
             try:
                 reply = ipc.decode_reply(line)
             except ipc.ProtocolError as err:
                 reply = ErrorReply.make("protocol", err)
-            on_reply(reply)
+            replied(reply)
 
         def failed(not_running: bool, message: str) -> None:
             if not_running:
                 message = "wallpaper_py is not running"
-            on_reply(ErrorReply.make("unreachable", message))
+            replied(ErrorReply.make("unreachable", message))
+
+        self._in_flight += 1
 
         envelope = Envelope(request=request, config=self._config_path)
         ipc.LineRequest(self._name, ipc.encode(envelope), answered, failed, parent=self)
+
+    def reply_done(self, reply: Reply, on_reply: ReplyCallback) -> None:
+        """A command's reply came: pass it on, then `idle` if it was the last."""
+        try:
+            on_reply(reply)
+        finally:
+            self._in_flight -= 1
+            if self._in_flight == 0:
+                self.idle.emit()
 
     # -- the subscription ------------------------------------------------------
 
