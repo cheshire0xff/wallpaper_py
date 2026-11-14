@@ -24,8 +24,11 @@ uv run python scripts/protocol_schema.py     # after changing protocol.py
 CI runs the checks on Windows and Ubuntu; keep both green. Tests marked
 `windows` read the real desktop; tests never change it, and the app is never
 started for real from a test (fakes in `tests/fakes.py`). What only a real
-desktop shows is in [docs/desktop-checks.md](docs/desktop-checks.md): add
-steps there for new desktop-facing behaviour, for the user to try.
+desktop shows is in [docs/desktop-checks.md](docs/desktop-checks.md), a
+short list the user runs before a release and on a new platform. Don't
+grow it: add a step only for something no test can see and no step there
+shows yet (else extend that step). For a new feature, end the session's
+report with a few steps to try once instead.
 
 ## Layering
 

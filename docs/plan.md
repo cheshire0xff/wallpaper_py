@@ -15,7 +15,7 @@ thin. See [architecture.md](architecture.md) for the layers.
 | 4b | Settings in the database, per-monitor looks, previews, backgrounds | done |
 | 4c | More backgrounds for Fit: dominant, blur | next |
 | 5 | Library window | low priority |
-| 6 | KDE backend | |
+| 6 | KDE backend | after 4c |
 | 7 | Polish | |
 
 Finished phases are described as they work now, not as they were planned:
@@ -24,7 +24,7 @@ monitor identity, looks), [app-wiring.md](app-wiring.md),
 [protocol.md](protocol.md), and [design/](design/README.md) for the look.
 What is still to try by hand: [desktop-checks.md](desktop-checks.md). The
 plans of the finished phases, with the notes made while building them, are
-in git: `git show 92837ce:docs/plan.md`.
+in git: `git show d771a26:docs/plan.md` (Phase 4b step 5's: `92837ce`).
 
 ## Decided against (until missed)
 
@@ -51,14 +51,22 @@ preview) without code of their own:
 
 - `dominant`: the image's most common colour (quantized), from the same
   tiny copy as `average` and `edges` (`imaging.TINY`), so the wallpaper
-  and its preview get the same colour.
+  and its preview get the same colour. Except, rarely, when two colours
+  are about as common: the two tiny copies differ by a few levels, so each
+  may pick another one. Accepted (decided 2026-11-14); the preview tests
+  use images with a clear winner.
+- `edges`, thinner: the outer 1/128 of the image on each side next to the
+  bars (21 px of a 2688 px wide image), not 1/16 as now, since the bars
+  should match what they touch. Still from a fixed tiny copy (128 px a
+  side, one column or row per edge), so the wallpaper and its preview
+  agree; architecture.md, "Image modes and looks", says 32x32 today.
 - `blur`: the bars filled with a blurred, enlarged copy of the image
   (Fill of the image, blurred, under the fitted image). The radius is in
   screen pixels, scaled to the output, so a preview is the wallpaper
   smaller (extend the preview tests in test_imaging.py to it); maybe
   darkened a little so the image stands out.
-- Desktop checks for them in [desktop-checks.md](desktop-checks.md)
-  (section 13).
+- No new desktop checks: step 3 there (the bars match the preview) covers
+  them; the session's report lists a few steps to try once.
 
 ## Phase 5: library window
 
