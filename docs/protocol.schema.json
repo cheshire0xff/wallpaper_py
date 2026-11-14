@@ -15,10 +15,12 @@
   ],
   "$defs": {
     "Background": {
-      "description": "A background worked out from the image (core.imaging): its average\ncolour, or the average of its edges next to the bars.",
+      "description": "A background worked out from the image (core.imaging): its average\ncolour, its most common colour, the colour of its edges next to the\nbars, or a blurred copy of the image itself.",
       "enum": [
         "average",
-        "edges"
+        "dominant",
+        "edges",
+        "blur"
       ],
       "title": "Background",
       "type": "string"

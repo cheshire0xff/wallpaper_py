@@ -74,12 +74,16 @@ BackgroundKind = Background | Literal["colour"]
 BACKGROUND_NAMES: dict[BackgroundKind, str] = {
     COLOUR: "Colour",
     Background.AVERAGE: "Average of the image",
+    Background.DOMINANT: "Main colour of the image",
     Background.EDGES: "Edges of the image",
+    Background.BLUR: "Blurred image",
 }
 BACKGROUND_HELP: dict[BackgroundKind, str] = {
     COLOUR: "Fills the bars beside the image",
     Background.AVERAGE: "The image's average colour fills the bars",
+    Background.DOMINANT: "The image's most common colour fills the bars",
     Background.EDGES: "The colour of the image's edges beside the bars",
+    Background.BLUR: "The image, blurred and darker, fills the bars",
 }
 
 

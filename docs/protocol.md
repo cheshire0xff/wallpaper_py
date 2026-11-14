@@ -112,8 +112,8 @@ one.
   one): `playlist` (an `id` from `playlists`; null: none; several monitors
   on one playlist show the same image) and `look` (`mode`: `fill`, `fit`
   or `stretch`; `background`, which fills Fit's bars: a colour as
-  `#rrggbb` in lower case, or `average` / `edges` of the image; default
-  `#000000`). A monitor without an entry has no playlist and the default
+  `#rrggbb` in lower case, or `average` / `dominant` / `edges` / `blur`
+  of the image; default `#000000`). A monitor without an entry has no playlist and the default
   look; leaving one out forgets it.
 - `pause_when_locked`, `pause_when_idle` (seconds without input; null:
   never), `favourites_file` and `to_remove_file` (absolute; null: in the

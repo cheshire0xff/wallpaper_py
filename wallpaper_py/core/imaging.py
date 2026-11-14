@@ -16,15 +16,23 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
-from PIL import Image, ImageColor, ImageOps, ImageStat
+from PIL import Image, ImageColor, ImageEnhance, ImageFilter, ImageOps, ImageStat
 
 from .model import Background, Colour, ImageLoadError, ImageMode, Look
 
-# Automatic backgrounds come from a copy of the image this small, never from
+# Automatic colours come from a copy of the image this small, never from
 # the output: from the full file or from a preview's small copy, it is about
-# the same, so a wallpaper and its preview get the same colour.
-TINY = 32  # px, both sides (the image's shape doesn't matter for averages)
-EDGE = 2  # the tiny copy's columns (or rows) on each side that are its edges
+# the same, so a wallpaper and its preview get the same colour. Squashed to a
+# square: each edge (one column or row) is then 1/128 of the image's side.
+TINY = 128  # px, both sides
+LEVELS = 8  # per channel, for `dominant`: 512 boxes of similar colours
+
+# `blur`: the bars are the image filled to the screen, blurred by this part of
+# the screen's longer side (a radius in screen pixels: a preview has the same
+# blur, smaller), and darkened so the sharp image stands out.
+BLUR = 0.005
+BLUR_BRIGHTNESS = 0.75
+BLUR_WORK = 8  # px: the radius at the size the blur is worked out at
 
 # Renders are saved as BMP: lossless like PNG, but with no compression to
 # compute (a 4K render saves in ~15 ms instead of ~150 ms). The cost is disk:
@@ -183,8 +191,7 @@ def render(
             max(1, round(inner[1] * output[1] / screen[1])),
         )
         sides = inner[0] < screen[0]  # bars left and right, else above and below
-        colour = background_colour(img, look.background, sides=sides)
-        canvas = Image.new("RGB", output, colour)
+        canvas = _bars(img, screen, output, look.background, sides=sides)
         offset = ((output[0] - size[0]) // 2, (output[1] - size[1]) // 2)
         canvas.paste(img.resize(size, lanczos), offset)
         return canvas
@@ -194,34 +201,75 @@ def render(
 RGB = tuple[int, int, int]
 
 
+def _bars(
+    img: Image.Image,
+    screen: tuple[int, int],
+    output: tuple[int, int],
+    background: Background | Colour,
+    *,
+    sides: bool,
+) -> Image.Image:
+    """Fit's canvas at `output`, before the image goes on it: its bars."""
+    if background is Background.BLUR:
+        radius = BLUR * max(screen) * output[0] / screen[0]  # in output pixels
+        # Blurred at a size where the radius is BLUR_WORK px, then enlarged:
+        # the same to the eye (at most a few levels off), 5x faster at 4K.
+        scale = min(1.0, BLUR_WORK / radius)
+        work = (max(1, round(output[0] * scale)), max(1, round(output[1] * scale)))
+        filled = img.resize(work, Image.Resampling.BOX, box=fill_box(img.size, screen))
+        blurred = filled.filter(ImageFilter.GaussianBlur(radius * work[0] / output[0]))
+        darker = ImageEnhance.Brightness(blurred).enhance(BLUR_BRIGHTNESS)
+        return darker.resize(output, Image.Resampling.BICUBIC)
+    return Image.new("RGB", output, background_colour(img, background, sides=sides))
+
+
 def background_colour(
     img: Image.Image, background: Background | Colour, *, sides: bool
 ) -> RGB:
     """
     The colour of Fit's bars: a fixed one, or worked out from a tiny copy
-    of `img` (`TINY`): its average, or the average of its edges next to
-    the bars (`sides`: the left and right ones, else the top and bottom).
+    of `img` (`TINY`): its average, its most common colour, or the average
+    of its edges next to the bars (`sides`: the left and right ones, else
+    the top and bottom). Not for `blur`, which is no one colour (`_bars`).
     """
     if not isinstance(background, Background):
         red, green, blue = ImageColor.getrgb(background)[:3]
         return red, green, blue
     tiny = img.resize((TINY, TINY), Image.Resampling.BOX)
     if background is Background.AVERAGE:
-        return _mean(ImageStat.Stat(tiny))
+        return _rgb(ImageStat.Stat(tiny).mean)
+    if background is Background.DOMINANT:
+        return _dominant(tiny)
     if background is Background.EDGES:
-        last = TINY - EDGE
+        last = TINY - 1
         if sides:
-            boxes = ((0, 0, EDGE, TINY), (last, 0, TINY, TINY))
+            boxes = ((0, 0, 1, TINY), (last, 0, TINY, TINY))
         else:
-            boxes = ((0, 0, TINY, EDGE), (0, last, TINY, TINY))
+            boxes = ((0, 0, TINY, 1), (0, last, TINY, TINY))
         # Two strips of one size: the mean of their means is theirs.
         first, second = (ImageStat.Stat(tiny.crop(box)).mean for box in boxes)
         return _rgb((a + b) / 2 for a, b in zip(first, second))
-    raise ValueError(f"Unsupported background: {background}")
+    raise ValueError(f"Not one colour: {background}")
 
 
-def _mean(stat: ImageStat.Stat) -> RGB:
-    return _rgb(stat.mean)
+def _dominant(tiny: Image.Image) -> RGB:
+    """
+    The most common colour: the pixels sorted into boxes of similar colours
+    (`LEVELS` per channel), the fullest box's average. When two boxes are
+    about as full, the file and a preview's small copy may pick different
+    ones (accepted: docs/architecture.md, "Image modes and looks").
+    """
+    step = 256 // LEVELS
+    boxes: dict[RGB, list[int]] = {}  # box -> [pixels, red, green, blue sums]
+    for count, pixel in tiny.getcolors(TINY * TINY) or []:
+        assert isinstance(pixel, tuple)  # RGB: three channels
+        red, green, blue = pixel
+        box = boxes.setdefault((red // step, green // step, blue // step), [0] * 4)
+        for i, value in enumerate((1, red, green, blue)):
+            box[i] += value * count
+    # The fullest; of equally full ones, the last by colour: no random pick.
+    count, *sums = max(boxes.items(), key=lambda item: (item[1][0], item[0]))[1]
+    return _rgb(total / count for total in sums)
 
 
 def _rgb(values: Iterable[float]) -> RGB:

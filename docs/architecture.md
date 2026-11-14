@@ -379,10 +379,19 @@ timing per playlist: how an image looks depends on a screen's shape,
 while mirrored monitors must change together.
 
 Fit's bars are filled with the look's `background`: a fixed colour
-(`#rrggbb`), the image's average colour, or the average of its edges
-next to the bars (left and right, or top and bottom, as the screen's
-shape puts them). Automatic colours come from a fixed tiny copy of the
-image (`imaging.TINY`, 32x32), never from the output, so the wallpaper
-(from the file) and its preview (from the small copy) get the same
-colour; the tests above cover every background. The background is kept
-in the other modes, unused, so going back to Fit brings it back.
+(`#rrggbb`); the image's average colour; its most common one (`dominant`:
+the pixels sorted into boxes of similar colour, the fullest box's
+average); the average of its edges next to the bars (the outer 1/128 on
+each side: left and right, or top and bottom, as the screen's shape puts
+them); or `blur`, the image as Fill would show it, blurred and darker,
+under the sharp one. Automatic colours come from a fixed tiny copy of
+the image (`imaging.TINY`, 128x128, one column or row per edge), never
+from the output, so the wallpaper (from the file) and its preview (from
+the small copy) get the same colour. Except, rarely, `dominant` when two
+colours are about as common: the copies differ by a few levels, and each
+may pick another (accepted). Blur's radius is a part of the screen's
+longer side, so a preview has the same blur, smaller; it is worked out
+at a size where the radius is a few pixels and enlarged (the same to the
+eye, 5x faster at 4K). The tests above cover every background. The
+background is kept in the other modes, unused, so going back to Fit
+brings it back.

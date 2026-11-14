@@ -110,11 +110,14 @@ class ImageMode(Enum):
 class Background(Enum):
     """
     A background worked out from the image (core.imaging): its average
-    colour, or the average of its edges next to the bars.
+    colour, its most common colour, the colour of its edges next to the
+    bars, or a blurred copy of the image itself.
     """
 
     AVERAGE = "average"
+    DOMINANT = "dominant"
     EDGES = "edges"
+    BLUR = "blur"
 
 
 # A fixed background colour, as `#rrggbb` (lower case, as QColor.name()).

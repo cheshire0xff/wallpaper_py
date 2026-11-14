@@ -18,7 +18,8 @@ again. The page never reads the database itself.
   monitor*), *Playlist* (None, each playlist, *New playlist…*; several
   monitors on one playlist mirror it), *Mode*, and for Fit *Background*
   (a colour, with a swatch that opens a colour dialog: the preview follows
-  the colour while it is being chosen; or the image's average or edges).
+  the colour while it is being chosen; or the image's average, most
+  common colour or edges; or the image itself, blurred).
   Then one editor per playlist (settings_form.PlaylistEditor): at most one
   is open, the others show a summary.
 - *General*: pausing, and where the favourites / to-remove lists are.

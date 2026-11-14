@@ -1,10 +1,11 @@
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 from PIL import Image, ImageChops, ImageStat
 
 from wallpaper_py.core.imaging import (
-    TINY,
+    BLUR_BRIGHTNESS,
     background_colour,
     fill_box,
     fit_size,
@@ -22,9 +23,10 @@ RED, GREEN, BLUE, BLACK = (255, 0, 0), (0, 255, 0), (0, 0, 255), (0, 0, 0)
 LOOKS = [
     *(Look(mode) for mode in ImageMode),
     Look(ImageMode.FIT, "#3366cc"),
-    Look(ImageMode.FIT, Background.AVERAGE),
-    Look(ImageMode.FIT, Background.EDGES),
+    *(Look(ImageMode.FIT, background) for background in Background),
 ]
+# The backgrounds that are one colour (all but blur).
+COLOURS = [Background.AVERAGE, Background.DOMINANT, Background.EDGES]
 
 
 def stripes(width: int = 300, height: int = 100) -> Image.Image:
@@ -33,6 +35,21 @@ def stripes(width: int = 300, height: int = 100) -> Image.Image:
     third = width // 3
     for i, color in enumerate((RED, GREEN, BLUE)):
         img.paste(color, (i * third, 0, (i + 1) * third, height))
+    return img
+
+
+def scene(width: int, height: int) -> Image.Image:
+    """
+    Stripes with a white square in the middle, red the widest: one most
+    common colour (two about as common may make `dominant` differ between
+    the file and its small copy, which is accepted).
+    """
+    img = stripes(width, height)
+    img.paste(RED, (0, 0, width * 2 // 5, height))
+    img.paste(
+        (255, 255, 255),
+        (width * 4 // 9, height * 3 // 8, width * 5 // 9, height * 5 // 8),
+    )
     return img
 
 
@@ -106,6 +123,50 @@ def test_the_edges_are_the_ones_next_to_the_bars(
     assert close_to(result.getpixel((0, 0)), expected, tol=2)
 
 
+def test_the_edges_are_only_what_the_bars_touch() -> None:
+    """The outer 1/128 of the image on each side, not what is further in."""
+    img = Image.new("RGB", (1280, 400), BLUE)
+    img.paste((240, 160, 0), (0, 0, 10, 400))  # 10 px: 1/128 of 1280
+    img.paste((200, 0, 0), (1270, 0, 1280, 400))
+    colour = background_colour(img, Background.EDGES, sides=True)
+    assert close_to(colour, (220, 80, 0), tol=2)
+
+
+def test_dominant_is_the_most_common_colour() -> None:
+    """Not the average: the colour most of the image is, as it is."""
+    img = Image.new("RGB", (400, 100), (200, 100, 50))  # 40%
+    img.paste(GREEN, (160, 0, 280, 100))  # 30%
+    img.paste(BLUE, (280, 0, 400, 100))  # 30%
+    colour = background_colour(img, Background.DOMINANT, sides=True)
+    assert close_to(colour, (200, 100, 50), tol=1)
+
+
+def test_dominant_takes_similar_colours_together() -> None:
+    """Many shades of one colour beat one other colour more common than each."""
+    img = Image.new("RGB", (400, 100), BLUE)  # 40%
+    for i, x in enumerate(range(160, 400, 40)):  # six shades of red, 10% each
+        img.paste((250 - i * 4, 0, 0), (x, 0, x + 40, 100))
+    colour = background_colour(img, Background.DOMINANT, sides=True)
+    assert close_to(colour, (240, 0, 0), tol=2)
+
+
+def test_blur_fills_the_bars_with_the_image_blurred() -> None:
+    """
+    The bars show the image as Fill would, blurred and darker, under the
+    image itself, sharp.
+    """
+    look = Look(ImageMode.FIT, Background.BLUR)
+    result = render(stripes(300, 100), (600, 100), (600, 100), look)
+    # The image in the middle (150..450), sharp to its edges.
+    assert close_to(result.getpixel((152, 50)), RED, tol=4)
+    assert close_to(result.getpixel((447, 50)), BLUE, tol=4)
+    # Filled to the screen, its stripes are 200 px each: beside the image,
+    # red on the left and blue on the right, darker.
+    dark = round(255 * BLUR_BRIGHTNESS)
+    assert close_to(result.getpixel((20, 50)), (dark, 0, 0), tol=4)
+    assert close_to(result.getpixel((580, 50)), (0, 0, dark), tol=4)
+
+
 def test_average_is_the_whole_images() -> None:
     img = Image.new("RGB", (400, 100), RED)
     img.paste(BLUE, (0, 0, 100, 100))  # a quarter blue
@@ -113,15 +174,33 @@ def test_average_is_the_whole_images() -> None:
     assert close_to(colour, (191, 0, 64), tol=1)
 
 
-def test_automatic_colours_dont_depend_on_the_images_size() -> None:
-    """From the file or a small copy: the same tiny copy, so the same colour."""
-    img = stripes(3000, 1000)
-    img.paste((255, 255, 255), (1400, 400, 1600, 600))
-    small = img.resize((TINY * 9, TINY * 3), Image.Resampling.LANCZOS)
-    for kind in Background:
+def framed(width: int, height: int) -> Image.Image:
+    """`scene` in a light grey frame thinner than the edges' strip (1/256)."""
+    img = Image.new("RGB", (width, height), (230, 230, 230))
+    frame = width // 256
+    img.paste(scene(width - 2 * frame, height - 2 * frame), (frame, frame))
+    return img
+
+
+@pytest.mark.parametrize(
+    ("image", "tol"), [(scene, 2), (framed, 5)], ids=["scene", "framed"]
+)
+def test_automatic_colours_dont_depend_on_the_images_size(
+    tmp_path: Path, image: Callable[[int, int], Image.Image], tol: int
+) -> None:
+    """
+    From the file or the previews' small copy (`load_small`, LANCZOS): the
+    same tiny copy, so the same colour. Next to a thin frame a few levels
+    off (4 measured), as the small copy blurs the image into the frame.
+    """
+    img = image(3840, 1280)
+    source = tmp_path / "image.png"
+    img.save(source)
+    small = load_small(source, 480).image  # a preview's (thumbnails.py)
+    for kind in COLOURS:
         for sides in (True, False):
             big = background_colour(img, kind, sides=sides)
-            assert close_to(background_colour(small, kind, sides=sides), big, tol=2)
+            assert close_to(background_colour(small, kind, sides=sides), big, tol)
 
 
 def test_stretch_keeps_everything() -> None:
@@ -151,8 +230,7 @@ def test_a_preview_is_the_full_render_smaller(
     The rule every look keeps: it depends on the screen, never on the
     output size. A feature measured in output pixels fails this.
     """
-    img = stripes(900, 400)
-    img.paste((255, 255, 255), (400, 150, 500, 250))  # a square: shapes show
+    img = scene(900, 400)  # a square: shapes show
     full = render(img, screen, screen, look)
     preview = render(img, screen, output, look)
     assert full.size == screen and preview.size == output
@@ -250,8 +328,7 @@ def test_a_preview_from_the_small_copy_is_the_wallpaper_smaller(
     the app sets (the file, rendered at the screen's size), smaller: for
     every look, on any screen shape.
     """
-    img = stripes(2700, 1200)
-    img.paste((255, 255, 255), (1200, 450, 1500, 750))
+    img = scene(2700, 1200)
     source = tmp_path / "image.png"
     img.save(source)
     side = 480
