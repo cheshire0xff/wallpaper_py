@@ -47,14 +47,16 @@ core/                         pure Python, no Qt, no platform APIs
   setter.py      put an image on a monitor safely (renders it, re-checks)
   imaging.py     render(image, screen, output, look): fill / fit / stretch
   paths.py       per-user config, data and cache locations (per OS, never shared)
-  config.py      the TOML config (written by Settings): playlists, monitors, pausing
-                 (tomllib, keys and types as pydantic models; meaning checked after)
-  config_edit.py editing that file in place (tomlkit): only what changed is
-                 written, comments kept; validation, monitor ids, conflicts
+  settings.py    Settings (pydantic): playlists, monitors (playlist, look), pausing,
+                 list files; their checks and warnings; durations
+  config.py      config.toml until Phase 4b step 3b (the old Settings page writes
+                 it; the app imports it into the settings: to_settings)
+  config_edit.py editing that file in place (tomlkit), until 3b as well
   library.py     recursive image scan (natural order, cached), path keys
   order.py       next image: sorted walk, or the persisted shuffle deck
-  store.py       SQLite: history, deck, per-playlist and per-monitor state
-  marks.py       favourites / to-remove .txt files (the only copy)
+  store.py       SQLite: the settings, history, deck, per-playlist and
+                 per-monitor state
+  marks.py       favourites / to-remove .txt files (the only copy); decode_text
   presence.py    Presence protocol: session locked? seconds idle?
   autostart.py   Autostart protocol: start the app at login
   service.py     PlaylistService: tick, next / previous, fav / remove, status
@@ -218,9 +220,16 @@ Images are read from the files, not the socket: `ThumbnailLoader` reads
 the header (dimensions) and decodes at a reduced size on a thread pool of
 its own, caches by path and drops results for images no longer shown.
 
+The settings live in the state database (`core/store.py`), written only
+by the app: `settings` reads them with a revision, `save_settings` replaces
+them as a whole (refused if the revision moved on, or if a value can't be
+used) and uses them at once. Until Phase 4b step 3b the old Settings page
+still edits config.toml, and the app imports that file into the stored
+settings when it opens the service (at start and on `reload`;
+`commands.import_config`), a temporary bridge.
+
 The Settings page edits the config file the app runs (the overview names
-it), as an editor would: the file stays the source of truth and the
-app the only writer of state. `core/config_edit.py` writes back only what
+it), as an editor would; the app then imports it. `core/config_edit.py` writes back only what
 changed (tomlkit), so a file with no change stays byte for byte the same
 and hand-written comments survive; the new text must pass the core's own
 parser, and the write (atomic) is refused if the file changed on disk since
@@ -232,8 +241,8 @@ page follows it) and replies with the warnings or the error.
 
 State lives in two places, by design:
 
-- **SQLite** (`store.py`) holds app-internal state only: history with a
-  cursor per playlist (ordered by an explicit `position`, not by id, so a
+- **SQLite** (`store.py`) holds the settings (`core/settings.py`) and the
+  app-internal state: history with a cursor per playlist (ordered by an explicit `position`, not by id, so a
   pick can go between older entries), the shuffle deck, active seconds
   since the last change, the hold flag, and which image each monitor was
   given. It is the single source of truth. Whoever holds the instance lock is
@@ -241,7 +250,8 @@ State lives in two places, by design:
   the app running, CLI commands go through its socket). WAL mode
   lets later read-only windows read alongside. Pre-release, the schema
   changes in place: a database of another schema version is refused with
-  a message to delete it (only history and shuffle state are lost).
+  a message to delete it (the settings, history and shuffle state in it
+  are lost).
 - **Favourites / to-remove** live only in their `.txt` files. Every change
   re-reads the file, applies one add or remove and writes it atomically;
   reads reload when the file's mtime/size changes. Entries for missing
@@ -249,10 +259,14 @@ State lives in two places, by design:
   been read (another program holds it) is *unknown*, not empty: while
   to-remove is unknown no image is chosen (ticks wait, `next` / `prev` /
   `pick` fail), and an unknown favourite is `null` in the overview.
-- **Loading only reads.** The state of a playlist id no longer in the
-  config stays (a briefly missing file or a playlist commented out loses
-  nothing) until the `prune` command drops it; `prune` refuses when there
-  is no config file.
+- **A playlist's state goes with it.** Saving settings that delete a
+  playlist deletes its history, deck and hold in the same transaction; a
+  renamed one keeps them (they go by its id). `prune` drops whatever is
+  left over (normally nothing). A save that changes a playlist's folder
+  resets its shuffle deck and marks it (`PlaylistState.folder_changed`,
+  stored, so a restart or the config import keeps it): the next tick shows
+  a new image from that folder, even when held or manual, and the mark
+  goes with the next image shown (also by next / prev / pick).
 
 A change is *peek, show, commit*: the next image is chosen without consuming
 it, set on every attached member, and only then written to history / the
@@ -278,9 +292,10 @@ removal, deleted). Hold doesn't apply to a manual playlist.
 
 A member that was detached (or vanished from the monitor list) has its
 "applied" record dropped, so on return it is given the group's current
-image. The app drops all of them when it loads the config (at start and on
-a reload), so after a reboot every monitor gets its playlist's current
-image back, rendered with its current mode.
+image. The app drops all of them when it opens the service (at start and
+on a reload), so after a reboot every monitor gets its playlist's current
+image back, rendered with its current look; `save_settings` drops those of
+the monitors whose playlist or look changed.
 
 ## Monitor identity
 
@@ -334,5 +349,10 @@ small output. A look depends on the screen, never on the output.
 A rendered image depends on the look and the monitor's size, so the
 service renders again when either changes: a monitor whose resolution
 changed (noticed by the tick) has its "applied" record dropped, and so
-does every monitor when the config is loaded (start and reload), which
-is how a changed mode shows at once.
+does every monitor when the service opens (start and reload), and a
+monitor whose look or playlist `save_settings` changed; the app ticks
+before replying, so a changed look shows at once.
+
+The look is per monitor (`MonitorSettings.look`, `Settings.look`), the
+timing per playlist: how an image looks depends on a screen's shape,
+while mirrored monitors must change together.

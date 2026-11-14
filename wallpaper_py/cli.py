@@ -31,10 +31,10 @@ from .backends import get_backend, get_presence
 from .commands import error_reply, execute, open_service
 from .core import paths
 from .core.backend import Backend
-from .core.config import format_duration
 from .core.model import AppError, ImageMode, Look, Monitor, WallpaperError
 from .core.presence import Presence
 from .core.selection import resolve_monitor
+from .core.settings import format_duration
 from .core.setter import apply_wallpaper
 from .protocol import (
     TARGET_COMMANDS,
@@ -57,6 +57,8 @@ from .protocol import (
     Reply,
     Request,
     ResumeResult,
+    SaveSettingsResult,
+    SettingsResult,
     StatusResult,
 )
 
@@ -158,7 +160,7 @@ class Context:
                 config_path, self.backend, self.presence_factory()
             ) as service:
                 if isinstance(request, ReloadRequest):  # nothing to restart
-                    return ReloadResult(warnings=tuple(service.config.warnings()))
+                    return ReloadResult(warnings=tuple(service.settings.warnings()))
                 return execute(service, request).reply
         except AppError as err:
             return error_reply(err)
@@ -288,6 +290,8 @@ def format_reply(reply: Reply) -> Text:
             return Text(0, "Config reloaded", warnings)
         case PruneResult():
             return Text(0, _prune_text(reply.dropped))
+        case SettingsResult() | SaveSettingsResult():  # for the window; as data
+            return Text(0, reply.model_dump_json(indent=2))
     raise AssertionError(f"Unhandled reply {reply!r}")
 
 
@@ -304,7 +308,7 @@ def format_status(
                 state = "not found"
             else:
                 state = "attached" if monitor.attached else "detached"
-            members.append(f"{monitor.name} ({state})")
+            members.append(f"{monitor.name} ({state}, {monitor.look.mode.value})")
         lines.append(f"  monitors:  {', '.join(members)}")
         lines.append(f"  directory: {playlist.directory}")
         lines.append(f"  current:   {playlist.current or '-'}")
@@ -322,10 +326,10 @@ def format_status(
 
 def _prune_text(dropped: Sequence[str]) -> str:
     if not dropped:
-        return "Nothing to drop: every playlist with state is in the config"
+        return "Nothing to drop: every playlist with state is in the settings"
     return (
         "Dropped the state (history, shuffle deck, hold) of playlist ids "
-        f"no longer in the config: {', '.join(dropped)}"
+        f"no longer in the settings: {', '.join(dropped)}"
     )
 
 
@@ -342,12 +346,12 @@ def _hold_text(reply: HoldResult | ResumeResult) -> str:
 
 
 def _traits(playlist: PlaylistDetails) -> list[str]:
-    """Order, interval, mode, and held if it is."""
+    """Order, interval, and held if it is."""
     if playlist.interval is None:
         rotation = "manual"
     else:
         rotation = f"every {format_duration(playlist.interval)}"
-    traits = [playlist.order.value, rotation, playlist.mode.value]
+    traits = [playlist.order.value, rotation]
     if playlist.held:
         traits.append("held")
     return traits

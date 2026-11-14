@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...core.config import MANUAL, Order
+from ...core.settings import MANUAL, Order
 from ...core.config_edit import (
     DIRECTORY,
     FAVOURITES,

@@ -7,16 +7,22 @@ from typing import Literal
 import pytest
 from PIL import Image
 
-from wallpaper_py.commands import error_reply, execute, open_service, overview
+from wallpaper_py.commands import (
+    Outcome,
+    error_reply,
+    execute,
+    open_service,
+    overview,
+)
 from wallpaper_py.core import paths
-from wallpaper_py.core.config import Order
-from wallpaper_py.core.model import ImageMode, MonitorId
+from wallpaper_py.core.model import ImageMode, Look, MonitorId
 from wallpaper_py.core.service import (
     Change,
     ChangeReason,
     NoImagesError,
     PlaylistService,
 )
+from wallpaper_py.core.settings import MonitorSettings, Order, Settings
 from wallpaper_py.protocol import (
     Command,
     DesktopMonitor,
@@ -38,6 +44,10 @@ from wallpaper_py.protocol import (
     Reply,
     Request,
     ResumeResult,
+    SaveSettingsRequest,
+    SaveSettingsResult,
+    SettingsRequest,
+    SettingsResult,
     StatusResult,
 )
 
@@ -66,6 +76,7 @@ id = "strip-id"
 directory = 'strip'
 monitors = {toml_ids("Strip")}
 interval = "10m"
+mode = "fit"
 """
 STRIP_ID = MonitorId(fake_id("Strip"))  # not listed
 
@@ -188,7 +199,7 @@ def test_pick_hold_resume_reply_with_data(
     Image.new("RGB", (8, 8)).save(image)
     outcome = execute(service, PickRequest(target="walls", image=image))
     change = Change("walls", image, "picked", ("Main",))
-    assert outcome == (PickResult(playlist="walls", change=change), change)
+    assert outcome == Outcome(PickResult(playlist="walls", change=change), change)
 
     assert run(service, "hold", "walls") == HoldResult(
         playlist="walls", held=True, changed=True
@@ -265,11 +276,10 @@ def test_status(service: PlaylistService, tmp_path: Path) -> None:
     assert isinstance(status, StatusResult)
     assert status.paused is None and status.warnings == ()
     walls, strip = status.playlists
-    assert (walls.name, walls.order, walls.interval, walls.mode) == (
+    assert (walls.name, walls.order, walls.interval) == (
         "walls",
         Order.SORTED,
         600.0,
-        ImageMode.FILL,
     )
     assert walls.directory == tmp_path / "walls"
     assert walls.monitors == (
@@ -280,7 +290,9 @@ def test_status(service: PlaylistService, tmp_path: Path) -> None:
     assert walls.next_in_seconds == 600.0
     assert [p.name for p in walls.upcoming] == ["b.jpg", "a.jpg"]
     assert strip.monitors == (
-        MonitorView(id=STRIP_ID, name=str(STRIP_ID), attached=None),
+        MonitorView(
+            id=STRIP_ID, name=str(STRIP_ID), attached=None, look=Look(ImageMode.FIT)
+        ),
     )
 
 
@@ -298,7 +310,14 @@ def test_overview(service: PlaylistService, tmp_path: Path) -> None:
             ),
             PlaylistView(
                 name="strip",
-                monitors=(MonitorView(id=STRIP_ID, name=str(STRIP_ID), attached=None),),
+                monitors=(
+                    MonitorView(
+                        id=STRIP_ID,
+                        name=str(STRIP_ID),
+                        attached=None,
+                        look=Look(ImageMode.FIT),
+                    ),
+                ),
                 current=None,
                 favourite=False,
             ),
@@ -328,7 +347,6 @@ def test_overview(service: PlaylistService, tmp_path: Path) -> None:
 
 
 WALLS_ONLY, STRIP, STRIP_TABLE = CONFIG.partition("[playlists.strip]")
-STRIP_ONLY = f"pause_when_idle = false\n{STRIP}{STRIP_TABLE}"
 
 
 def walls_current(config: Path, backend: FakeBackend) -> Path | None:
@@ -338,53 +356,90 @@ def walls_current(config: Path, backend: FakeBackend) -> Path | None:
         return next((p.current for p in reply.playlists if p.name == "walls"), None)
 
 
-def prune(config: Path, backend: FakeBackend) -> Reply:
-    with open_service(config, backend, FakePresence()) as service:
-        return execute(service, PruneRequest()).reply
-
-
-def test_loading_never_drops_state(
+def test_the_config_file_is_imported_into_the_settings(
     service: PlaylistService, backend: FakeBackend, tmp_path: Path
 ) -> None:
-    """A playlist taken out for a while, or a missing file, loses nothing."""
-    run(service, "next", "walls")
-    shown = service.current(service.config.playlists[0])
-    assert shown is not None
-    config = tmp_path / "config.toml"
-    config.write_text(STRIP_ONLY, encoding="utf-8")  # walls commented out
-    assert walls_current(config, backend) is None
-    config.unlink()  # briefly gone (an editor replacing it)
-    assert walls_current(config, backend) is None
-    config.write_text(CONFIG, encoding="utf-8")
-    assert walls_current(config, backend) == shown
-
-
-def test_prune_drops_exactly_the_playlists_not_in_the_config(
-    service: PlaylistService, backend: FakeBackend, tmp_path: Path
-) -> None:
+    """
+    The bridge of Phase 4b step 3a: the file replaces the stored settings
+    when the service opens; without a file, they stand.
+    """
     run(service, "next", "walls")
     run(service, "hold", "strip")  # strip's monitor isn't listed: hold only
+    shown = service.current(service.settings.playlists[0])
+    assert shown is not None
     config = tmp_path / "config.toml"
-    config.write_text(WALLS_ONLY, encoding="utf-8")
-    assert prune(config, backend) == PruneResult(dropped=("strip-id",))
-    assert prune(config, backend) == PruneResult(dropped=())
-    assert walls_current(config, backend) is not None  # kept
+    config.unlink()  # briefly gone (an editor replacing it)
+    assert walls_current(config, backend) == shown
+    config.write_text(WALLS_ONLY, encoding="utf-8")  # strip deleted
+    with open_service(config, backend, FakePresence()) as again:
+        assert [p.name for p in again.settings.playlists] == ["walls"]
+        assert execute(again, PruneRequest()).reply == PruneResult(dropped=())
+        assert again.current(again.settings.playlists[0]) == shown
     config.write_text(CONFIG, encoding="utf-8")
     with open_service(config, backend, FakePresence()) as again:
-        assert not again.held(again.config.playlists[1])  # strip starts afresh
+        assert not again.held(again.settings.playlists[1])  # strip starts afresh
 
 
-def test_prune_refuses_without_a_config_file(
+def test_a_folder_changed_in_the_file_shows_on_the_next_tick(
     service: PlaylistService, backend: FakeBackend, tmp_path: Path
 ) -> None:
+    """The bridge: a reload imports the file; the new folder shows at once."""
     run(service, "next", "walls")
+    make_images(tmp_path / "art", "z.jpg")
     config = tmp_path / "config.toml"
-    config.unlink()
-    reply = prune(config, backend)
-    assert isinstance(reply, ErrorReply) and reply.error.kind == "failed"
-    assert "no config file" in reply.error.message
-    config.write_text(CONFIG, encoding="utf-8")
-    assert walls_current(config, backend) is not None  # nothing was dropped
+    config.write_text(CONFIG.replace("'walls'", "'art'", 1), encoding="utf-8")
+    with open_service(config, backend, FakePresence()) as again:
+        [change] = [c for c in again.tick() if c.playlist == "walls"]
+        assert change.image == tmp_path / "art" / "z.jpg"
+
+
+def test_settings_and_save_settings(service: PlaylistService) -> None:
+    reply = execute(service, SettingsRequest()).reply
+    assert isinstance(reply, SettingsResult)
+    assert reply.settings == service.settings
+    main, side, strip = reply.settings.monitors
+    assert strip == MonitorSettings(
+        id=STRIP_ID, playlist="strip-id", look=Look(ImageMode.FIT)
+    )
+    left = MonitorSettings(id=LEFT.id, look=Look(ImageMode.STRETCH))
+    edit = reply.settings.model_copy(
+        update={"monitors": (main, side, strip, left), "pause_when_idle": 900.0}
+    )
+    outcome = execute(
+        service, SaveSettingsRequest(settings=edit, revision=reply.revision)
+    )
+    saved = outcome.reply
+    assert isinstance(saved, SaveSettingsResult)
+    assert outcome.render  # the app ticks before replying
+    assert saved.revision == reply.revision + 1
+    assert len(saved.warnings) == 2  # 10m is shorter than the idle pause
+    assert service.settings == edit
+    assert overview(service).monitors[2].look == Look(ImageMode.STRETCH)
+
+    stale = execute(service, SaveSettingsRequest(settings=edit, revision=0)).reply
+    assert isinstance(stale, ErrorReply) and stale.error.kind == "stale_settings"
+    bad = edit.model_copy(update={"pause_when_idle": 0.0})
+    invalid = execute(
+        service, SaveSettingsRequest(settings=bad, revision=saved.revision)
+    ).reply
+    assert isinstance(invalid, ErrorReply)
+    assert invalid.error.kind == "invalid_settings"
+    assert "idle pause" in invalid.error.message
+
+
+def test_save_settings_request_is_strict() -> None:
+    """The settings come from the window: a typo is refused, not ignored."""
+    good = {"command": "save_settings", "settings": {}, "revision": 1}
+    assert Envelope.model_validate({"request": good}).request == (
+        SaveSettingsRequest(settings=Settings(), revision=1)
+    )
+    for bad in (
+        {**good, "settings": {"playlist": []}},
+        {**good, "settings": {"monitors": [{"id": "m", "mode": "fit"}]}},
+        {"command": "save_settings", "settings": {}},  # no revision
+    ):
+        with pytest.raises(ValueError):
+            Envelope.model_validate({"request": bad})
 
 
 def test_a_favourites_list_never_read_is_unknown(

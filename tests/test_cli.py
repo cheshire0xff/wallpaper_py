@@ -9,9 +9,8 @@ from wallpaper_py.app.instance import InstanceLock
 from wallpaper_py.app.ui.launcher import PAGE_NAMES
 from wallpaper_py.core import paths
 from wallpaper_py.core.backend import Backend
-from wallpaper_py.core.config import Order
-from wallpaper_py.core.model import ImageMode
 from wallpaper_py.core.service import Change
+from wallpaper_py.core.settings import Order
 from wallpaper_py.protocol import (
     CommandRequest,
     ErrorReply,
@@ -169,8 +168,8 @@ class TestPlaylistCommands:
         self.run(backend, config, "next")
         assert self.run(backend, config, "status") == 0
         out = capsys.readouterr().out
-        assert "walls  (sorted, every 10m, fill)" in out
-        assert "Main (attached)" in out
+        assert "walls  (sorted, every 10m)" in out
+        assert "monitors:  Main (attached, fill)" in out
         assert "upcoming:  b.jpg, c.jpg, a.jpg" in out
         assert out.rstrip().endswith(cli.NOT_RUNNING)  # run here: no app
 
@@ -204,7 +203,7 @@ class TestPlaylistCommands:
             "`wallpaper resume walls`",
             "walls is already held",
         ]
-        assert "walls  (sorted, every 10m, fill, held)" in out
+        assert "walls  (sorted, every 10m, held)" in out
         assert "  next in:   held (10m of active time once resumed)" in out
         assert out[-2:] == ["walls: rotating again", "walls is not held"]
         missing = tmp_path / "elsewhere" / "missing.png"
@@ -253,20 +252,19 @@ class TestPlaylistCommands:
         config: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
+        """Importing the file already deleted the old id's state."""
         assert self.run(backend, config, "next") == 0
         text = config.read_text(encoding="utf-8")
         config.write_text(text.replace("walls-id", "new-id"), encoding="utf-8")
-        assert self.run(backend, config, "status") == 0  # loading keeps it
         assert self.run(backend, config, "prune") == 0
-        assert self.run(backend, config, "prune") == 0
+        assert self.run(backend, config, "next") == 0
         out = capsys.readouterr().out.splitlines()
         assert out[-2:] == [
-            "Dropped the state (history, shuffle deck, hold) of playlist ids no "
-            "longer in the config: walls-id",
-            "Nothing to drop: every playlist with state is in the config",
+            "Nothing to drop: every playlist with state is in the settings",
+            "walls: a.jpg on Main",  # afresh
         ]
 
-    def test_prune_refuses_without_a_config_file(
+    def test_a_missing_config_file_keeps_the_settings(
         self,
         backend: FakeBackend,
         config: Path,
@@ -280,11 +278,8 @@ class TestPlaylistCommands:
             return cli.main([name], lambda: backend, FakePresence)
 
         assert command("next") == 0
-        text = config.read_text(encoding="utf-8")
         config.unlink()
-        assert command("prune") == 1
-        assert "no config file" in capsys.readouterr().err
-        config.write_text(text, encoding="utf-8")
+        capsys.readouterr()
         assert command("next") == 0
         assert capsys.readouterr().out == "walls: b.jpg on Main\n"  # kept
 
@@ -343,12 +338,11 @@ def test_status_of_a_manual_playlist() -> None:
         directory=Path("/p"),
         order=Order.SHUFFLE,
         interval=None,
-        mode=ImageMode.FILL,
         next_in_seconds=None,
         upcoming=(),
     )
     lines = cli.format_status([strip], None).splitlines()
-    assert lines[0] == "strip  (shuffle, manual, fill)"
+    assert lines[0] == "strip  (shuffle, manual)"
     assert "  next in:   only by next / prev / pick (manual)" in lines
 
 

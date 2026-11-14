@@ -46,19 +46,10 @@ from tomlkit.items import (
 )
 from tomlkit.toml_document import TOMLDocument
 
-from .config import (
-    MANUAL,
-    MIN_INTERVAL_S,
-    ConfigError,
-    ConfigFile,
-    Order,
-    PlaylistTable,
-    decode_text,
-    new_playlist_id,
-    parse_duration,
-    validate_file,
-)
-from .model import ImageMode, MonitorId, WallpaperError
+from .config import ConfigFile, PlaylistTable, validate_file
+from .marks import decode_text
+from .model import ConfigError, ImageMode, MonitorId, WallpaperError
+from .settings import MANUAL, MIN_INTERVAL_S, Order, new_playlist_id, parse_duration
 
 PLAYLISTS = "playlists"
 # A playlist name the window writes must be a bare TOML key (no quoting
@@ -516,7 +507,7 @@ def validate(
         try:
             if parse_duration(settings.pause_when_idle) <= 0:  # as config.py
                 errors[(None, IDLE)] = "Must be more than 0; untick it to never pause"
-        except ConfigError as err:
+        except ValueError as err:
             errors[(None, IDLE)] = str(err)
     for key in (FAVOURITES, TO_REMOVE):
         value: str = getattr(settings, key)
@@ -552,7 +543,7 @@ def interval_problem(interval: str) -> str | None:
         return None
     try:
         seconds = parse_duration(interval)
-    except ConfigError:
+    except ValueError:
         return "Use a duration like 45s, 30m, 1h30m or 1d"
     if seconds < MIN_INTERVAL_S:
         return "At least 10s"

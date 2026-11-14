@@ -8,7 +8,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, final, override
 
-from pydantic import GetCoreSchemaHandler
+from pydantic import ConfigDict, GetCoreSchemaHandler
+from pydantic.dataclasses import dataclass as pydantic_dataclass
 from pydantic_core import CoreSchema, core_schema
 
 # Seconds since the epoch (time.time); injected so tests control time.
@@ -106,12 +107,15 @@ class ImageMode(Enum):
     STRETCH = "stretch"
 
 
-@dataclass(frozen=True)
+@pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
 class Look:
     """
     How an image looks on one screen: everything the renderer needs besides
     the image and the sizes (core.imaging.render). Per monitor; more fields
     (a background, later a crop anchor or a blur) join here.
+
+    A pydantic dataclass: stored with the monitor's settings and sent on the
+    socket (the overview, the settings), read strictly.
     """
 
     mode: ImageMode = ImageMode.FILL
@@ -145,8 +149,16 @@ class AppError(Exception):
     catch one of the two kinds:
 
     - WallpaperError: one operation failed; the rest goes on.
-    - config.ConfigError: the config, or a file it names, can't be used;
+    - ConfigError: the config, or a file it names, can't be used;
       whatever runs on it stops (the service, until a reload).
+    """
+
+
+class ConfigError(AppError):
+    """
+    The config file, or a list file the settings name, can't be used. Not a
+    WallpaperError: `except WallpaperError` (one operation failed, carry on)
+    lets it through, to stop the service.
     """
 
 

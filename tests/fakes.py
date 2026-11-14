@@ -16,6 +16,8 @@ from wallpaper_py.core.model import (
     MonitorNotAttachedError,
     Rectangle,
 )
+from wallpaper_py.core.settings import PlaylistSettings, Settings
+from wallpaper_py.core.store import Store
 
 GUID = "{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}"
 
@@ -126,6 +128,18 @@ class FakePresence:
 
     def idle_seconds(self) -> float | None:
         return self.idle
+
+
+def add_playlists(store: Store, *ids: str) -> Store:
+    """
+    Playlists with these ids in the settings (a playlist's state goes in
+    its row, so a test of the state needs one).
+    """
+    playlists = tuple(
+        PlaylistSettings(id=i, name=f"playlist {i}", directory=Path(i)) for i in ids
+    )
+    store.save_settings(Settings(playlists=playlists), revision=None)
+    return store
 
 
 def toml_ids(*names: str) -> str:

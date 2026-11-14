@@ -100,6 +100,12 @@
               "type": "null"
             }
           ]
+        },
+        "look": {
+          "$ref": "#/$defs/Look",
+          "default": {
+            "mode": "fill"
+          }
         }
       },
       "required": [
@@ -131,6 +137,8 @@
               "reload": "#/$defs/ReloadRequest",
               "remove": "#/$defs/Request",
               "resume": "#/$defs/Request",
+              "save_settings": "#/$defs/SaveSettingsRequest",
+              "settings": "#/$defs/SettingsRequest",
               "status": "#/$defs/Request",
               "subscribe": "#/$defs/Subscribe",
               "unfav": "#/$defs/Request"
@@ -146,6 +154,12 @@
             },
             {
               "$ref": "#/$defs/PruneRequest"
+            },
+            {
+              "$ref": "#/$defs/SettingsRequest"
+            },
+            {
+              "$ref": "#/$defs/SaveSettingsRequest"
             },
             {
               "$ref": "#/$defs/ReloadRequest"
@@ -188,6 +202,8 @@
             "no_images",
             "nothing_shown",
             "bad_image",
+            "invalid_settings",
+            "stale_settings",
             "failed",
             "internal",
             "unreachable"
@@ -303,6 +319,18 @@
       "title": "ImageMode",
       "type": "string"
     },
+    "Look": {
+      "additionalProperties": false,
+      "description": "How an image looks on one screen: everything the renderer needs besides\nthe image and the sizes (core.imaging.render). Per monitor; more fields\n(a background, later a crop anchor or a blur) join here.\n\nA pydantic dataclass: stored with the monitor's settings and sent on the\nsocket (the overview, the settings), read strictly.",
+      "properties": {
+        "mode": {
+          "$ref": "#/$defs/ImageMode",
+          "default": "fill"
+        }
+      },
+      "title": "Look",
+      "type": "object"
+    },
     "MarkResult": {
       "properties": {
         "command": {
@@ -342,8 +370,41 @@
       "title": "MarkResult",
       "type": "object"
     },
+    "MonitorSettings": {
+      "additionalProperties": false,
+      "description": "One monitor's settings, by id: its playlist (None: none) and its look.\nA monitor without a row has no playlist and the default look.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "playlist": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Playlist"
+        },
+        "look": {
+          "$ref": "#/$defs/Look",
+          "default": {
+            "mode": "fill"
+          }
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "MonitorSettings",
+      "type": "object"
+    },
     "MonitorView": {
-      "description": "A playlist's member. `id` is spelt as the desktop spells it when the\nmonitor is listed (as in `Overview.monitors`), else as the config\ndoes; ids compare case-insensitively (`MonitorId`).",
+      "description": "A playlist's member. `id` is spelt as the desktop spells it when the\nmonitor is listed (as in `Overview.monitors`), else as the settings\ndo; ids compare case-insensitively (`MonitorId`).",
       "properties": {
         "id": {
           "title": "Id",
@@ -363,6 +424,12 @@
             }
           ],
           "title": "Attached"
+        },
+        "look": {
+          "$ref": "#/$defs/Look",
+          "default": {
+            "mode": "fill"
+          }
         }
       },
       "required": [
@@ -605,9 +672,6 @@
           ],
           "title": "Interval"
         },
-        "mode": {
-          "$ref": "#/$defs/ImageMode"
-        },
         "next_in_seconds": {
           "anyOf": [
             {
@@ -636,11 +700,52 @@
         "directory",
         "order",
         "interval",
-        "mode",
         "next_in_seconds",
         "upcoming"
       ],
       "title": "PlaylistDetails",
+      "type": "object"
+    },
+    "PlaylistSettings": {
+      "additionalProperties": false,
+      "description": "A folder rotated on the monitors that name this playlist (the same\nimage on each: mirrored).\n\n`id` is generated (`new_playlist_id`) and never reused: deleting a\nplaylist deletes its state, and a new one starts afresh. `interval` is\nNone for a manual playlist: it never changes by itself, only by next /\nprev / pick.",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "directory": {
+          "format": "path",
+          "title": "Directory",
+          "type": "string"
+        },
+        "order": {
+          "$ref": "#/$defs/Order",
+          "default": "shuffle"
+        },
+        "interval": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": 1800.0,
+          "title": "Interval"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "directory"
+      ],
+      "title": "PlaylistSettings",
       "type": "object"
     },
     "PlaylistView": {
@@ -731,7 +836,7 @@
     },
     "PruneRequest": {
       "additionalProperties": false,
-      "description": "Drop the state of playlist ids no longer in the config.",
+      "description": "Drop any state left of playlist ids the settings don't have.",
       "properties": {
         "command": {
           "const": "prune",
@@ -744,7 +849,7 @@
       "type": "object"
     },
     "PruneResult": {
-      "description": "The state of playlist ids no longer in the config was dropped.",
+      "description": "State left of playlist ids the settings don't have was dropped.",
       "properties": {
         "command": {
           "const": "prune",
@@ -768,7 +873,7 @@
     },
     "ReloadRequest": {
       "additionalProperties": false,
-      "description": "Read the config file again (after it was edited).",
+      "description": "Import the config file again (after it was edited; until Phase 4b 3b).",
       "properties": {
         "command": {
           "const": "reload",
@@ -781,7 +886,7 @@
       "type": "object"
     },
     "ReloadResult": {
-      "description": "The config was read again and the playlists restarted from it.",
+      "description": "The config file was imported again and the playlists restarted.",
       "properties": {
         "command": {
           "const": "reload",
@@ -875,6 +980,12 @@
               "$ref": "#/$defs/PruneResult"
             },
             {
+              "$ref": "#/$defs/SettingsResult"
+            },
+            {
+              "$ref": "#/$defs/SaveSettingsResult"
+            },
+            {
               "$ref": "#/$defs/ReloadResult"
             }
           ],
@@ -891,6 +1002,8 @@
               "hold": "#/$defs/HoldResult",
               "resume": "#/$defs/ResumeResult",
               "prune": "#/$defs/PruneResult",
+              "settings": "#/$defs/SettingsResult",
+              "save_settings": "#/$defs/SaveSettingsResult",
               "reload": "#/$defs/ReloadResult"
             }
           }
@@ -930,6 +1043,163 @@
         "changed"
       ],
       "title": "ResumeResult",
+      "type": "object"
+    },
+    "SaveSettingsRequest": {
+      "additionalProperties": false,
+      "description": "Store these settings in place of the stored ones, and use them at once.\nRefused (`stale_settings`) if the stored ones are no longer `revision`,\nthe one the edit was made on.",
+      "properties": {
+        "command": {
+          "const": "save_settings",
+          "default": "save_settings",
+          "title": "Command",
+          "type": "string"
+        },
+        "settings": {
+          "$ref": "#/$defs/Settings"
+        },
+        "revision": {
+          "title": "Revision",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "settings",
+        "revision"
+      ],
+      "title": "SaveSettingsRequest",
+      "type": "object"
+    },
+    "SaveSettingsResult": {
+      "description": "Saved and in use: every monitor shows what they say.",
+      "properties": {
+        "command": {
+          "const": "save_settings",
+          "default": "save_settings",
+          "title": "Command",
+          "type": "string"
+        },
+        "revision": {
+          "title": "Revision",
+          "type": "integer"
+        },
+        "warnings": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Warnings",
+          "type": "array"
+        }
+      },
+      "required": [
+        "revision"
+      ],
+      "title": "SaveSettingsResult",
+      "type": "object"
+    },
+    "Settings": {
+      "additionalProperties": false,
+      "description": "Everything the settings window edits, saved as a whole. Playlists are\nlisted in this order (the tray, Home).",
+      "properties": {
+        "playlists": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/PlaylistSettings"
+          },
+          "title": "Playlists",
+          "type": "array"
+        },
+        "monitors": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/MonitorSettings"
+          },
+          "title": "Monitors",
+          "type": "array"
+        },
+        "pause_when_locked": {
+          "default": true,
+          "title": "Pause When Locked",
+          "type": "boolean"
+        },
+        "pause_when_idle": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": 300.0,
+          "title": "Pause When Idle"
+        },
+        "favourites_file": {
+          "anyOf": [
+            {
+              "format": "path",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Favourites File"
+        },
+        "to_remove_file": {
+          "anyOf": [
+            {
+              "format": "path",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "To Remove File"
+        }
+      },
+      "title": "Settings",
+      "type": "object"
+    },
+    "SettingsRequest": {
+      "additionalProperties": false,
+      "description": "The stored settings, and their revision (for `save_settings`).",
+      "properties": {
+        "command": {
+          "const": "settings",
+          "default": "settings",
+          "title": "Command",
+          "type": "string"
+        }
+      },
+      "title": "SettingsRequest",
+      "type": "object"
+    },
+    "SettingsResult": {
+      "properties": {
+        "command": {
+          "const": "settings",
+          "default": "settings",
+          "title": "Command",
+          "type": "string"
+        },
+        "settings": {
+          "$ref": "#/$defs/Settings"
+        },
+        "revision": {
+          "title": "Revision",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "settings",
+        "revision"
+      ],
+      "title": "SettingsResult",
       "type": "object"
     },
     "StatusResult": {

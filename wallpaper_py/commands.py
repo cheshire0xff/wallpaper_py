@@ -9,9 +9,10 @@ the socket (CLI, UI process) or from the tray. Besides the reply it returns
 the wallpaper change the command made, if any, so the app announces it like
 a tick's. Qt-free, like the core.
 
-`open_service()` only reads: nothing is dropped when a config is loaded, so
-a briefly missing file or a playlist taken out keeps its state. `prune`
-drops the state of playlist ids no longer in the config, on request.
+`open_service()` runs the service on the settings in the state database.
+Until Phase 4b step 3b it first imports config.toml into them (a temporary
+bridge for the old Settings page, not a migration; see `import_config`).
+`settings` and `save_settings` read and write them.
 
 `overview()` is the small snapshot the tray and the windows draw from.
 """
@@ -26,10 +27,11 @@ from typing import Literal, NamedTuple
 
 from .core import paths
 from .core.backend import Backend
-from .core.config import ConfigError, PlaylistConfig, load_config
+from .core.config import load_config
 from .core.marks import MarkFileBusyError
 from .core.model import (
     AppError,
+    ConfigError,
     ImageLoadError,
     Monitor,
     MonitorNotAttachedError,
@@ -44,6 +46,12 @@ from .core.service import (
     PlaylistService,
     PlaylistStatus,
     UnknownTargetError,
+)
+from .core.settings import (
+    PlaylistSettings,
+    SettingsError,
+    StaleSettingsError,
+    check_settings,
 )
 from .core.store import Store
 from .protocol import (
@@ -68,7 +76,11 @@ from .protocol import (
     RemoveResult,
     Reply,
     ResumeResult,
+    SaveSettingsRequest,
+    SaveSettingsResult,
     ServiceRequest,
+    SettingsRequest,
+    SettingsResult,
     StatusResult,
 )
 
@@ -76,10 +88,15 @@ log = logging.getLogger(__name__)
 
 
 class Outcome(NamedTuple):
-    """What a command did: its reply, and the wallpaper change it made."""
+    """
+    What a command did: its reply, the wallpaper change it made, and
+    whether monitors wait to be rendered again (their playlist, look or
+    folder changed): the app then ticks before it replies.
+    """
 
     reply: Reply
     change: Change | None = None
+    render: bool = False
 
 
 @contextmanager
@@ -87,25 +104,46 @@ def open_service(
     config_path: Path, backend: Backend, presence: Presence, tick_period: float = 5.0
 ) -> Iterator[PlaylistService]:
     """
-    A service on the config's state database; closes the database after.
-    It only reads: the state of playlists no longer in the config stays
-    (a missing file, or a playlist taken out for a while, loses nothing)
-    until the `prune` command drops it.
+    A service on the settings in the config's state database, after
+    importing the config file into them; closes the database after.
 
     Raises:
         ConfigError: the file, or a list file.
     """
-    config = load_config(config_path, default_dir=paths.data_dir())
     with Store(paths.state_db(config_path)) as store:
+        import_config(config_path, store)
         service = PlaylistService(
-            config,
             backend,
             presence,
             store,
             paths.render_dir(),
+            paths.data_dir(),
             tick_period=tick_period,
         )
         yield service
+
+
+def import_config(config_path: Path, store: Store) -> None:
+    """
+    The bridge of Phase 4b step 3a, gone in 3b: the old Settings page still
+    writes config.toml, so the file (if there is one) replaces the stored
+    settings, at start and on `reload`. Each playlist's mode becomes its
+    monitors' look. A playlist the file no longer has loses its state, as
+    when the settings window deletes one.
+
+    Raises:
+        ConfigError: the file can't be used; nothing was imported.
+    """
+    config = load_config(config_path, default_dir=paths.data_dir())
+    if config is None:
+        return
+    settings = config.to_settings()
+    try:
+        check_settings(settings)
+    except SettingsError as err:
+        raise ConfigError(f"{config_path}: {err}") from err
+    if settings != store.settings():
+        store.save_settings(settings, revision=None)
 
 
 def execute(service: PlaylistService, request: ServiceRequest) -> Outcome:
@@ -118,8 +156,8 @@ def execute(service: PlaylistService, request: ServiceRequest) -> Outcome:
             and answers with the error until a reload (see app/worker.py).
     """
     try:
-        if isinstance(request, PruneRequest):
-            return Outcome(_prune(service))
+        if isinstance(request, PruneRequest | SettingsRequest | SaveSettingsRequest):
+            return _settings_command(service, request)
         if request.command == "status":
             return Outcome(_status(service))
         playlist = service.find_playlist(request.target)
@@ -140,6 +178,8 @@ _ERROR_KINDS: tuple[tuple[type[Exception], ErrorKind], ...] = (
     (NoImagesError, "no_images"),
     (NothingShownError, "nothing_shown"),
     (ImageLoadError, "bad_image"),
+    (SettingsError, "invalid_settings"),
+    (StaleSettingsError, "stale_settings"),
     (AppError, "failed"),
 )
 
@@ -152,11 +192,39 @@ def error_reply(err: Exception) -> ErrorReply:
     return ErrorReply.make("internal", f"Unexpected error: {err}")
 
 
+def _settings_command(
+    service: PlaylistService,
+    request: PruneRequest | SettingsRequest | SaveSettingsRequest,
+) -> Outcome:
+    """The commands on the settings and the state they keep."""
+    match request:
+        case PruneRequest():
+            return Outcome(_prune(service))
+        case SettingsRequest():
+            return Outcome(
+                SettingsResult(settings=service.settings, revision=service.revision())
+            )
+        case SaveSettingsRequest():
+            return Outcome(_save_settings(service, request), render=True)
+
+
 def _prune(service: PlaylistService) -> PruneResult:
     dropped = service.prune_state()
     for playlist_id in dropped:
-        log.info("Dropped the state of playlist id %s: not in the config", playlist_id)
+        log.info(
+            "Dropped the state of playlist id %s: not in the settings", playlist_id
+        )
     return PruneResult(dropped=tuple(dropped))
+
+
+def _save_settings(
+    service: PlaylistService, request: SaveSettingsRequest
+) -> SaveSettingsResult:
+    """Monitors whose settings changed are rendered by the caller's tick."""
+    revision = service.save_settings(request.settings, request.revision)
+    return SaveSettingsResult(
+        revision=revision, warnings=tuple(service.settings.warnings())
+    )
 
 
 def _status(service: PlaylistService) -> StatusResult:
@@ -165,26 +233,26 @@ def _status(service: PlaylistService) -> StatusResult:
             _details(service, status) for status in service.status(upcoming=3)
         ),
         paused=service.pause_reason(),
-        warnings=tuple(service.config.warnings()),
+        warnings=tuple(service.settings.warnings()),
     )
 
 
-def _next(service: PlaylistService, playlist: PlaylistConfig) -> Outcome:
+def _next(service: PlaylistService, playlist: PlaylistSettings) -> Outcome:
     change = service.next(playlist)
     return Outcome(NextResult(playlist=playlist.name, change=change), change)
 
 
-def _prev(service: PlaylistService, playlist: PlaylistConfig) -> Outcome:
+def _prev(service: PlaylistService, playlist: PlaylistSettings) -> Outcome:
     change = service.previous(playlist)
     return Outcome(PrevResult(playlist=playlist.name, change=change), change)
 
 
-def _fav(service: PlaylistService, playlist: PlaylistConfig) -> Outcome:
+def _fav(service: PlaylistService, playlist: PlaylistSettings) -> Outcome:
     image, added = service.favourite(playlist)
     return Outcome(_mark("fav", service, playlist, image, added))
 
 
-def _unfav(service: PlaylistService, playlist: PlaylistConfig) -> Outcome:
+def _unfav(service: PlaylistService, playlist: PlaylistSettings) -> Outcome:
     image, removed = service.unfavourite(playlist)
     return Outcome(_mark("unfav", service, playlist, image, removed))
 
@@ -192,7 +260,7 @@ def _unfav(service: PlaylistService, playlist: PlaylistConfig) -> Outcome:
 def _mark(
     command: Literal["fav", "unfav"],
     service: PlaylistService,
-    playlist: PlaylistConfig,
+    playlist: PlaylistSettings,
     image: Path,
     changed: bool,
 ) -> MarkResult:
@@ -205,7 +273,7 @@ def _mark(
     )
 
 
-def _remove(service: PlaylistService, playlist: PlaylistConfig) -> Outcome:
+def _remove(service: PlaylistService, playlist: PlaylistSettings) -> Outcome:
     image, change = service.remove(playlist)
     result = RemoveResult(
         playlist=playlist.name,
@@ -216,17 +284,17 @@ def _remove(service: PlaylistService, playlist: PlaylistConfig) -> Outcome:
     return Outcome(result, change)
 
 
-def _hold(service: PlaylistService, playlist: PlaylistConfig) -> Outcome:
+def _hold(service: PlaylistService, playlist: PlaylistSettings) -> Outcome:
     changed = service.hold(playlist)
     return Outcome(HoldResult(playlist=playlist.name, held=True, changed=changed))
 
 
-def _resume(service: PlaylistService, playlist: PlaylistConfig) -> Outcome:
+def _resume(service: PlaylistService, playlist: PlaylistSettings) -> Outcome:
     changed = service.resume(playlist)
     return Outcome(ResumeResult(playlist=playlist.name, held=False, changed=changed))
 
 
-_Handler = Callable[[PlaylistService, PlaylistConfig], Outcome]
+_Handler = Callable[[PlaylistService, PlaylistSettings], Outcome]
 _TARGET_HANDLERS: dict[Command, _Handler] = {
     "next": _next,
     "prev": _prev,
@@ -247,29 +315,35 @@ def overview(service: PlaylistService) -> Overview:
     statuses = service.status(upcoming=0, monitors=monitors)
     return Overview(
         playlists=tuple(_view(service, s) for s in statuses),
-        monitors=tuple(_desktop_monitor(m) for m in monitors),
+        monitors=tuple(_desktop_monitor(service, m) for m in monitors),
         paused=service.pause_reason(),
     )
 
 
-def _desktop_monitor(monitor: Monitor) -> DesktopMonitor:
+def _desktop_monitor(service: PlaylistService, monitor: Monitor) -> DesktopMonitor:
     rect = monitor.rect
     geometry = (
         None
         if rect is None
         else Geometry(x=rect.x1, y=rect.y1, width=rect.width, height=rect.height)
     )
-    return DesktopMonitor(id=monitor.id, name=monitor.name, geometry=geometry)
+    return DesktopMonitor(
+        id=monitor.id,
+        name=monitor.name,
+        geometry=geometry,
+        look=service.settings.look(monitor.id),
+    )
 
 
 def _view(service: PlaylistService, status: PlaylistStatus) -> PlaylistView:
     monitors = tuple(
         MonitorView(
             # As the desktop spells it if listed (as `Overview.monitors`
-            # does), else as the config does.
+            # does), else as the settings do.
             id=m.monitor.id if m.monitor else m.monitor_id,
             name=m.monitor.name if m.monitor else str(m.monitor_id),
             attached=m.monitor.attached if m.monitor else None,
+            look=service.settings.look(m.monitor_id),
         )
         for m in status.members
     )
@@ -302,7 +376,6 @@ def _details(service: PlaylistService, status: PlaylistStatus) -> PlaylistDetail
         directory=playlist.directory,
         order=playlist.order,
         interval=interval,
-        mode=playlist.mode,
         next_in_seconds=None if interval is None else interval - status.elapsed,
         upcoming=status.upcoming,
     )

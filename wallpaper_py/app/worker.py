@@ -10,7 +10,9 @@ this thread touches it.
 Everything reaches the service through `ServiceWorker.execute`, one at a
 time, between ticks: socket requests directly (the socket lives on this
 thread), the tray through `ServiceHost`. That includes `reload`, which
-closes the service and opens it again on the config file as it is now.
+closes the service and opens it again, importing the config file as it is
+now (until Phase 4b step 3b), and `save_settings`, after which it ticks so
+that the monitors show the new settings before the reply.
 Nothing on this thread may block waiting for a client or spin a nested
 event loop. Events (a change, a new
 overview) go to the UI thread as signals and to socket subscribers (the UI
@@ -40,8 +42,7 @@ from ..commands import (
     overview,
 )
 from ..core.backend import Backend
-from ..core.config import ConfigError
-from ..core.model import AppError, WallpaperError
+from ..core.model import AppError, ConfigError, WallpaperError
 from ..core.presence import Presence
 from ..core.service import Change, PlaylistService
 from ..protocol import (
@@ -131,14 +132,17 @@ class ServiceWorker(QObject):
         self.thread().quit()
 
     def _reload(self) -> Reply:
-        """The `reload` command: the service again, on the file as it is now."""
+        """
+        The `reload` command: the service again, after importing the config
+        file as it is now (commands.import_config).
+        """
         log.info("Reloading the config")
         self._close()
         self._open()
         self.tick()  # publishes the new overview before the reply goes out
         if self._service is None:
             return self._error or ErrorReply.make("failed", "The service did not start")
-        return ReloadResult(warnings=tuple(self._service.config.warnings()))
+        return ReloadResult(warnings=tuple(self._service.settings.warnings()))
 
     @Slot()
     def tick(self) -> None:
@@ -155,6 +159,7 @@ class ServiceWorker(QObject):
     def execute(self, request: CommandRequest) -> Reply:
         """Run one command: the only way in for socket, tray and windows."""
         reply: Reply
+        render = False  # monitors to render again: tick before the reply
         if isinstance(request, ReloadRequest):
             reply = self._reload()
             log.info("reload: %r", reply)
@@ -165,15 +170,20 @@ class ServiceWorker(QObject):
             )
         else:
             try:
-                reply, change = execute(self._service, request)
+                reply, change, render = execute(self._service, request)
             except Exception as err:  # pylint: disable=broad-exception-caught
                 reply, change = self._failed(f"Command {request.command}", err), None
             if change is not None:
                 self._announce(change)
-        if request.command != "status":
+        if request.command not in ("status", "settings"):
             target = request.target if isinstance(request, TargetRequest) else None
             log.info("%s %s: %r", request.command, target or "", reply)
-        self._publish()
+        if render:
+            # Renders the monitors whose playlist, look or folder changed,
+            # then publishes the overview: both before the reply.
+            self.tick()
+        else:
+            self._publish()
         return reply
 
     def _failed(self, what: str, error: Exception) -> ErrorReply:
@@ -245,9 +255,9 @@ class ServiceWorker(QObject):
             self._fail(err)
             return
         self._error = None
-        for warning in self._service.config.warnings():
+        for warning in self._service.settings.warnings():
             log.warning("%s", warning)
-        names = ", ".join(p.name for p in self._service.config.playlists)
+        names = ", ".join(p.name for p in self._service.settings.playlists)
         log.info("Running playlists: %s", names)
         # Put every current image back, rendered again: after a reboot, and
         # after a reload that may have changed a mode.

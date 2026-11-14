@@ -728,13 +728,41 @@ Order, one session each, all checks green after each:
    code; it can be done alongside step 1 or 3a.
 3. Settings in the database, in two steps, so that every session ends
    green and the app (autostart runs it from this checkout) keeps rotating:
-   1. **3a, the core:** the tables, the `Settings` model and its checks,
+   1. (done 2026-11-14) **3a, the core:** the tables, the `Settings` model and its checks,
       `settings` / `save_settings`, per-monitor looks in the service, the
       worker, tray and CLI on them. The old Settings page keeps working
       through a temporary bridge: it still writes config.toml and sends
       `reload`, and `reload` imports that file into the database (each
       playlist's mode copied to its monitors). Dev-time scaffolding for
       this step only, not a migration: the result still imports nothing.
+      As built:
+      - `core/settings.py`: `Settings` (playlists, monitors with
+        `playlist` and `look`, pausing, list files; None: the default
+        file), `check_settings` (meaning) and `check_folders` (a new or
+        changed folder exists), `warnings`, durations. `Look` is a
+        pydantic dataclass; `ConfigError` moved to `core/model.py`,
+        `decode_text` to `core/marks.py`. config.py is only the TOML file
+        now (`Config.to_settings`), to delete in 3b.
+      - Store (schema 6): a one-row `settings` table with the revision,
+        `playlist` with its settings beside its state (state writes no
+        longer create a row), `monitor` (key, id as spelt, playlist, mode,
+        and a `background` column already there for step 5, unread).
+      - A playlist given another folder shows an image from it on the next
+        tick (the one before the reply), even when held or manual: the
+        save resets its deck and sets `folder_changed` on its row, cleared
+        by the next image shown. Stored, so it works through the bridge's
+        import and across a restart.
+      - The bridge imports the file when the service opens, at start as
+        well as on `reload` (`commands.import_config`), so the app keeps
+        rotating from config.toml after the one-time deletion of state.db;
+        only when the settings differ, without the folder check (as
+        config.toml never had one). A save from the old page deletes the
+        history of a playlist taken out, as `save_settings` does; `prune`
+        normally has nothing left to drop.
+      - Error kinds `invalid_settings` and `stale_settings`; the look in
+        `MonitorView` and `DesktopMonitor`; `mode` left
+        `PlaylistDetails` (the CLI's status shows it per monitor). The app
+        ticks after a `save_settings` before replying.
    2. **3b, the page** (after the mockup is approved): the new Settings page
       on the commands; the old page, config.toml, `config_edit`, tomlkit,
       `reload`, `prune`, `--config` and the bridge go.

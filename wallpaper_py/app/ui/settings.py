@@ -56,7 +56,8 @@ from PySide6.QtWidgets import (
 from shiboken6 import Shiboken
 
 from ...core import paths
-from ...core.config import Config, ConfigError, loads_config
+from ...core.config import Config, loads_config
+from ...core.model import ConfigError
 from ...core.config_edit import (
     FAVOURITES,
     IDLE,

@@ -10,12 +10,12 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from wallpaper_py.core.config import Config, Order, PlaylistConfig
 from wallpaper_py.core.library import Library
 from wallpaper_py.core.marks import MarkFileBusyError
 from wallpaper_py.core.model import (
     ImageLoadError,
     ImageMode,
+    Look,
     MonitorId,
     MonitorNotAttachedError,
     Rectangle,
@@ -26,6 +26,14 @@ from wallpaper_py.core.service import (
     ManualPlaylistError,
     PlaylistError,
     PlaylistService,
+)
+from wallpaper_py.core.settings import (
+    MonitorSettings,
+    Order,
+    PlaylistSettings,
+    Settings,
+    SettingsError,
+    StaleSettingsError,
 )
 from wallpaper_py.core.store import Store
 
@@ -50,16 +58,32 @@ class Env:
     clock: FakeClock
     presence: FakePresence
     store: Store
-    config: Config
     service: PlaylistService
 
     @property
-    def konachan(self) -> PlaylistConfig:
-        return self.config.playlists[0]
+    def settings(self) -> Settings:
+        return self.service.settings
 
     @property
-    def fantasy(self) -> PlaylistConfig:
-        return self.config.playlists[1]
+    def konachan(self) -> PlaylistSettings:
+        return self.settings.playlists[0]
+
+    @property
+    def fantasy(self) -> PlaylistSettings:
+        return self.settings.playlists[1]
+
+    @property
+    def favourites_file(self) -> Path:
+        return self.tmp / "lists" / "favourites.txt"
+
+    @property
+    def to_remove_file(self) -> Path:
+        return self.tmp / "lists" / "to-remove.txt"
+
+    def reconfigure(self, **changes: object) -> None:
+        """Other settings, stored as they are, and a restart on them."""
+        self.store.save_settings(self.settings.model_copy(update=changes), None)
+        self.restart()
 
     def tick_for(self, seconds: float) -> list[Change]:
         """Tick every STEP seconds; the first tick happens right away."""
@@ -80,11 +104,11 @@ class Env:
 
 def make_service(env: Env, tick_period: float = STEP) -> PlaylistService:
     return PlaylistService(
-        env.config,
         env.backend,
         env.presence,
         env.store,
         env.tmp / "rendered",
+        env.tmp / "data",
         clock=env.clock,
         rng=random.Random(0),
         library=Library(env.clock, max_age=0),
@@ -96,29 +120,34 @@ def make_service(env: Env, tick_period: float = STEP) -> PlaylistService:
 def env(tmp_path: Path) -> Env:
     make_images(tmp_path / "konachan", *(f"k{i:02}.jpg" for i in range(1, 9)))
     make_images(tmp_path / "fantasy", "f1.png", "f2.png", "f10.png")
-    config = Config(
+    settings = Settings(
         playlists=(
-            PlaylistConfig(
-                "konachan",
-                "1",
-                tmp_path / "konachan",
-                (MonitorId(fake_id("AW3225QF")), MonitorId(fake_id("PLX2783H"))),
-                INTERVAL,
-                Order.SHUFFLE,
+            PlaylistSettings(
+                id="1",
+                name="konachan",
+                directory=tmp_path / "konachan",
+                order=Order.SHUFFLE,
+                interval=INTERVAL,
             ),
-            PlaylistConfig(
-                "fantasy",
-                "2",
-                tmp_path / "fantasy",
-                (MonitorId(fake_id("ZeroMOD")),),
-                INTERVAL,
-                Order.SORTED,
+            PlaylistSettings(
+                id="2",
+                name="fantasy",
+                directory=tmp_path / "fantasy",
+                order=Order.SORTED,
+                interval=INTERVAL,
             ),
+        ),
+        monitors=(
+            MonitorSettings(id=MonitorId(fake_id("AW3225QF")), playlist="1"),
+            MonitorSettings(id=MonitorId(fake_id("PLX2783H")), playlist="1"),
+            MonitorSettings(id=MonitorId(fake_id("ZeroMOD")), playlist="2"),
         ),
         favourites_file=tmp_path / "lists" / "favourites.txt",
         to_remove_file=tmp_path / "lists" / "to-remove.txt",
         pause_when_idle=300.0,
     )
+    store = Store(tmp_path / "state.sqlite3")
+    store.save_settings(settings, revision=None)
     environment = Env(
         tmp=tmp_path,
         backend=FakeBackend(
@@ -130,8 +159,7 @@ def env(tmp_path: Path) -> Env:
         ),
         clock=FakeClock(),
         presence=FakePresence(),
-        store=Store(tmp_path / "state.sqlite3"),
-        config=config,
+        store=store,
         service=None,  # type: ignore[arg-type]
     )
     environment.service = make_service(environment)
@@ -290,18 +318,18 @@ def test_favourite_writes_the_txt_file(env: Env) -> None:
     image, added = env.service.favourite(env.fantasy)
     assert added and image == env.tmp / "fantasy" / "f1.png"
     assert not env.service.favourite(env.fantasy)[1]
-    text = env.config.favourites_file.read_text(encoding="utf-8")
+    text = env.favourites_file.read_text(encoding="utf-8")
     assert text == f"{image}\n"
 
 
 def test_unfavourite_removes_only_the_current_image(env: Env) -> None:
     env.service.tick()
-    env.config.favourites_file.parent.mkdir()
-    env.config.favourites_file.write_text("# mine\nother.png\n", encoding="utf-8")
+    env.favourites_file.parent.mkdir()
+    env.favourites_file.write_text("# mine\nother.png\n", encoding="utf-8")
     image, _ = env.service.favourite(env.fantasy)
     assert env.service.unfavourite(env.fantasy) == (image, True)
     assert env.service.unfavourite(env.fantasy) == (image, False)
-    text = env.config.favourites_file.read_text(encoding="utf-8")
+    text = env.favourites_file.read_text(encoding="utf-8")
     assert text == "# mine\nother.png\n"
 
 
@@ -310,7 +338,7 @@ def test_remove_lists_hides_and_moves_on(env: Env) -> None:
     image, change = env.service.remove(env.konachan)
     assert change is not None and change.image != image
     assert image.exists()  # never deleted
-    assert env.config.to_remove_file.read_text(encoding="utf-8") == f"{image}\n"
+    assert env.to_remove_file.read_text(encoding="utf-8") == f"{image}\n"
     assert env.service.previous(env.konachan) is None  # hidden from history
     shown = {env.service.next(env.konachan).image for _ in range(20)}
     assert image not in shown
@@ -319,8 +347,8 @@ def test_remove_lists_hides_and_moves_on(env: Env) -> None:
 def test_externally_listed_current_image_is_replaced(env: Env) -> None:
     env.service.tick()
     current = env.service.current(env.fantasy)
-    env.config.to_remove_file.parent.mkdir(parents=True, exist_ok=True)
-    env.config.to_remove_file.write_text(f"{current}\n", encoding="utf-8")
+    env.to_remove_file.parent.mkdir(parents=True, exist_ok=True)
+    env.to_remove_file.write_text(f"{current}\n", encoding="utf-8")
     [change] = [c for c in env.service.tick() if c.playlist == "fantasy"]
     assert change.image != current
 
@@ -344,12 +372,10 @@ def test_unreadable_images_are_skipped(env: Env) -> None:
     assert env.service.current(env.fantasy) == env.shown("ZeroMOD") == f2
 
 
-def test_every_image_is_rendered_with_the_playlist_mode(env: Env) -> None:
-    env.config = replace(
-        env.config,
-        playlists=(env.konachan, replace(env.fantasy, mode=ImageMode.FIT)),
-    )
-    env.restart()
+def test_every_image_is_rendered_with_the_monitor_look(env: Env) -> None:
+    aw, plx, strip = env.settings.monitors
+    fit = strip.model_copy(update={"look": Look(ImageMode.FIT)})
+    env.reconfigure(monitors=(aw, plx, fit))
     env.service.tick()
     zero = next(m for m in env.backend.monitors() if m.name == "ZeroMOD")
     assert zero.wallpaper is not None and zero.wallpaper.parent == env.tmp / "rendered"
@@ -406,8 +432,7 @@ def test_find_playlist(env: Env) -> None:
 
 
 def test_no_playlists_is_a_service_that_rotates_nothing(env: Env) -> None:
-    env.config = replace(env.config, playlists=())
-    env.restart()
+    env.reconfigure(playlists=(), monitors=())
     assert not env.tick_for(INTERVAL) and not env.backend.set_calls
     assert not env.service.status()
     with pytest.raises(PlaylistError, match="No playlists yet"):
@@ -588,9 +613,8 @@ def test_held_playlist_still_replaces_a_removed_image(env: Env) -> None:
 
 
 def test_manual_playlist_never_changes_by_itself(env: Env) -> None:
-    manual = replace(env.fantasy, interval=None)
-    env.config = replace(env.config, playlists=(env.konachan, manual))
-    env.restart()
+    manual = env.fantasy.model_copy(update={"interval": None})
+    env.reconfigure(playlists=(env.konachan, manual))
     assert manual.manual
     assert not [c for c in env.tick_for(10 * INTERVAL) if c.playlist == "fantasy"]
     assert env.service.current(manual) is None  # not even a first image
@@ -607,7 +631,7 @@ def test_manual_playlist_never_changes_by_itself(env: Env) -> None:
 
 
 def test_two_monitors_of_one_model_are_told_apart(env: Env) -> None:
-    """Same name, other id: only the one in the config gets its images."""
+    """Same name, other id: only the one in the settings gets its images."""
     env.service.tick()
     shown = len(env.backend.set_calls)
     env.backend.relist(make_monitor("ZeroMOD", x=9000, pnp="OTHER"))
@@ -637,59 +661,139 @@ def test_a_monitor_on_another_port_waits_to_be_assigned(env: Env) -> None:
 
 def test_a_monitor_id_in_another_case_is_the_same_monitor(env: Env) -> None:
     aw = fake_id("AW3225QF")
-    konachan = replace(env.konachan, monitors=(MonitorId(aw.lower()), MonitorId(aw)))
-    env.config = replace(env.config, playlists=(konachan, env.fantasy))
-    env.restart()
+    _, plx, zero = env.settings.monitors
+    lower = MonitorSettings(id=MonitorId(aw.lower()), playlist="1")
+    env.reconfigure(monitors=(lower, plx, zero))
+    env.backend.detach("PLX2783H")
     [change] = [c for c in env.service.tick() if c.playlist == "konachan"]
-    assert change.shown_on == ("AW3225QF",)  # once
-    assert env.service.next(konachan).shown_on == ("AW3225QF",)
-    assert env.service.find_playlist("AW3225QF") == konachan
+    assert change.shown_on == ("AW3225QF",)
+    assert env.service.next(env.konachan).shown_on == ("AW3225QF",)
+    assert env.service.find_playlist("AW3225QF") == env.konachan
     # The backend gets the id as the desktop spells it.
     assert {str(c.monitor_id) for c in env.backend.set_calls} >= {aw}
 
 
-def test_state_of_a_playlist_no_longer_in_the_config_goes_on_request(
-    env: Env,
-) -> None:
-    konachan, fantasy = env.config.playlists
+def test_save_settings_uses_them_at_once(env: Env) -> None:
+    """A monitor whose look or playlist changed is rendered again."""
     env.service.tick()
-    env.service.hold(fantasy)
-    shown = env.service.current(fantasy)
-    env.config = replace(env.config, playlists=(konachan,))  # fantasy taken out
-    env.restart()
-    # Loading drops nothing: back in the config, it carries on.
-    env.config = replace(env.config, playlists=(konachan, fantasy))
-    env.restart()
-    assert env.service.current(fantasy) == shown
-    assert env.service.held(fantasy)
+    aw, plx, zero = env.settings.monitors
+    calls = len(env.backend.set_calls)
+    fit = aw.model_copy(update={"look": Look(ImageMode.FIT)})
+    moved = plx.model_copy(update={"playlist": "2"})
+    revision = env.service.revision()
+    new = env.settings.model_copy(update={"monitors": (fit, moved, zero)})
+    assert env.service.save_settings(new, revision) == revision + 1
+    assert env.service.settings == new
+    changes = env.service.tick()
+    again = {c.monitor_id for c in env.backend.set_calls[calls:]}
+    assert again == {aw.id, plx.id}  # not ZeroMOD: nothing changed for it
+    assert {c.reason for c in changes} == {"restored"}
+    assert env.shown("PLX2783H") == env.service.current(env.fantasy)
+    env.restart()  # stored
+    assert env.service.settings == new
 
-    env.config = replace(env.config, playlists=(konachan,))
-    env.restart()
-    assert env.service.prune_state() == ["2"]  # fantasy, only
-    assert env.service.current(env.konachan) is not None  # in the config: kept
+
+def test_save_settings_refuses_a_stale_or_invalid_edit(env: Env) -> None:
+    revision = env.service.revision()
+    renamed = env.konachan.model_copy(update={"name": "anime"})
+    edit = env.settings.model_copy(update={"playlists": (renamed, env.fantasy)})
+    env.service.save_settings(edit, revision)
+    with pytest.raises(StaleSettingsError):
+        env.service.save_settings(edit, revision)  # made on the old revision
+    twin = env.fantasy.model_copy(update={"name": "ANIME"})
+    with pytest.raises(SettingsError, match="Two playlists are named"):
+        env.service.save_settings(
+            env.settings.model_copy(update={"playlists": (renamed, twin)}),
+            revision + 1,
+        )
+    gone = env.fantasy.model_copy(update={"directory": env.tmp / "nope"})
+    with pytest.raises(SettingsError, match="doesn't exist"):
+        env.service.save_settings(
+            env.settings.model_copy(update={"playlists": (renamed, gone)}),
+            revision + 1,
+        )
+    assert env.service.revision() == revision + 1  # nothing saved
+    assert env.service.settings.playlists == (renamed, env.fantasy)
+
+
+def test_deleting_a_playlist_deletes_its_state(env: Env) -> None:
+    env.service.tick()
+    env.service.hold(env.fantasy)
+    aw, plx, _ = env.settings.monitors
+    edit = env.settings.model_copy(
+        update={"playlists": (env.konachan,), "monitors": (aw, plx)}
+    )
+    env.service.save_settings(edit, env.service.revision())
     assert not env.store.history_before("2")
     assert not env.store.playlist_state("2").held
-    assert not env.service.prune_state()
+    assert env.store.history_before("1")  # the other one keeps its own
+    assert not env.service.prune_state()  # nothing left over
 
 
-def test_prune_refuses_without_a_config_file(env: Env) -> None:
-    """An empty config from no file must not wipe every playlist's state."""
+def test_a_new_folder_shows_at_once_even_when_held(env: Env) -> None:
     env.service.tick()
-    env.config = replace(env.config, playlists=(), from_file=False)
-    env.restart()
-    with pytest.raises(PlaylistError, match="no config file"):
-        env.service.prune_state()
-    assert env.store.history_before("1") and env.store.history_before("2")
+    env.service.next(env.fantasy)  # f2
+    env.service.hold(env.fantasy)
+    new = env.tmp / "art"
+    make_images(new, "g1.png", "g2.png")
+    moved = env.fantasy.model_copy(update={"directory": new})
+    edit = env.settings.model_copy(update={"playlists": (env.konachan, moved)})
+    env.service.save_settings(edit, env.service.revision())
+    [change] = [c for c in env.service.tick() if c.playlist == "fantasy"]
+    assert change.image == new / "g1.png" and change.reason == "scheduled"
+    assert env.shown("ZeroMOD") == new / "g1.png"
+    assert not [c for c in env.tick_for(10 * INTERVAL) if c.playlist == "fantasy"]
+    assert env.service.held(env.fantasy)  # still held: only this one change
+    previous = env.service.previous(env.fantasy)
+    assert previous is not None and previous.image.name == "f2.png"
+    assert env.service.next(env.fantasy).image == new / "g1.png"  # forward again
+    assert env.service.next(env.fantasy).image == new / "g2.png"  # not f10
+
+
+def test_an_empty_new_folder_keeps_the_image_until_it_has_one(env: Env) -> None:
+    manual = env.fantasy.model_copy(update={"interval": None})
+    env.reconfigure(playlists=(env.konachan, manual))
+    first = env.service.next(env.fantasy).image
+    new = env.tmp / "empty"
+    new.mkdir()
+    moved = env.fantasy.model_copy(update={"directory": new})
+    edit = env.settings.model_copy(update={"playlists": (env.konachan, moved)})
+    env.service.save_settings(edit, env.service.revision())
+    assert not [c for c in env.service.tick() if c.playlist == "fantasy"]
+    assert env.shown("ZeroMOD") == first
+    env.restart()  # remembered across a restart
+    make_images(new, "h1.png")
+    [change] = [c for c in env.service.tick() if c.playlist == "fantasy"]
+    assert change.image == new / "h1.png"
+
+
+def test_a_postponed_playlist_renamed_resumes_once(
+    env: Env, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Postponed goes by id: a rename neither repeats nor loses it."""
+    env.backend.detach("ZeroMOD")
+    caplog.set_level(logging.INFO)
+    env.service.tick()
+    renamed = env.fantasy.model_copy(update={"name": "office"})
+    edit = env.settings.model_copy(update={"playlists": (env.konachan, renamed)})
+    env.service.save_settings(edit, env.service.revision())
+    env.service.tick()
+    env.backend.update("ZeroMOD", rect=make_monitor("x").rect)
+    env.service.tick()
+    lines = [r.getMessage() for r in caplog.records if "rotation" in r.getMessage()]
+    assert lines == [
+        "fantasy: no monitor attached, rotation postponed",
+        "office: monitor attached again, rotation resumed",
+    ]
 
 
 def test_a_renamed_playlist_keeps_its_state(env: Env) -> None:
-    """The state goes by the config's id: a new name changes nothing."""
+    """The state goes by the playlist's id: a new name changes nothing."""
     env.service.tick()
     env.service.hold(env.konachan)
     current = env.service.current(env.konachan)
-    renamed = replace(env.konachan, name="anime")
-    env.config = replace(env.config, playlists=(renamed, env.fantasy))
-    env.restart()
+    renamed = env.konachan.model_copy(update={"name": "anime"})
+    env.reconfigure(playlists=(renamed, env.fantasy))
     assert env.service.current(renamed) == current
     assert env.service.held(renamed)
     assert not env.service.prune_state()

@@ -43,11 +43,14 @@ steps there for new desktop-facing behaviour, for the user to try.
   (`explicit-override`). A misspelt Qt event handler is then an error,
   not a method Qt never calls.
 - mypy is strict; pydantic models for anything (de)serialized, also
-  files people write by hand: the keys and types of config.toml are
-  `ConfigFile` / `PlaylistTable` in `core/config.py` (a new key goes
-  there, and in `_PROBLEMS` for its error message), not `isinstance`
-  checks. Hand-written code checks only what values mean (durations,
-  paths, uniqueness). Use `StrictInt` / `StrictStr` / `StrictBool` for
+  files people write by hand: the settings are `Settings` in
+  `core/settings.py` (stored in the state database, sent on the socket;
+  a new setting goes there, with its meaning checked in
+  `check_settings`), and until Phase 4b step 3b the keys and types of
+  config.toml are `ConfigFile` / `PlaylistTable` in `core/config.py`
+  (with `_PROBLEMS` for its error messages), not `isinstance` checks.
+  Hand-written code checks only what values mean (durations, paths,
+  uniqueness). Use `StrictInt` / `StrictStr` / `StrictBool` for
   values people type: lax pydantic takes `true` as an int and `0` as
   `Literal[False]`.
 - config.toml is written by the settings window; people aren't expected
@@ -60,7 +63,7 @@ steps there for new desktop-facing behaviour, for the user to try.
   the protocol; change it in place.
 - Files people write by hand (config.toml, the list files) are UTF-8
   without a byte order mark, nothing else; a BOM is a `ConfigError` that
-  says so (`config.decode_text`). This is on purpose: don't add BOM
+  says so (`marks.decode_text`). This is on purpose: don't add BOM
   tolerance (`utf-8-sig`), and don't report it in reviews.
 - When you rename something named in docs/app-wiring.md, update the doc:
   `tests/test_docs.py` checks it.

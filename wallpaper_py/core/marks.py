@@ -13,7 +13,7 @@ list, delete the files properly and clear the list.
 - Entries whose image no longer exists are *never* dropped automatically;
   callers hide them where needed. Clearing is always explicit.
 - The files are UTF-8 without a byte order mark, nothing else
-  (config.decode_text). One that isn't is a ConfigError: the
+  (`decode_text`). One that isn't is a ConfigError: the
   service stops, as for a broken config, and the file is never rewritten.
   Unless it changed in the last few seconds: a script that writes it in
   place (not atomically) may be half-way, cutting a character in two. That
@@ -29,20 +29,48 @@ list, delete the files properly and clear the list.
 
 from __future__ import annotations
 
+import codecs
 import contextlib
 import logging
 import os
 import time
 from pathlib import Path
 
-from .config import ConfigError, decode_text
 from .library import path_key
-from .model import WallpaperError
+from .model import ConfigError, WallpaperError
 
 log = logging.getLogger(__name__)
 
 # A file changed this recently that won't decode may still be being written.
 SETTLE_NS = 3_000_000_000
+
+
+_BOMS = (codecs.BOM_UTF8, codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)
+
+
+def decode_text(data: bytes, path: Path) -> str:
+    """
+    The text of a file this app reads (the list files, the config): UTF-8
+    without a byte order mark, and nothing else.
+
+    Raises:
+        ConfigError: any other encoding, or a BOM.
+    """
+    # A UTF-8 BOM decodes without error, to an invisible U+FEFF before the
+    # first line: a first path that never matches, or a TOML error on line
+    # 1 that the user can't see. Refused with a message that says what to
+    # do, not stripped, so the app reads what every other tool (scripts, on
+    # both systems) reads. The UTF-16 BOMs would fail to decode anyway;
+    # checked here for the clearer message (Notepad offers "UTF-16 LE").
+    if data.startswith(_BOMS):
+        raise ConfigError(
+            f"{path} is not UTF-8 text: it starts with a byte order mark (BOM). "
+            f"Save it as UTF-8 without BOM."
+        )
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError as err:
+        raise ConfigError(f"{path} is not UTF-8 text: {err}") from err
 
 
 class MarkFileBusyError(WallpaperError):

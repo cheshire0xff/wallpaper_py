@@ -11,7 +11,7 @@ time while it has an attached monitor, the session is not locked or idle,
 and this process is running. A change happens when that reaches the
 interval; a next / previous / pick starts the count again.
 
-A held playlist (and a manual one, `interval = "manual"`) does not rotate:
+A held playlist (and a manual one, without an interval) does not rotate:
 its count stands still and ticks never choose a new image for it, not even
 a first one. They still give its current image to a monitor that comes
 back, and replace a current image that can't be shown any more (listed for
@@ -19,6 +19,10 @@ removal, deleted, unreadable).
 
 Pick shows a chosen image, from any directory, as if `next` had chosen it:
 it goes into the history right after the current entry.
+
+Settings: the service runs on the settings stored in the database, and
+`save_settings` stores new ones and uses them at once: a monitor whose
+playlist or look changed is rendered again on the next tick.
 
 Safety: an image is first shown, then committed (history, deck). If no
 monitor of the playlist is attached the change is postponed, never skipped
@@ -38,14 +42,13 @@ from pathlib import Path
 from typing import Literal
 
 from .backend import Backend
-from .config import NO_PLAYLISTS, Config, Order, PlaylistConfig
 from .imaging import check_image
 from .library import Library, path_key
 from .marks import MarkFile, MarkFileBusyError
 from .model import (
     Clock,
+    ConfigError,
     ImageLoadError,
-    Look,
     Monitor,
     MonitorId,
     MonitorNotAttachedError,
@@ -54,6 +57,15 @@ from .model import (
 from .order import Card, ShuffleDeck, next_sorted, upcoming_sorted
 from .presence import Presence
 from .selection import resolve_monitor
+from .settings import (
+    NO_PLAYLISTS,
+    Order,
+    PlaylistSettings,
+    Settings,
+    SettingsError,
+    check_folders,
+    check_settings,
+)
 from .setter import apply_wallpaper
 from .store import HistoryEntry, Store
 
@@ -87,10 +99,6 @@ class ManualPlaylistError(PlaylistError):
     """Hold / resume on a manual playlist, which never rotates anyway."""
 
 
-class NoConfigFileError(PlaylistError):
-    """`prune` without a config file: which playlists exist is not known."""
-
-
 ChangeReason = Literal["scheduled", "next", "previous", "picked", "restored"]
 
 
@@ -111,16 +119,16 @@ class Change:
 
 @dataclass(frozen=True)
 class MemberStatus:
-    monitor_id: MonitorId  # as the config spells it
+    monitor_id: MonitorId  # as the settings spell it
     monitor: Monitor | None  # None: not listed right now
 
 
 def _members_of(
-    playlist: PlaylistConfig, monitors: Sequence[Monitor]
+    member_ids: Sequence[MonitorId], monitors: Sequence[Monitor]
 ) -> tuple[MemberStatus, ...]:
-    """The playlist's monitors, as listed now."""
+    """A playlist's monitors, as listed now."""
     listed = {m.id: m for m in monitors}
-    return tuple(MemberStatus(i, listed.get(i)) for i in playlist.monitors)
+    return tuple(MemberStatus(i, listed.get(i)) for i in member_ids)
 
 
 def _attached(members: Sequence[MemberStatus]) -> list[Monitor]:
@@ -135,7 +143,7 @@ def _attached(members: Sequence[MemberStatus]) -> list[Monitor]:
 
 @dataclass(frozen=True)
 class PlaylistStatus:
-    playlist: PlaylistConfig
+    playlist: PlaylistSettings
     members: tuple[MemberStatus, ...]
     current: Path | None
     elapsed: float
@@ -154,39 +162,41 @@ class PlaylistService:
     # pylint: disable=too-many-instance-attributes,too-many-arguments
     def __init__(
         self,
-        config: Config,
         backend: Backend,
         presence: Presence,
         store: Store,
         render_dir: Path,
+        data_dir: Path,
         *,
         clock: Clock = time.time,
         rng: random.Random | None = None,
         library: Library | None = None,
         tick_period: float = 5.0,
     ) -> None:
-        """`tick_period`: how often the caller calls `tick()`, in seconds."""
-        self.config = config
+        """
+        Runs on the settings in `store`. `data_dir`: where the list files
+        are unless the settings say otherwise. `tick_period`: how often the
+        caller calls `tick()`, in seconds.
+
+        Raises:
+            ConfigError: a list file can't be used.
+        """
+        self.settings = store.settings()
         self._backend = backend
         self._presence = presence
         self._store = store
         self._render_dir = render_dir
+        self._data_dir = data_dir
         self._clock = clock
         self._rng = rng or random.Random()
         self._library = library or Library(clock)
-        self.favourites = MarkFile(config.favourites_file)
-        self.to_remove = MarkFile(config.to_remove_file)
-        for marks in (self.favourites, self.to_remove):
-            try:
-                marks.paths()  # ConfigError now, not on the first tick
-            except MarkFileBusyError:
-                pass  # logged; unknown until it opens (see _removed)
+        self.favourites, self.to_remove = _open_lists(self.settings, data_dir)
         self._broken: set[str] = set()  # path keys that failed to load
         self._waiting_for_removed = False  # logged once while unknown
         self._last_tick: float | None = None
         self._max_tick_gap = max(MAX_TICK_GAP, 2 * tick_period)
         self._pause_reason: str | None = None
-        self._postponed: set[str] = set()
+        self._postponed: set[str] = set()  # playlist ids: a rename keeps it
         # Each attached monitor's size at the last tick.
         self._sizes: dict[MonitorId, tuple[int, int]] = {}
 
@@ -202,21 +212,53 @@ class PlaylistService:
 
     def prune_state(self) -> list[str]:
         """
-        Drop the state (history, deck, hold) of playlists whose id is no
-        longer in the config; returns their ids (the database is this
-        config's alone). Only on request (`prune`): loading never drops
-        anything, so a playlist taken out for a while keeps its state.
+        Drop any state (history, deck, hold) left of playlists the settings
+        don't have; returns their ids. (Saving settings already deletes the
+        state of a playlist it deletes.)
+        """
+        return self._store.prune_playlists(p.id for p in self.settings.playlists)
+
+    def revision(self) -> int:
+        """The stored settings' revision (see `save_settings`)."""
+        return self._store.revision()
+
+    def save_settings(self, settings: Settings, revision: int | None) -> int:
+        """
+        Store `settings` in place of the current ones and run on them from
+        now on; returns the new revision. Deleting a playlist deletes its
+        state. A monitor whose playlist or look changed is rendered again
+        on the next tick (the caller ticks before replying).
+
+        `revision`: the one the edit was made on; None for any (the import
+        from config.toml, Phase 4b step 3a only).
 
         Raises:
-            NoConfigFileError: there was no config file; its empty config
-                would drop every playlist's state.
+            SettingsError: a value that can't be used; nothing was saved.
+            StaleSettingsError: the stored settings changed since
+                `revision`; nothing was saved.
         """
-        if not self.config.from_file:
-            raise NoConfigFileError(
-                "There is no config file, so it is not known which playlists "
-                "exist; nothing was dropped"
-            )
-        return self._store.prune_playlists(p.id for p in self.config.playlists)
+        check_settings(settings)
+        check_folders(settings, self.settings)
+        old = self.settings
+        lists = (self.favourites, self.to_remove)
+        if settings.list_files(self._data_dir) != old.list_files(self._data_dir):
+            try:
+                lists = _open_lists(settings, self._data_dir)
+            except ConfigError as err:
+                raise SettingsError(str(err)) from err
+        new_revision = self._store.save_settings(settings, revision)
+        self.settings = settings
+        self.favourites, self.to_remove = lists
+        self._postponed &= {p.id for p in settings.playlists}
+        changed = {
+            m.id
+            for m in (*old.monitors, *settings.monitors)
+            if old.look(m.id) != settings.look(m.id)
+            or _playlist_of(old, m.id) != _playlist_of(settings, m.id)
+        }
+        for monitor_id in changed:
+            self._store.forget_applied(monitor_id)
+        return new_revision
 
     def tick(self) -> list[Change]:
         """
@@ -240,18 +282,18 @@ class PlaylistService:
             if not self._waiting_for_removed:
                 log.warning("%s", err)
                 self._waiting_for_removed = True
-            for playlist in self.config.playlists:
-                if _attached(members[playlist.name]):
+            for playlist in self.settings.playlists:
+                if _attached(members[playlist.id]):
                     self._accrue(playlist, elapsed)
             return []
         if self._waiting_for_removed:
             log.info("%s can be read again: rotating", self.to_remove.file)
             self._waiting_for_removed = False
         changes: list[Change] = []
-        for playlist in self.config.playlists:
+        for playlist in self.settings.playlists:
             try:
                 change = self._tick_playlist(
-                    playlist, _attached(members[playlist.name]), removed, elapsed
+                    playlist, _attached(members[playlist.id]), removed, elapsed
                 )
             except MonitorNotAttachedError as err:  # detached since the snapshot
                 log.info("%s", err)
@@ -265,21 +307,33 @@ class PlaylistService:
 
     def _tick_playlist(
         self,
-        playlist: PlaylistConfig,
+        playlist: PlaylistSettings,
         attached: list[Monitor],
         removed: set[str],
         elapsed: float,
     ) -> Change | None:
         if not attached:
-            if playlist.name not in self._postponed:
+            if playlist.id not in self._postponed:
                 log.info("%s: no monitor attached, rotation postponed", playlist.name)
-                self._postponed.add(playlist.name)
+                self._postponed.add(playlist.id)
             return None
-        if playlist.name in self._postponed:
+        if playlist.id in self._postponed:
             log.info("%s: monitor attached again, rotation resumed", playlist.name)
-            self._postponed.discard(playlist.name)
+            self._postponed.discard(playlist.id)
 
         current = self._current(playlist)
+        if self._store.playlist_state(playlist.id).folder_changed:
+            # Saved with another folder: show one of its images now (even
+            # held or manual: a new folder is the user's own choice).
+            change = self._step(
+                playlist,
+                attached,
+                lambda: self._peek_next(playlist, history=False),
+                "scheduled",
+            )
+            if change is not None:
+                return change
+            # Nothing to show in it (yet): on as before, from the history.
         if current is not None and not self._showable(current.path, removed):
             due = True  # even when held: it must not stay on screen
         elif playlist.interval is None or self.held(playlist):
@@ -308,7 +362,7 @@ class PlaylistService:
                 self._store.forget_applied(monitor.id)
         self._sizes = sizes
 
-    def _accrue(self, playlist: PlaylistConfig, elapsed: float) -> float | None:
+    def _accrue(self, playlist: PlaylistSettings, elapsed: float) -> float | None:
         """
         Count `elapsed` active seconds towards the playlist's interval: its
         total since the last change, or None if time doesn't count now
@@ -333,9 +387,9 @@ class PlaylistService:
 
     def pause_reason(self) -> str | None:
         """Why rotation is paused right now, or None."""
-        if self.config.pause_when_locked and self._presence.session_locked():
+        if self.settings.pause_when_locked and self._presence.session_locked():
             return "session locked"
-        limit = self.config.pause_when_idle
+        limit = self.settings.pause_when_idle
         idle = self._presence.idle_seconds()
         if limit is not None and idle is not None and idle >= limit:
             return "idle"
@@ -343,12 +397,12 @@ class PlaylistService:
 
     # -- user commands -------------------------------------------------------
 
-    def find_playlist(self, selector: str | None) -> PlaylistConfig:
+    def find_playlist(self, selector: str | None) -> PlaylistSettings:
         """
         A playlist by name, or the one driving a monitor (name, unique part
         of a name, or id). With one playlist, the selector may be omitted.
         """
-        playlists = self.config.playlists
+        playlists = self.settings.playlists
         if selector is None:
             if len(playlists) == 1:
                 return playlists[0]
@@ -356,16 +410,16 @@ class PlaylistService:
                 raise UnknownTargetError(NO_PLAYLISTS)
             names = ", ".join(p.name for p in playlists)
             raise UnknownTargetError(f"Name a playlist or monitor: {names}")
-        playlist = self.config.playlist(selector)
+        playlist = self.settings.playlist(selector)
         if playlist is not None:
             return playlist
         monitor = resolve_monitor(self._backend.monitors(), selector)
         for playlist in playlists:
-            if monitor.id in playlist.monitors:
+            if monitor.id in self.settings.members(playlist.id):
                 return playlist
         raise UnknownTargetError(f"{monitor.name} is not in any playlist")
 
-    def next(self, playlist: PlaylistConfig) -> Change:
+    def next(self, playlist: PlaylistSettings) -> Change:
         change = self._step(
             playlist,
             self._attached_now(playlist),
@@ -376,7 +430,7 @@ class PlaylistService:
             raise NoImagesError(f"{playlist.name}: no images in {playlist.directory}")
         return change
 
-    def previous(self, playlist: PlaylistConfig) -> Change | None:
+    def previous(self, playlist: PlaylistSettings) -> Change | None:
         """None if there is nothing earlier in the history."""
         return self._step(
             playlist,
@@ -385,7 +439,7 @@ class PlaylistService:
             "previous",
         )
 
-    def pick(self, playlist: PlaylistConfig, image: Path) -> Change:
+    def pick(self, playlist: PlaylistSettings, image: Path) -> Change:
         """
         Show `image` now, as if `next` had chosen it: it goes into the
         history right after the current entry (so `previous` goes back to
@@ -425,43 +479,43 @@ class PlaylistService:
             tuple(m.name for m in missed),
         )
 
-    def held(self, playlist: PlaylistConfig) -> bool:
+    def held(self, playlist: PlaylistSettings) -> bool:
         """Held by `hold` (a manual playlist never is: it doesn't rotate)."""
         return not playlist.manual and self._store.playlist_state(playlist.id).held
 
-    def hold(self, playlist: PlaylistConfig) -> bool:
+    def hold(self, playlist: PlaylistSettings) -> bool:
         """Stop rotating until `resume`; False if it already was held."""
         self._refuse_manual(playlist, "hold")
         return self._store.set_held(playlist.id, True)
 
-    def resume(self, playlist: PlaylistConfig) -> bool:
+    def resume(self, playlist: PlaylistSettings) -> bool:
         """Rotate again, where the count stopped; False if it wasn't held."""
         self._refuse_manual(playlist, "resume")
         return self._store.set_held(playlist.id, False)
 
     @staticmethod
-    def _refuse_manual(playlist: PlaylistConfig, command: str) -> None:
+    def _refuse_manual(playlist: PlaylistSettings, command: str) -> None:
         if playlist.manual:
             raise ManualPlaylistError(
-                f'{playlist.name} is manual (interval = "manual"): it never '
-                f"changes by itself, so there is nothing to {command}"
+                f"{playlist.name} is manual: it never changes by itself, so "
+                f"there is nothing to {command}"
             )
 
-    def current(self, playlist: PlaylistConfig) -> Path | None:
+    def current(self, playlist: PlaylistSettings) -> Path | None:
         entry = self._current(playlist)
         return entry.path if entry else None
 
-    def favourite(self, playlist: PlaylistConfig) -> tuple[Path, bool]:
+    def favourite(self, playlist: PlaylistSettings) -> tuple[Path, bool]:
         """Mark the current image; returns it and False if already marked."""
         image = self._require_current(playlist)
         return image, self.favourites.add(image)
 
-    def unfavourite(self, playlist: PlaylistConfig) -> tuple[Path, bool]:
+    def unfavourite(self, playlist: PlaylistSettings) -> tuple[Path, bool]:
         """Unmark the current image; returns it and False if it wasn't marked."""
         image = self._require_current(playlist)
         return image, self.favourites.discard(image)
 
-    def remove(self, playlist: PlaylistConfig) -> tuple[Path, Change | None]:
+    def remove(self, playlist: PlaylistSettings) -> tuple[Path, Change | None]:
         """
         Put the current image on the to-remove list (it is only listed and
         hidden from rotation, never deleted) and move on to the next one.
@@ -491,11 +545,11 @@ class PlaylistService:
             removed = None  # unknown: no upcoming images (they may be listed)
         members = self._members(monitors)
         result: list[PlaylistStatus] = []
-        for playlist in self.config.playlists:
+        for playlist in self.settings.playlists:
             result.append(
                 PlaylistStatus(
                     playlist=playlist,
-                    members=members[playlist.name],
+                    members=members[playlist.id],
                     current=self.current(playlist),
                     elapsed=self._store.playlist_state(playlist.id).elapsed,
                     upcoming=(
@@ -510,11 +564,11 @@ class PlaylistService:
 
     # -- choosing images -----------------------------------------------------
 
-    def _current(self, playlist: PlaylistConfig) -> HistoryEntry | None:
+    def _current(self, playlist: PlaylistSettings) -> HistoryEntry | None:
         cursor = self._store.playlist_state(playlist.id).cursor
         return None if cursor is None else self._store.history_entry(cursor)
 
-    def _require_current(self, playlist: PlaylistConfig) -> Path:
+    def _require_current(self, playlist: PlaylistSettings) -> Path:
         image = self.current(playlist)
         if image is None:
             raise NothingShownError(f"{playlist.name} has not shown an image yet")
@@ -539,11 +593,17 @@ class PlaylistService:
         key = path_key(image)
         return key not in removed and key not in self._broken and image.is_file()
 
-    def _peek_next(self, playlist: PlaylistConfig) -> _Candidate | None:
-        """Forward in history if we went back, else a new image."""
+    def _peek_next(
+        self, playlist: PlaylistSettings, history: bool = True
+    ) -> _Candidate | None:
+        """
+        Forward in history if we went back, else a new image. `history`
+        False: a new image from the folder (it changed; the history after
+        the cursor is from the old one).
+        """
         removed = self._removed()
         cursor = self._store.playlist_state(playlist.id).cursor
-        if cursor is not None:
+        if cursor is not None and history:
             for entry in self._store.history_after(playlist.id, cursor):
                 if self._showable(entry.path, removed):
                     return _Candidate(entry.path, history_id=entry.id)
@@ -562,7 +622,7 @@ class PlaylistService:
         card = self._deck(playlist).peek(images, drawable, avoid=avoid)
         return _Candidate(card.path, card=card) if card else None
 
-    def _sorted_after(self, playlist: PlaylistConfig) -> Path | None:
+    def _sorted_after(self, playlist: PlaylistSettings) -> Path | None:
         """
         Where the sorted walk goes on: after the newest history entry from
         the playlist's directory (a pick from elsewhere is a detour; one from
@@ -574,11 +634,11 @@ class PlaylistService:
         return None
 
     @staticmethod
-    def _in_directory(playlist: PlaylistConfig, image: Path) -> bool:
+    def _in_directory(playlist: PlaylistSettings, image: Path) -> bool:
         directory = path_key(playlist.directory)
         return path_key(image).startswith(directory.rstrip(os.sep) + os.sep)
 
-    def _as_scanned(self, playlist: PlaylistConfig, image: Path) -> Path:
+    def _as_scanned(self, playlist: PlaylistSettings, image: Path) -> Path:
         """
         `image` spelled as the playlist's scan has it, if it is one of its
         images (so the deck and the history know it); else as given.
@@ -593,7 +653,7 @@ class PlaylistService:
                 return found
         return image
 
-    def _peek_previous(self, playlist: PlaylistConfig) -> _Candidate | None:
+    def _peek_previous(self, playlist: PlaylistSettings) -> _Candidate | None:
         removed = self._removed()
         cursor = self._store.playlist_state(playlist.id).cursor
         if cursor is None:
@@ -604,7 +664,7 @@ class PlaylistService:
         return None
 
     def _upcoming(
-        self, playlist: PlaylistConfig, removed: set[str], limit: int
+        self, playlist: PlaylistSettings, removed: set[str], limit: int
     ) -> list[Path]:
         def showable(image: Path) -> bool:
             return self._showable(image, removed)
@@ -629,7 +689,7 @@ class PlaylistService:
             ]
         return (result + more)[:limit]
 
-    def _deck(self, playlist: PlaylistConfig) -> ShuffleDeck:
+    def _deck(self, playlist: PlaylistSettings) -> ShuffleDeck:
         return ShuffleDeck(self._store, playlist.id, self._rng)
 
     # -- showing images ------------------------------------------------------
@@ -637,16 +697,19 @@ class PlaylistService:
     def _members(
         self, monitors: Sequence[Monitor]
     ) -> dict[str, tuple[MemberStatus, ...]]:
-        """Every playlist's monitors (by playlist name), as listed now."""
+        """Every playlist's monitors (by playlist id), as listed now."""
         return {
-            playlist.name: _members_of(playlist, monitors)
-            for playlist in self.config.playlists
+            playlist.id: _members_of(self.settings.members(playlist.id), monitors)
+            for playlist in self.settings.playlists
         }
 
-    def _attached_now(self, playlist: PlaylistConfig) -> list[Monitor]:
-        attached = _attached(_members_of(playlist, self._backend.monitors()))
+    def _attached_now(self, playlist: PlaylistSettings) -> list[Monitor]:
+        member_ids = self.settings.members(playlist.id)
+        attached = _attached(_members_of(member_ids, self._backend.monitors()))
         if not attached:
-            ids = ", ".join(str(m) for m in playlist.monitors)
+            if not member_ids:
+                raise MonitorNotAttachedError(f"{playlist.name} is on no monitor")
+            ids = ", ".join(str(m) for m in member_ids)
             raise MonitorNotAttachedError(
                 f"None of {playlist.name}'s monitors is attached ({ids})"
             )
@@ -654,7 +717,7 @@ class PlaylistService:
 
     def _step(
         self,
-        playlist: PlaylistConfig,
+        playlist: PlaylistSettings,
         members: Sequence[Monitor],
         peek: Callable[[], _Candidate | None],
         reason: ChangeReason,
@@ -687,7 +750,7 @@ class PlaylistService:
         return None
 
     def _show(
-        self, playlist: PlaylistConfig, image: Path, members: Sequence[Monitor]
+        self, playlist: PlaylistSettings, image: Path, members: Sequence[Monitor]
     ) -> tuple[list[Monitor], list[Monitor]]:
         """
         Set `image` on each member (re-checked by the setter right before).
@@ -704,7 +767,7 @@ class PlaylistService:
                     self._backend,
                     monitor.id,
                     image,
-                    Look(playlist.mode),
+                    self.settings.look(monitor.id),
                     self._render_dir,
                 )
             except MonitorNotAttachedError as err:
@@ -719,7 +782,10 @@ class PlaylistService:
         return shown, missed
 
     def _commit(
-        self, playlist: PlaylistConfig, candidate: _Candidate, shown: Sequence[Monitor]
+        self,
+        playlist: PlaylistSettings,
+        candidate: _Candidate,
+        shown: Sequence[Monitor],
     ) -> None:
         now = self._clock()
         with self._store.transaction():
@@ -735,7 +801,7 @@ class PlaylistService:
                 self._store.set_applied(monitor.id, playlist.id, candidate.image, now)
 
     def _fill_in(
-        self, playlist: PlaylistConfig, attached: Sequence[Monitor], current: Path
+        self, playlist: PlaylistSettings, attached: Sequence[Monitor], current: Path
     ) -> Change | None:
         """Give the current image to members that don't show it (came back)."""
         stale = [m for m in attached if self._store.applied(m.id) != current]
@@ -760,3 +826,24 @@ class PlaylistService:
             tuple(m.name for m in shown),
             tuple(m.name for m in missed),
         )
+
+
+def _playlist_of(settings: Settings, monitor_id: MonitorId) -> str | None:
+    return next((m.playlist for m in settings.monitors if m.id == monitor_id), None)
+
+
+def _open_lists(settings: Settings, data_dir: Path) -> tuple[MarkFile, MarkFile]:
+    """
+    The favourites and to-remove lists, read once.
+
+    Raises:
+        ConfigError: one can't be used (e.g. saved with a byte order mark).
+    """
+    lists = tuple(MarkFile(file) for file in settings.list_files(data_dir))
+    for marks in lists:
+        try:
+            marks.paths()  # ConfigError now, not on the first tick
+        except MarkFileBusyError:
+            pass  # logged; unknown until it opens (see _removed)
+    favourites, to_remove = lists
+    return favourites, to_remove

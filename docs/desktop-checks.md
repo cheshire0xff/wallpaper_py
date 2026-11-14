@@ -26,6 +26,7 @@ Status: **ok** (with the date, when known) all steps seen working;
 | [8.3 The window: Settings](#83-settings) | steps 1, 2, 4, 7 ok 2026-11-12 (step 1 also on a copy of the real config); 3, 5, 6, 8-11 todo | todo | todo |
 | [9. Pick, hold and manual](#9-pick-hold-and-manual) | ok 2026-11-11, except waiting past an interval (steps 3, 6) | todo | todo |
 | [10. Looks: always rendered](#10-looks-always-rendered) | todo | todo | todo |
+| [11. Settings in the database](#11-settings-in-the-database) | todo | todo | todo |
 
 ## 1. Monitors and `set`
 
@@ -90,12 +91,12 @@ monitor.
    answered, and `status` ends with *Rotation active*.
 3. `wallpaper tray` while one runs exits without starting a second (after
    about 5 s: it waits in case a CLI command holds the lock).
-4. **Prune.** Comment out a playlist in config.toml and *Reload config*,
-   then put it back and reload: it continues with its history (loading
-   never drops state). Take it out again and run `wallpaper prune`, with
-   the app running and without: it names the dropped id; a second run has
-   nothing to drop. With config.toml renamed away, `wallpaper prune`
-   refuses (no config file) and drops nothing.
+4. **Deleting a playlist deletes its history.** Comment out a playlist
+   in config.toml and *Reload config*, then put it back and reload: it
+   starts afresh (its first image again, *Previous* has nothing).
+   `wallpaper prune`, with the app running and without, has nothing to
+   drop. With config.toml renamed away, a restart keeps every playlist
+   (the settings are in the state database).
 
 ## 6. Tray
 
@@ -260,8 +261,9 @@ config.toml first (copy it next to itself).
     image stays on its monitors, it is still held, and *Previous* goes
     back through the same history. Rename it back by hand in the file and
     *Reload config*: the same again (the state goes by `id`, not the name).
-13. **First start without a config.** Move config.toml away and start
-    the app: no error; a notification says "No playlists yet", and
+13. **First start without a config.** Quit the app, move config.toml
+    and the state database (state.sqlite3 in the data folder) away and
+    start it: no error; a notification says "No playlists yet", and
     clicking it opens the window on Settings. The tray menu starts with
     *No playlists yet: add one…* (opens Settings), the tooltip says "No
     playlists yet", Home shows *Add one in Settings* (switches to
@@ -269,7 +271,7 @@ config.toml first (copy it next to itself).
     Settings, click a monitor, *New playlist…*, choose a folder, Save:
     the file is created (with the monitor's id and a random playlist id),
     the monitor starts rotating, and the tray item and Home's button are
-    gone. Restart the app: no notification now. Put the old config back
+    gone. Restart the app: no notification now. Put both files back
     afterwards.
 15. **A monitor moved to another port** (Windows). Move a monitor's cable
     to another port with the app running: Windows gives it a new id, so
@@ -331,3 +333,23 @@ on the right monitors, the real tray menu, and a real quit and restart.
    settings: within a few seconds its image is rendered again for the new
    size (log: "changed resolution: rendering again"), with no stretching
    or cropping left over from the old size. Change it back: the same.
+
+## 11. Settings in the database
+
+Phase 4b step 3a: the settings live in the state database; the old
+Settings page still writes config.toml, which the app imports when it
+starts and on *Reload config*.
+
+1. **The first start after the update.** The app refuses the old state
+   database (the tray, or `wallpaper status`, says to delete it, naming
+   the file). Quit, delete it, start again: every playlist rotates as
+   before, from config.toml (the histories start afresh, once).
+2. `wallpaper status` lists each monitor with its mode, e.g.
+   *AW3225QF (attached, fill)*; the playlist line no longer has one.
+3. **Mirrored monitors keep their own look.** On a playlist with two
+   monitors (e.g. konachan), both still change together, each rendered for
+   its own size.
+4. **A new folder shows at once.** Hold a playlist (or make it manual),
+   then point it at another folder in Settings and Save: its monitors show
+   an image from the new folder within a moment, and it stays held.
+   *Previous* goes back to the image from the old folder.

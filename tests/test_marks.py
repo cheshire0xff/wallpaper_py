@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from wallpaper_py.core.config import ConfigError
+from wallpaper_py.core.model import ConfigError
 from wallpaper_py.core.marks import MarkFile, MarkFileBusyError
 
 from .fakes import BusyFile, settled

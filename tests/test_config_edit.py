@@ -13,7 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from wallpaper_py.core.config import Order, loads_config
+from wallpaper_py.core.config import loads_config
+from wallpaper_py.core.settings import Order
 from wallpaper_py.core.config_edit import (
     DIRECTORY,
     FAVOURITES,

@@ -137,11 +137,19 @@ Inside the UI thread (direct):
 service. `reload` is a command like the others (from the socket, the
 tray's *Reload config* or the Settings page), run by
 `ServiceWorker.execute` itself rather than by `commands.execute`: it only
-closes and reopens the service, then ticks (which publishes the new
-overview) and replies with the warnings or the config error. The socket
-keeps answering across reloads (with the config error while the config is
-broken). `ServiceWorker.stop` closes the socket before the
-service, which also ends every subscription.
+closes and reopens the service (which imports config.toml into the stored
+settings until Phase 4b step 3b: `commands.import_config`), then ticks
+(which publishes the new overview) and replies with the warnings or the
+config error. The socket keeps answering across reloads (with the config
+error while the config is broken). `ServiceWorker.stop` closes the socket
+before the service, which also ends every subscription.
+
+`settings` and `save_settings` run in `commands.execute` like the playlist
+commands. When a command's `Outcome.render` is set (a `save_settings`
+that succeeded), `ServiceWorker.execute` calls `ServiceWorker.tick` instead
+of only publishing, before replying: the monitors whose playlist or
+look changed get their image rendered again (`ServiceWorker.changed`) and
+the new overview is published, both before the reply.
 
 ### UI process
 
@@ -345,7 +353,8 @@ sequenceDiagram
   (`HomePage.shutdown` -> `ThumbnailLoader.close`).
 
 Saving on the Settings page (the UI process edits config.toml like an
-editor would; the app only reads it again):
+editor would; the app imports it into its settings again, until Phase 4b
+step 3b replaces the page with one on `settings` / `save_settings`):
 
 ```mermaid
 sequenceDiagram
@@ -359,7 +368,7 @@ sequenceDiagram
     Note over S: edits: SettingsPage._refresh validates every change,<br/>renders the new text and checks it with the core's parser
     S->>F: SettingsPage.save: still what was read? then write (temp + replace)
     S->>C: Client.run(reload), reply to SettingsPage.reloaded
-    C->>W: reload: ServiceWorker.execute closes and reopens the service
+    C->>W: reload: ServiceWorker.execute closes and reopens the service,<br/>which imports the file into the stored settings
     W->>C: overview_changed (every page redraws), then the ReloadResult
     C->>S: the reply: "Saved; the app is using it", or the config error
 ```

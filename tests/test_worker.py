@@ -16,6 +16,7 @@ from pytestqt.qtbot import QtBot
 from wallpaper_py.app import ipc
 from wallpaper_py.app.worker import ServiceHost, ServiceSettings
 from wallpaper_py.core import paths
+from wallpaper_py.core.model import ImageMode, Look
 from wallpaper_py.core.service import Change
 from wallpaper_py.protocol import (
     ChangedEvent,
@@ -36,6 +37,10 @@ from wallpaper_py.protocol import (
     ReloadResult,
     Reply,
     Request,
+    SaveSettingsRequest,
+    SaveSettingsResult,
+    SettingsRequest,
+    SettingsResult,
     Subscribe,
 )
 
@@ -340,7 +345,7 @@ def test_reload_answers_with_its_result(
     )
     reply = send(qtbot, name, config, ReloadRequest())
     assert isinstance(reply, ReloadResult)
-    assert [w.split(" (")[0] for w in reply.warnings] == ["[playlists.walls] interval"]
+    assert [w.split(" (")[0] for w in reply.warnings] == ["walls: the interval"]
 
     # Broken: the error, and the overview says so (with the file still named).
     config.write_text("[playlists.walls\n", encoding="utf-8")
@@ -453,6 +458,37 @@ def test_prune_over_the_socket(
     text = config.read_text(encoding="utf-8")
     config.write_text(text.replace("walls-id", "new-id"), encoding="utf-8")
     assert send(qtbot, name, config, ReloadRequest()) == ReloadResult()
-    reply = send(qtbot, name, config, PruneRequest())
-    assert reply == PruneResult(dropped=("walls-id",))
+    # Importing the file deleted the old id's state already.
+    assert send(qtbot, name, config, PruneRequest()) == PruneResult(dropped=())
     assert submit(qtbot, host, PruneRequest()) == PruneResult(dropped=())
+
+
+def test_saved_settings_show_before_the_reply(
+    qtbot: QtBot, host: ServiceHost, name: str, config: Path, backend: FakeBackend
+) -> None:
+    """A monitor whose look changed is rendered again, then the reply goes."""
+    start(qtbot, host)
+    current = send(qtbot, name, config, SettingsRequest())
+    assert isinstance(current, SettingsResult)
+    [main] = current.settings.monitors
+    fit = main.model_copy(update={"look": Look(ImageMode.FIT)})
+    edit = current.settings.model_copy(update={"monitors": (fit,)})
+    calls = len(backend.set_calls)
+    with qtbot.waitSignal(host.changed) as blocker:
+        reply = send(
+            qtbot,
+            name,
+            config,
+            SaveSettingsRequest(settings=edit, revision=current.revision),
+        )
+    assert reply == SaveSettingsResult(revision=current.revision + 1)
+    assert len(backend.set_calls) == calls + 1  # before the reply
+    assert blocker.args[0].reason == "restored"
+
+    def fit_in_overview() -> bool:
+        overview = host.overview
+        return overview is not None and overview.monitors[0].look == fit.look
+
+    qtbot.waitUntil(fit_in_overview)
+    again = send(qtbot, name, config, SettingsRequest())
+    assert isinstance(again, SettingsResult) and again.settings == edit

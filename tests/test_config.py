@@ -1,21 +1,11 @@
-from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from wallpaper_py.core.config import (
-    NO_PLAYLISTS,
-    Config,
-    ConfigError,
-    Order,
-    PlaylistConfig,
-    format_duration,
-    load_config,
-    parse_config,
-    parse_duration,
-)
-from wallpaper_py.core.model import ImageMode, MonitorId
+from wallpaper_py.core.config import load_config, parse_config
+from wallpaper_py.core.model import ConfigError, ImageMode, Look, MonitorId
+from wallpaper_py.core.settings import MonitorSettings, Order, check_settings
 
 EXAMPLE = """
 pause_when_idle = "10m"
@@ -50,25 +40,12 @@ def playlist(**overrides: Any) -> dict[str, Any]:
     }
 
 
-@pytest.mark.parametrize(
-    ("text", "seconds"),
-    [("45s", 45), ("30m", 1800), ("1h30m", 5400), ("2d", 172800), ("1H 5M", 3900)],
-)
-def test_parse_duration(text: str, seconds: float) -> None:
-    assert parse_duration(text) == seconds
-
-
-@pytest.mark.parametrize("text", ["", "30", "m", "5 minutes", "-5m", "1m1h"])
-def test_parse_duration_rejects_garbage(text: str) -> None:
-    with pytest.raises(ConfigError):
-        parse_duration(text)
-
-
 def test_load_example(tmp_path: Path) -> None:
     path = tmp_path / "config.toml"
     path.write_text(EXAMPLE, encoding="utf-8")
     config = load_config(path, default_dir=tmp_path / "data")
 
+    assert config is not None
     konachan, fantasy = config.playlists
     assert konachan.monitors == (MonitorId("AW3225QF"), MonitorId("PLX2783H"))
     assert konachan.interval == 1800
@@ -192,21 +169,40 @@ def test_enum_values_as_the_settings_window_writes_them(tmp_path: Path) -> None:
         parse(raw, tmp_path)
 
 
-def test_no_playlists_is_valid_and_says_so(tmp_path: Path) -> None:
-    for config in (
-        parse({}, tmp_path),
-        load_config(tmp_path / "none yet.toml", default_dir=tmp_path),
-    ):
-        assert not config.playlists
-        assert config.warnings() == [NO_PLAYLISTS]
+def test_no_playlists_is_valid(tmp_path: Path) -> None:
+    assert not parse({}, tmp_path).playlists
 
 
-def test_only_a_missing_file_is_not_from_a_file(tmp_path: Path) -> None:
-    """`prune` goes only by a config read from a file."""
-    path = tmp_path / "config.toml"
-    assert not load_config(path, default_dir=tmp_path).from_file
-    path.write_text("", encoding="utf-8")
-    assert load_config(path, default_dir=tmp_path).from_file
+def test_a_missing_file_is_nothing_to_import(tmp_path: Path) -> None:
+    assert load_config(tmp_path / "none yet.toml", default_dir=tmp_path) is None
+
+
+def test_the_bridge_copies_each_mode_to_its_monitors(tmp_path: Path) -> None:
+    """Phase 4b step 3a: config.toml imported into the settings."""
+    raw = {
+        "playlists": {
+            "a": playlist(monitors=["A", "B"], mode="fit", order="sorted"),
+            "b": playlist(id="2", monitors=["C"], interval="manual"),
+        },
+        "pause_when_idle": False,
+    }
+    settings = parse(raw, tmp_path).to_settings()
+    check_settings(settings)
+    a, b = settings.playlists[0], settings.playlists[1]
+    assert (a.id, a.name, a.directory, a.order, a.interval) == (
+        "1",
+        "a",
+        tmp_path / "cfg" / "d",
+        Order.SORTED,
+        60.0,
+    )
+    assert b.manual and settings.pause_when_idle is None
+    assert settings.monitors == (
+        MonitorSettings(id=MonitorId("A"), playlist="1", look=Look(ImageMode.FIT)),
+        MonitorSettings(id=MonitorId("B"), playlist="1", look=Look(ImageMode.FIT)),
+        MonitorSettings(id=MonitorId("C"), playlist="2"),
+    )
+    assert settings.favourites_file == tmp_path / "data" / "favourites.txt"
 
 
 def test_manual_interval(tmp_path: Path) -> None:
@@ -217,7 +213,6 @@ def test_manual_interval(tmp_path: Path) -> None:
     config = parse(raw, tmp_path)
     strip = config.playlist("strip")
     assert strip is not None and strip.interval is None and strip.manual
-    assert not config.warnings()  # never changes, so never changes unseen
     with pytest.raises(ConfigError, match="'30m' or 'manual'"):
         parse({"playlists": {"a": playlist(interval=False)}}, tmp_path)
 
@@ -225,7 +220,7 @@ def test_manual_interval(tmp_path: Path) -> None:
 def test_example_config_is_valid(tmp_path: Path) -> None:
     example = Path(__file__).parents[1] / "docs" / "config.example.toml"
     config = load_config(example, default_dir=tmp_path)
-    assert config.playlists
+    assert config is not None and config.playlists
 
 
 def test_bad_toml_names_the_file(tmp_path: Path) -> None:
@@ -233,45 +228,6 @@ def test_bad_toml_names_the_file(tmp_path: Path) -> None:
     path.write_text("[playlists.a\n", encoding="utf-8")
     with pytest.raises(ConfigError, match="config.toml"):
         load_config(path, default_dir=tmp_path)
-
-
-@pytest.mark.parametrize(
-    ("seconds", "text"),
-    [(0, "0s"), (59.6, "1m"), (90, "1m30s"), (3600, "1h"), (5430, "1h30m30s")],
-)
-def test_format_duration(seconds: float, text: str) -> None:
-    assert format_duration(seconds) == text
-    assert parse_duration(text) == round(seconds)
-
-
-def config_with(interval: float, idle: float | None) -> Config:
-    return Config(
-        playlists=(
-            PlaylistConfig("walls", "1", Path("d"), (MonitorId("A"),), interval),
-        ),
-        favourites_file=Path("f.txt"),
-        to_remove_file=Path("r.txt"),
-        pause_when_idle=idle,
-    )
-
-
-def test_warns_when_interval_is_shorter_than_idle_pause() -> None:
-    (warning,) = config_with(interval=120, idle=300).warnings()
-    assert "walls" in warning and "2m" in warning and "5m" in warning
-
-
-def test_no_playlists_does_not_stop_the_other_checks() -> None:
-    """
-    NO_PLAYLISTS is one warning among the others, not a return before them.
-    (Today's pause_when_idle check is per playlist, so it adds none here.)
-    """
-    config = replace(config_with(interval=120, idle=300), playlists=())
-    assert config.warnings() == [NO_PLAYLISTS]
-
-
-@pytest.mark.parametrize(("interval", "idle"), [(300, 300), (1800, 300), (60, None)])
-def test_no_warning_otherwise(interval: float, idle: float | None) -> None:
-    assert not config_with(interval, idle).warnings()
 
 
 @pytest.mark.parametrize("encoding", ["utf-8-sig", "utf-16", "cp1250"])

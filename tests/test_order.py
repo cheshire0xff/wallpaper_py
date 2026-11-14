@@ -11,6 +11,8 @@ from wallpaper_py.core.order import (
 )
 from wallpaper_py.core.store import Store
 
+from .fakes import add_playlists
+
 IMAGES = [Path(f"img{i}.jpg") for i in range(1, 11)]  # natural order
 
 
@@ -51,7 +53,7 @@ class TestSorted:
 
 @pytest.fixture(name="store")
 def fixture_store() -> Store:
-    return Store(":memory:")
+    return add_playlists(Store(":memory:"), "1")
 
 
 def draw_all(deck: ShuffleDeck, images: list[Path], count: int) -> list[Path]:
@@ -77,7 +79,7 @@ class TestShuffleDeck:
         assert deck.peek(IMAGES, always) == deck.peek(IMAGES, always)
 
     def test_deck_persists(self, tmp_path: Path) -> None:
-        with Store(tmp_path / "s.db") as store:
+        with add_playlists(Store(tmp_path / "s.db"), "1") as store:
             deck = ShuffleDeck(store, "1", random.Random(1))
             first = draw_all(deck, IMAGES, 4)
         with Store(tmp_path / "s.db") as store:
@@ -118,6 +120,7 @@ class TestShuffleDeck:
         assert len(draw_all(deck, IMAGES, 7)) == 7
 
     def test_new_cycle_does_not_repeat_the_last_image(self, store: Store) -> None:
+        add_playlists(store, *(str(seed) for seed in range(30)))
         for seed in range(30):
             deck = ShuffleDeck(store, str(seed), random.Random(seed))
             last = draw_all(deck, IMAGES[:3], 3)[-1]

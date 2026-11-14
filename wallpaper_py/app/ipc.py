@@ -47,7 +47,10 @@ from ..protocol import (
 
 log = logging.getLogger(__name__)
 
-MAX_MESSAGE = 64 * 1024  # bytes, for a request; a request is ~200
+# Bytes, for a request. Most are ~200; save_settings carries the whole
+# settings, ~2 KB for 5 playlists and 4 monitors (~400 bytes a playlist with
+# a 260-character folder, ~160 a monitor): ~150 playlists still fit.
+MAX_MESSAGE = 64 * 1024
 MAX_REPLY = 16 * MAX_MESSAGE  # replies can be long (status)
 MAX_BACKLOG = 4 * 1024 * 1024  # bytes unread by a subscriber before it is dropped
 CONNECT_TIMEOUT_MS = 2_000

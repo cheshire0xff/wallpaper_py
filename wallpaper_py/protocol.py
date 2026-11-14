@@ -4,8 +4,9 @@ nothing else (no logic, no Qt). See docs/protocol.md.
 
 - In: an `Envelope` holding a `Request` (a playlist command), a
   `PickRequest` (`pick`, which also carries an image), a `PruneRequest`
-  (drop the state of playlists no longer in the config), a `ReloadRequest`
-  (read the config file again) or `Subscribe`.
+  (drop state left of playlists the settings don't have), a
+  `SettingsRequest` / `SaveSettingsRequest` (read / write the settings), a
+  `ReloadRequest` (import the config file again) or `Subscribe`.
 - Out: a `Reply`, which is data only: one result model per command, tagged
   on `command`, or an `ErrorReply`. The CLI formats its text from these;
   the tray and the UI process show them.
@@ -27,9 +28,9 @@ from typing import Annotated, Any, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
 
-from .core.config import Order
-from .core.model import ImageMode, MonitorId
+from .core.model import Look, MonitorId
 from .core.service import Change
+from .core.settings import Order, Settings
 
 PROTOCOL = 2
 
@@ -37,9 +38,8 @@ PROTOCOL = 2
 Command = Literal["status", "next", "prev", "fav", "unfav", "remove", "hold", "resume"]
 # Of those, the ones that act on a target (playlist or monitor): all but status.
 TARGET_COMMANDS: tuple[Command, ...] = get_args(Command)[1:]
-# Every command: also `pick`, `prune` and `reload`, which have request
-# models of their own.
-AnyCommand = Literal[Command, "pick", "prune", "reload"]
+# Every command: also these, which have request models of their own.
+AnyCommand = Literal[Command, "pick", "prune", "settings", "save_settings", "reload"]
 COMMANDS: tuple[AnyCommand, ...] = get_args(AnyCommand)
 
 
@@ -81,23 +81,43 @@ class PickRequest(Strict):
 
 
 class PruneRequest(Strict):
-    """Drop the state of playlist ids no longer in the config."""
+    """Drop any state left of playlist ids the settings don't have."""
 
     command: Literal["prune"] = "prune"
 
 
+class SettingsRequest(Strict):
+    """The stored settings, and their revision (for `save_settings`)."""
+
+    command: Literal["settings"] = "settings"
+
+
+class SaveSettingsRequest(Strict):
+    """
+    Store these settings in place of the stored ones, and use them at once.
+    Refused (`stale_settings`) if the stored ones are no longer `revision`,
+    the one the edit was made on.
+    """
+
+    command: Literal["save_settings"] = "save_settings"
+    settings: Settings
+    revision: int
+
+
 class ReloadRequest(Strict):
-    """Read the config file again (after it was edited)."""
+    """Import the config file again (after it was edited; until Phase 4b 3b)."""
 
     command: Literal["reload"] = "reload"
 
 
 # The requests the playlist service runs (what `commands.execute` takes).
-ServiceRequest = Request | PickRequest | PruneRequest
+ServiceRequest = (
+    Request | PickRequest | PruneRequest | SettingsRequest | SaveSettingsRequest
+)
 # Of those, the ones that name a target (playlist or monitor).
 TargetRequest = Request | PickRequest
 # Every request answered with one reply; the app runs `reload` itself.
-CommandRequest = Request | PickRequest | PruneRequest | ReloadRequest
+CommandRequest = ServiceRequest | ReloadRequest
 
 
 class Subscribe(Strict):
@@ -111,7 +131,13 @@ class Envelope(Strict):
 
     v: int = PROTOCOL
     request: Annotated[
-        Request | PickRequest | PruneRequest | ReloadRequest | Subscribe,
+        Request
+        | PickRequest
+        | PruneRequest
+        | SettingsRequest
+        | SaveSettingsRequest
+        | ReloadRequest
+        | Subscribe,
         Field(discriminator="command"),
     ]
     # The config file the sender means: the app refuses another one. None:
@@ -140,13 +166,14 @@ def check_protocol(version: int, receiver: str) -> int:
 class MonitorView(Message):
     """
     A playlist's member. `id` is spelt as the desktop spells it when the
-    monitor is listed (as in `Overview.monitors`), else as the config
-    does; ids compare case-insensitively (`MonitorId`).
+    monitor is listed (as in `Overview.monitors`), else as the settings
+    do; ids compare case-insensitively (`MonitorId`).
     """
 
     id: MonitorId
     name: str  # the monitor's name if listed, else the id
     attached: bool | None  # None: not listed right now
+    look: Look = Look()  # how it shows the playlist's images
 
 
 class Geometry(Message):
@@ -164,6 +191,7 @@ class DesktopMonitor(Message):
     id: MonitorId
     name: str
     geometry: Geometry | None  # None: detached (known but switched off)
+    look: Look = Look()  # its look in the settings (the default if none)
 
     @property
     def attached(self) -> bool:
@@ -178,7 +206,7 @@ class PlaylistView(Message):
     # been read yet (another program holds it), so it isn't known.
     favourite: bool | None
     held: bool = False  # held by `hold`: ticks don't change it (never if manual)
-    manual: bool = False  # interval "manual": only next / prev / pick change it
+    manual: bool = False  # no interval: only next / prev / pick change it
 
     @property
     def attached(self) -> bool:
@@ -200,7 +228,6 @@ class PlaylistDetails(PlaylistView):
     directory: Path
     order: Order
     interval: float | None  # seconds of active time; None: manual
-    mode: ImageMode
     # Of active time; None: manual. While held, what is left once resumed.
     next_in_seconds: float | None
     upcoming: tuple[Path, ...]
@@ -213,7 +240,7 @@ class StatusResult(Message):
     command: Literal["status"] = "status"
     playlists: tuple[PlaylistDetails, ...]
     paused: str | None
-    warnings: tuple[str, ...] = ()  # valid config that is probably a mistake
+    warnings: tuple[str, ...] = ()  # valid settings that are probably a mistake
 
 
 class NextResult(Message):
@@ -251,17 +278,31 @@ class PickResult(Message):
 
 
 class PruneResult(Message):
-    """The state of playlist ids no longer in the config was dropped."""
+    """State left of playlist ids the settings don't have was dropped."""
 
     command: Literal["prune"] = "prune"
     dropped: tuple[str, ...]  # their ids; empty: there were none
 
 
+class SettingsResult(Message):
+    command: Literal["settings"] = "settings"
+    settings: Settings
+    revision: int  # what `save_settings` sends back with the edit
+
+
+class SaveSettingsResult(Message):
+    """Saved and in use: every monitor shows what they say."""
+
+    command: Literal["save_settings"] = "save_settings"
+    revision: int  # of the saved settings: the next edit goes on this one
+    warnings: tuple[str, ...] = ()  # valid settings that are probably a mistake
+
+
 class ReloadResult(Message):
-    """The config was read again and the playlists restarted from it."""
+    """The config file was imported again and the playlists restarted."""
 
     command: Literal["reload"] = "reload"
-    warnings: tuple[str, ...] = ()  # valid config that is probably a mistake
+    warnings: tuple[str, ...] = ()  # valid settings that are probably a mistake
 
 
 class HoldResult(Message):
@@ -288,6 +329,8 @@ Result = Annotated[
     | HoldResult
     | ResumeResult
     | PruneResult
+    | SettingsResult
+    | SaveSettingsResult
     | ReloadResult,
     Field(discriminator="command"),
 ]
@@ -301,6 +344,8 @@ ErrorKind = Literal[
     "no_images",  # nothing to show in the playlist's directory
     "nothing_shown",  # no current image yet (fav / unfav / remove)
     "bad_image",  # pick: the image is missing or not one Pillow can open
+    "invalid_settings",  # save_settings: a value can't be used; nothing saved
+    "stale_settings",  # save_settings: changed since they were read; nothing saved
     "failed",  # any other expected failure; see the message
     "internal",  # a bug; the app logged it
     "unreachable",  # client side only: no app, or it did not answer
