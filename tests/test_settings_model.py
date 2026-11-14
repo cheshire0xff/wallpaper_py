@@ -120,6 +120,17 @@ def test_read_strictly_from_json() -> None:
     )
     assert read.look(MonitorId("a")) == Look(ImageMode.FIT, Background.EDGES)
     assert read.look(MonitorId("b")).background == "#0a1b2c"
+    # Blur and darkening: numbers, not `true` or text; whole ones too.
+    for value in ("true", '"0.01"', '"NaN"'):
+        for field in ("blur", "darken"):
+            with pytest.raises(ValidationError):
+                Settings.model_validate_json(
+                    f'{{"monitors": [{{"id": "m", "look": {{"{field}": {value}}}}}]}}'
+                )
+    blurred = Settings.model_validate_json(
+        '{"monitors": [{"id": "m", "look": {"blur": 0.01, "darken": 0}}]}'
+    ).look(MonitorId("m"))
+    assert (blurred.blur, blurred.darken) == (0.01, 0.0)
     # Whole numbers are seconds too.
     whole = Settings.model_validate_json('{"pause_when_idle": 300}')
     assert whole.pause_when_idle == 300.0
@@ -165,6 +176,30 @@ def test_monitors_are_listed_once_on_a_playlist_that_exists(tmp_path: Path) -> N
         check_settings(with_monitors(MonitorSettings(id=MonitorId("m"), playlist="9")))
     with pytest.raises(SettingsError, match="id is empty"):
         check_settings(with_monitors(MonitorSettings(id=MonitorId(" "))))
+
+
+@pytest.mark.parametrize(
+    ("look", "message"),
+    [
+        (Look(blur=0.0009), "blur must be from 0.001 to 0.02"),
+        (Look(blur=0.021), "blur must be from 0.001 to 0.02"),
+        (Look(blur=-0.005), "blur must be from"),
+        (Look(darken=-0.1), "darkening must be from 0 to 0.8"),
+        (Look(darken=0.81), "darkening must be from 0 to 0.8"),
+    ],
+)
+def test_a_look_value_that_cant_be_used(look: Look, message: str) -> None:
+    """Blur and darkening, in any mode or background (they are kept)."""
+    monitor = MonitorSettings(id=MonitorId("m"), look=look)
+    with pytest.raises(SettingsError, match=f"Monitor m: the {message}"):
+        check_settings(settings(monitors=(monitor,)))
+
+
+def test_the_ends_of_the_looks_ranges_can_be_used() -> None:
+    for look in (Look(blur=0.001, darken=0.0), Look(blur=0.02, darken=0.8)):
+        check_settings(
+            settings(monitors=(MonitorSettings(id=MonitorId("m"), look=look),))
+        )
 
 
 @pytest.mark.parametrize(

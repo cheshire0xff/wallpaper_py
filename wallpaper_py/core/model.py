@@ -8,7 +8,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Annotated, Any, final, override
 
-from pydantic import ConfigDict, GetCoreSchemaHandler, StringConstraints
+from pydantic import ConfigDict, Field, GetCoreSchemaHandler, StringConstraints
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 from pydantic_core import CoreSchema, core_schema
 
@@ -124,6 +124,18 @@ class Background(Enum):
 Colour = Annotated[str, StringConstraints(strict=True, pattern=r"^#[0-9a-f]{6}$")]
 BLACK = "#000000"
 
+# A number from a client, strictly: never `true` or "0.5", nor inf / nan.
+Number = Annotated[float, Field(strict=True, allow_inf_nan=False)]
+
+# The `blur` background: the radius, as a part of the screen's longer side
+# (in screen pixels, so a preview has the same blur, smaller), and how much
+# darker the blurred bars are (0: not at all), so the sharp image stands out.
+# Their ranges are checked in core.settings.check_settings.
+DEFAULT_BLUR = 0.005
+MIN_BLUR, MAX_BLUR = 0.001, 0.02
+DEFAULT_DARKEN = 0.25
+MAX_DARKEN = 0.8
+
 
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
 class Look:
@@ -133,14 +145,18 @@ class Look:
     (later a crop anchor) join here.
 
     `background` fills the bars of Fit, and is kept (unused) in the other
-    modes, so going back to Fit brings it back.
+    modes, so going back to Fit brings it back; so are `blur` and `darken`
+    (the `blur` background's) with any other background.
 
-    A pydantic dataclass: stored with the monitor's settings and sent on the
-    socket (the overview, the settings), read strictly.
+    A pydantic dataclass: stored with the monitor's settings (as JSON, so a
+    new field with a default loads from rows stored before it) and sent on
+    the socket (the overview, the settings), read strictly.
     """
 
     mode: ImageMode = ImageMode.FILL
     background: Background | Colour = BLACK
+    blur: Number = DEFAULT_BLUR
+    darken: Number = DEFAULT_DARKEN
 
 
 @dataclass(frozen=True)

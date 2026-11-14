@@ -116,7 +116,9 @@
           "$ref": "#/$defs/Look",
           "default": {
             "mode": "fill",
-            "background": "#000000"
+            "background": "#000000",
+            "blur": 0.005,
+            "darken": 0.25
           }
         }
       },
@@ -311,7 +313,7 @@
     },
     "Look": {
       "additionalProperties": false,
-      "description": "How an image looks on one screen: everything the renderer needs besides\nthe image and the sizes (core.imaging.render). Per monitor; more fields\n(later a crop anchor) join here.\n\n`background` fills the bars of Fit, and is kept (unused) in the other\nmodes, so going back to Fit brings it back.\n\nA pydantic dataclass: stored with the monitor's settings and sent on the\nsocket (the overview, the settings), read strictly.",
+      "description": "How an image looks on one screen: everything the renderer needs besides\nthe image and the sizes (core.imaging.render). Per monitor; more fields\n(later a crop anchor) join here.\n\n`background` fills the bars of Fit, and is kept (unused) in the other\nmodes, so going back to Fit brings it back; so are `blur` and `darken`\n(the `blur` background's) with any other background.\n\nA pydantic dataclass: stored with the monitor's settings (as JSON, so a\nnew field with a default loads from rows stored before it) and sent on\nthe socket (the overview, the settings), read strictly.",
       "properties": {
         "mode": {
           "$ref": "#/$defs/ImageMode",
@@ -329,6 +331,16 @@
           ],
           "default": "#000000",
           "title": "Background"
+        },
+        "blur": {
+          "default": 0.005,
+          "title": "Blur",
+          "type": "number"
+        },
+        "darken": {
+          "default": 0.25,
+          "title": "Darken",
+          "type": "number"
         }
       },
       "title": "Look",
@@ -397,7 +409,9 @@
           "$ref": "#/$defs/Look",
           "default": {
             "mode": "fill",
-            "background": "#000000"
+            "background": "#000000",
+            "blur": 0.005,
+            "darken": 0.25
           }
         }
       },
@@ -433,7 +447,9 @@
           "$ref": "#/$defs/Look",
           "default": {
             "mode": "fill",
-            "background": "#000000"
+            "background": "#000000",
+            "blur": 0.005,
+            "darken": 0.25
           }
         }
       },

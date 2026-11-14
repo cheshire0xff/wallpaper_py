@@ -16,6 +16,7 @@ from wallpaper_py.app.ui.home import HomePage, PlaylistRow
 from wallpaper_py.app.ui.launcher import UiServer, WindowOpener
 from wallpaper_py.app.ui.settings import SettingsPage
 from wallpaper_py.app.ui.settings_form import PlaylistEditor
+from wallpaper_py.app.ui.settings_look import LookEditor
 from wallpaper_py.app.ui.thumbnails import ThumbnailLoader
 from wallpaper_py.app.ui.window import MainWindow, Sidebar
 from wallpaper_py.app.worker import ServiceHost, ServiceWorker
@@ -31,6 +32,7 @@ OWNERS: dict[str, type | ModuleType] = {
     "Client": Client,
     "CommandServer": CommandServer,
     "HomePage": HomePage,
+    "LookEditor": LookEditor,
     "MonitorsView": MonitorsView,
     "MainWindow": MainWindow,
     "PlaylistRow": PlaylistRow,

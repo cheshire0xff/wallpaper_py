@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -101,7 +102,7 @@ def test_new_database_has_the_current_schema(tmp_path: Path) -> None:
     with Store(tmp_path / "state.sqlite3") as store:
         # pylint: disable-next=protected-access
         (version,) = store._db.execute("PRAGMA user_version").fetchone()
-    assert version == SCHEMA_VERSION == 6
+    assert version == SCHEMA_VERSION == 8
 
 
 def test_a_new_database_has_the_default_settings(tmp_path: Path) -> None:
@@ -126,6 +127,10 @@ def test_settings_survive_reopening(tmp_path: Path) -> None:
             ),
             MonitorSettings(id=MonitorId("other")),  # a look but no playlist
             MonitorSettings(id=MonitorId("third"), look=Look(background="#12ab9f")),
+            MonitorSettings(
+                id=MonitorId("fourth"),
+                look=Look(ImageMode.FIT, Background.BLUR, blur=0.0123, darken=0.0),
+            ),
         ),
         pause_when_locked=False,
         pause_when_idle=None,
@@ -137,6 +142,35 @@ def test_settings_survive_reopening(tmp_path: Path) -> None:
         assert store.settings() == settings  # in the same order
         assert str(store.settings().monitors[0].id) == str(monitor)  # spelling
         assert store.revision() == 1
+
+
+def test_settings_stored_without_a_newer_field_get_its_default(
+    store: Store, tmp_path: Path
+) -> None:
+    """
+    The settings are one JSON document: a setting added later, with a
+    default, loads from a database saved before it, with no new schema.
+    """
+    # As if saved before the idle pause, a playlist's order and a look's
+    # blur and darkening were settings.
+    stored = {
+        "playlists": [{"id": "a", "name": "A", "directory": str(tmp_path)}],
+        "monitors": [
+            {"id": "m", "playlist": "a", "look": {"mode": "fit", "background": "edges"}}
+        ],
+    }
+    # pylint: disable-next=protected-access
+    store._db.execute("UPDATE settings SET settings = ?", (json.dumps(stored),))
+    assert store.settings() == Settings(
+        playlists=(PlaylistSettings(id="a", name="A", directory=tmp_path),),
+        monitors=(
+            MonitorSettings(
+                id=MonitorId("m"),
+                playlist="a",
+                look=Look(ImageMode.FIT, Background.EDGES),
+            ),
+        ),
+    )
 
 
 def test_a_stale_revision_saves_nothing(store: Store) -> None:

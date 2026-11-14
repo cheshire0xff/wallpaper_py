@@ -29,6 +29,8 @@ app/                          PySide6 (Qt only here); two processes
                  look, then the playlists; General; About tab in about.py
     settings_form.py  its rows: SettingRow, PlaylistEditor (open or a summary
                  row), field problems
+    settings_look.py  LookEditor: the selected monitor's look rows (mode,
+                 background, blur and darkening)
     settings_draft.py  the edit without widgets (Draft): problems per field,
                  monitor labels, what changed
     arrangement.py  the monitors drawn to scale (arrange(): pure geometry),
@@ -242,7 +244,14 @@ concurrency for a cosmetic issue that reopening fixes.
 The settings live in the state database (`core/store.py`), written only
 by the app: `settings` reads them with a revision, `save_settings` replaces
 them as a whole (refused if the revision moved on, or if a value can't be
-used) and uses them at once. There is no settings file.
+used) and uses them at once. There is no settings file. They are stored
+as one JSON document (`Settings`, as on the socket), since they are only
+ever read and written whole: a new setting with a default (general, per
+playlist or in a look) loads from a database saved before it, with no new
+schema. Renaming or removing one still needs a new schema (unknown fields
+are refused). What changes piece by piece stays in tables: each
+playlist's state (cursor, time shown, deck position, hold; updated on
+every tick), history, the shuffle decks and the applied images.
 
 The Settings page is monitor-first: the drawing (attached monitors only;
 a click selects one, outlined), then the selected monitor's rows (a
@@ -383,8 +392,11 @@ Fit's bars are filled with the look's `background`: a fixed colour
 the pixels sorted into boxes of similar colour, the fullest box's
 average); the average of its edges next to the bars (the outer 1/128 on
 each side: left and right, or top and bottom, as the screen's shape puts
-them); or `blur`, the image as Fill would show it, blurred and darker,
-under the sharp one. Automatic colours come from a fixed tiny copy of
+them); or `blur`, the image as Fill would show it, blurred (and darkened, as set),
+under the sharp one: how much blur (`Look.blur`) and darkening
+(`Look.darken`) is the monitor's setting, as it is taste and depends on
+the screen (Settings: a slider each, with even steps: the radius doubles
+every four). Automatic colours come from a fixed tiny copy of
 the image (`imaging.TINY`, 128x128, one column or row per edge), never
 from the output, so the wallpaper (from the file) and its preview (from
 the small copy) get the same colour. Except, rarely, `dominant` when two
@@ -392,6 +404,8 @@ colours are about as common: the copies differ by a few levels, and each
 may pick another (accepted). Blur's radius is a part of the screen's
 longer side, so a preview has the same blur, smaller; it is worked out
 at a size where the radius is a few pixels and enlarged (the same to the
-eye, 5x faster at 4K). The tests above cover every background. The
-background is kept in the other modes, unused, so going back to Fit
-brings it back.
+eye, 5x faster at 4K). The tests above cover every background, and blur
+at both ends of its range. The background is kept in the other modes,
+unused, so going back to Fit brings it back; blur and darkening are kept
+with the other backgrounds alike. A new look field with a default needs
+no new schema (the settings are stored as JSON, "Settings" above).

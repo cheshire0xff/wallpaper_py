@@ -27,7 +27,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictStr
 
-from .model import Look, MonitorId, WallpaperError
+from .model import MAX_BLUR, MAX_DARKEN, MIN_BLUR, Look, MonitorId, WallpaperError
 
 
 class Order(Enum):
@@ -172,6 +172,7 @@ def check_settings(settings: Settings) -> None:
                 f"Monitor {monitor.id} is on playlist id {monitor.playlist!r}, "
                 f"which doesn't exist"
             )
+        _check_look(monitor)
     idle = settings.pause_when_idle
     if idle is not None and idle <= 0:  # would pause for ever
         raise SettingsError("The idle pause must be more than 0, or never")
@@ -181,6 +182,18 @@ def check_settings(settings: Settings) -> None:
     ):
         if file is not None and not file.is_absolute():
             raise SettingsError(f"The {what} list must be a full path")
+
+
+def _check_look(monitor: MonitorSettings) -> None:
+    look = monitor.look
+    if not MIN_BLUR <= look.blur <= MAX_BLUR:
+        raise SettingsError(
+            f"Monitor {monitor.id}: the blur must be from {MIN_BLUR} to {MAX_BLUR}"
+        )
+    if not 0 <= look.darken <= MAX_DARKEN:
+        raise SettingsError(
+            f"Monitor {monitor.id}: the darkening must be from 0 to {MAX_DARKEN}"
+        )
 
 
 def _check_playlists(playlists: tuple[PlaylistSettings, ...]) -> set[str]:

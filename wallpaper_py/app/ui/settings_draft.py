@@ -16,12 +16,21 @@ shows (`drawing`, with `current_images`).
 
 from __future__ import annotations
 
+import math
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
 
-from ...core.model import BLACK, Background, Colour, ImageMode, Look, MonitorId
+from ...core.model import (
+    BLACK,
+    DEFAULT_BLUR,
+    Background,
+    Colour,
+    ImageMode,
+    Look,
+    MonitorId,
+)
 from ...core.settings import (
     DEFAULT_IDLE_S,
     DEFAULT_INTERVAL_S,
@@ -83,8 +92,17 @@ BACKGROUND_HELP: dict[BackgroundKind, str] = {
     Background.AVERAGE: "The image's average colour fills the bars",
     Background.DOMINANT: "The image's most common colour fills the bars",
     Background.EDGES: "The colour of the image's edges beside the bars",
-    Background.BLUR: "The image, blurred and darker, fills the bars",
+    Background.BLUR: "The image, blurred, fills the bars",
 }
+
+# The Blur and Darken sliders (the `blur` background only), in steps that
+# feel even. The radius doubles every BLUR_PER_DOUBLING steps, the default
+# on step 0: about 0.00105 to 0.02 (core.model.MIN_BLUR, MAX_BLUR). The
+# darkening goes up by 1/DARKEN_PER_ONE a step: 0 to 0.8, 0.25 on step 5.
+BLUR_PER_DOUBLING = 4
+BLUR_STEPS = (-9, 8)
+DARKEN_PER_ONE = 20
+DARKEN_STEPS = (0, 16)
 
 
 @dataclass(frozen=True)
@@ -534,6 +552,10 @@ def _monitor_changes(
             parts.append(f"mode of {name}")
         if old.look.background != new.look.background:
             parts.append(f"background of {name}")
+        if old.look.blur != new.look.blur:
+            parts.append(f"blur of {name}")
+        if old.look.darken != new.look.darken:
+            parts.append(f"darkening of {name}")
     return parts
 
 
@@ -554,6 +576,28 @@ def background_kind(background: Background | Colour) -> BackgroundKind:
 
 def background_look(look: Look, background: Background | Colour) -> Look:
     return replace(look, background=background)
+
+
+def blur_look(look: Look, step: int) -> Look:
+    """With the Blur slider's `step`."""
+    return replace(look, blur=DEFAULT_BLUR * 2 ** (step / BLUR_PER_DOUBLING))
+
+
+def blur_step(look: Look) -> int:
+    """The Blur slider's nearest step for the look's radius."""
+    step = round(BLUR_PER_DOUBLING * math.log2(look.blur / DEFAULT_BLUR))
+    return min(max(step, BLUR_STEPS[0]), BLUR_STEPS[1])
+
+
+def darken_look(look: Look, step: int) -> Look:
+    """With the Darken slider's `step`."""
+    return replace(look, darken=step / DARKEN_PER_ONE)
+
+
+def darken_step(look: Look) -> int:
+    """The Darken slider's nearest step for the look's darkening."""
+    step = round(look.darken * DARKEN_PER_ONE)
+    return min(max(step, DARKEN_STEPS[0]), DARKEN_STEPS[1])
 
 
 def colour_of(look: Look) -> Colour:

@@ -7,10 +7,16 @@ from pathlib import Path
 import pytest
 
 from wallpaper_py.app.ui.settings_draft import (
+    BLUR_STEPS,
+    DARKEN_STEPS,
     Draft,
     PlaylistDraft,
+    blur_look,
+    blur_step,
     change_summary,
     current_images,
+    darken_look,
+    darken_step,
     entry_names,
     interval_problem,
     monitor_entries,
@@ -18,7 +24,17 @@ from wallpaper_py.app.ui.settings_draft import (
     problems,
     short_id,
 )
-from wallpaper_py.core.model import Background, ImageMode, Look, MonitorId
+from wallpaper_py.core.model import (
+    DEFAULT_BLUR,
+    DEFAULT_DARKEN,
+    MAX_BLUR,
+    MAX_DARKEN,
+    MIN_BLUR,
+    Background,
+    ImageMode,
+    Look,
+    MonitorId,
+)
 from wallpaper_py.core.settings import (
     MANUAL,
     MonitorSettings,
@@ -195,6 +211,11 @@ def test_change_summary(saved: Settings, tmp_path: Path) -> None:
         update={"monitors": (MonitorSettings(id=A, playlist="w", look=edges),)}
     )
     assert change_summary(saved, looks, names, {A, B}) == ("mode of A, background of A")
+    blurred = Look(blur=0.01, darken=0.5)
+    looks = saved.model_copy(
+        update={"monitors": (MonitorSettings(id=A, playlist="w", look=blurred),)}
+    )
+    assert change_summary(saved, looks, names, {A, B}) == ("blur of A, darkening of A")
     gone = saved.model_copy(update={"playlists": (), "monitors": ()})
     # A not listed now, its row gone: forgotten; listed: it shows nothing.
     assert change_summary(saved, gone, names, set()) == (
@@ -217,3 +238,31 @@ def test_current_images_keep_a_folder_written_another_way(
     assert current_images(saved, retyped, shown) == {"w": image}
     moved = draft.with_playlist(replace(same, directory=str(tmp_path / "other")))
     assert not current_images(saved, moved, shown)  # unknown until saved
+
+
+def test_the_sliders_steps() -> None:
+    """
+    The defaults on a step; every step a value the settings take; a value
+    between steps or outside them shows at the nearest one.
+    """
+    look = Look()
+    assert (blur_step(look), darken_step(look)) == (0, 5)
+    assert blur_look(look, 0) == look and darken_look(look, 5) == look
+    blurs = [
+        blur_look(look, step).blur for step in range(BLUR_STEPS[0], BLUR_STEPS[1] + 1)
+    ]
+    assert MIN_BLUR <= blurs[0] < 1.1 * MIN_BLUR and blurs[-1] == MAX_BLUR
+    assert all(b / a == pytest.approx(2**0.25) for a, b in zip(blurs, blurs[1:]))
+    darkens = [
+        darken_look(look, step).darken
+        for step in range(DARKEN_STEPS[0], DARKEN_STEPS[1] + 1)
+    ]
+    assert darkens[0] == 0 and darkens[-1] == MAX_DARKEN
+    for step in range(BLUR_STEPS[0], BLUR_STEPS[1] + 1):
+        assert blur_step(blur_look(look, step)) == step
+    for step in range(DARKEN_STEPS[0], DARKEN_STEPS[1] + 1):
+        assert darken_step(darken_look(look, step)) == step
+    assert blur_step(replace(look, blur=DEFAULT_BLUR * 1.05)) == 0
+    assert blur_step(replace(look, blur=1.0)) == BLUR_STEPS[1]
+    assert darken_step(replace(look, darken=DEFAULT_DARKEN + 0.01)) == 5
+    assert darken_step(replace(look, darken=-1.0)) == 0

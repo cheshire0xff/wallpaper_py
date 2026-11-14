@@ -16,10 +16,10 @@ again. The page never reads the database itself.
   monitor's rows: *Monitor* (a drop-down that also lists switched-off and
   not-connected monitors, which aren't drawn; those get *Forget
   monitor*), *Playlist* (None, each playlist, *New playlist…*; several
-  monitors on one playlist mirror it), *Mode*, and for Fit *Background*
-  (a colour, with a swatch that opens a colour dialog: the preview follows
-  the colour while it is being chosen; or the image's average, most
-  common colour or edges; or the image itself, blurred).
+  monitors on one playlist mirror it), and its look's rows
+  (settings_look.py): *Mode*, and for Fit *Background*, with *Blur* and
+  *Darken* for the blurred image; the preview follows a colour or a
+  slider while it is being chosen.
   Then one editor per playlist (settings_form.PlaylistEditor): at most one
   is open, the others show a summary.
 - *General*: pausing, and where the favourites / to-remove lists are.
@@ -41,10 +41,9 @@ from pathlib import Path
 from typing import Literal, override
 
 from PySide6.QtCore import QEvent, Qt, Signal, Slot
-from PySide6.QtGui import QColor, QDesktopServices, QFont, QPalette
+from PySide6.QtGui import QDesktopServices, QFont, QPalette
 from PySide6.QtWidgets import (
     QCheckBox,
-    QColorDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -58,7 +57,7 @@ from PySide6.QtWidgets import (
 from shiboken6 import Shiboken
 
 from ...core import paths
-from ...core.model import Background, Colour, ImageMode, MonitorId
+from ...core.model import Look, MonitorId
 from ...core.settings import MonitorSettings, Settings, SettingsError, check_settings
 from ...protocol import (
     DesktopMonitor,
@@ -76,27 +75,17 @@ from .about import AboutPage, OpenUrl, data_locations, version_text
 from .arrangement import MonitorsView
 from .client import Client
 from .settings_draft import (
-    BACKGROUND_HELP,
-    BACKGROUND_NAMES,
-    COLOUR,
     DEFAULT_IDLE,
     FAVOURITES,
     IDLE,
-    MODE_HELP,
-    MODE_NAMES,
     TO_REMOVE,
     Draft,
-    BackgroundKind,
     Field,
     MonitorEntry,
-    background_kind,
-    background_look,
     change_summary,
-    colour_of,
     current_images,
     drawing,
     entry_names,
-    mode_look,
     monitor_entries,
     playlist_help,
     problem_summary,
@@ -105,9 +94,9 @@ from .settings_draft import (
     summary_text,
 )
 from .settings_dialogs import Dialogs
+from .settings_look import LookEditor
 from .thumbnails import ThumbnailLoader
 from .settings_form import (
-    ColourButton,
     PlaylistEditor,
     Problem,
     SettingRow,
@@ -249,32 +238,10 @@ class SettingsPage(QWidget):
         self.playlist_row = SettingRow(
             "Playlist", "", self.playlist_combo, parent=self, indent=indent
         )
-        self.mode_combo = combo(self, "Mode")
-        for mode, name in MODE_NAMES.items():
-            self.mode_combo.addItem(name, mode)
-        self.mode_row = SettingRow(
-            "Mode", "", self.mode_combo, parent=self, indent=indent
-        )
-        self.background_combo = combo(self, "Background")
-        for kind, name in BACKGROUND_NAMES.items():
-            self.background_combo.addItem(name, kind)
-        self.colour_button = ColourButton("Background colour", self)
-        # The fixed colours left for another background in this edit, to
-        # go back to; and the monitor the colour dialog is open for.
-        self._colours: dict[MonitorId, Colour] = {}
-        self._colour_for: MonitorId | None = None
-        self.background_row = SettingRow(
-            "Background",
-            "",
-            control_row(self.background_combo, self.colour_button),
-            parent=self,
-            indent=indent,
-        )
+        self.look_editor = LookEditor(self._dialogs, self, indent=indent)
         self.monitor_combo.currentIndexChanged.connect(self._monitor_chosen)
         self.playlist_combo.currentIndexChanged.connect(self._playlist_chosen)
-        self.mode_combo.currentIndexChanged.connect(self._mode_chosen)
-        self.background_combo.currentIndexChanged.connect(self._background_chosen)
-        self.colour_button.clicked.connect(self._choose_colour)
+        self.look_editor.edited.connect(self._look_edited)
         self.forget_button.clicked.connect(self._forget)
 
     def _build_general(self) -> None:
@@ -385,8 +352,7 @@ class SettingsPage(QWidget):
             self.monitor_row,
             self.away_row,
             self.playlist_row,
-            self.mode_row,
-            self.background_row,
+            self.look_editor,
         )
         for row in rows:
             layout.addWidget(row)
@@ -538,7 +504,7 @@ class SettingsPage(QWidget):
     def _fill(self, draft: Draft) -> None:
         """The form from `draft` (without reporting each field as edited)."""
         self._monitors = draft.monitors
-        self._colours = {}
+        self.look_editor.forget_colours()
         for editor in self.editors.values():
             self._editors_box.removeWidget(editor)
             editor.hide()
@@ -714,13 +680,13 @@ class SettingsPage(QWidget):
     # -- the selected monitor ----------------------------------------------------
 
     def _show_monitor(self, edited: Draft) -> None:
-        """The Monitor, Playlist, Mode and Background rows, for the selected one."""
+        """The selected monitor's rows: Monitor, Playlist and its look's."""
         ids = [e.id for e in self.entries]
         if self.selected not in ids:
             self.selected = ids[0] if ids else None
-        for row in (self.monitor_row, self.playlist_row, self.mode_row):
+        for row in (self.monitor_row, self.playlist_row, self.look_editor):
             row.setVisible(self.selected is not None)
-        boxes = (self.monitor_combo, self.playlist_combo, self.mode_combo)
+        boxes = (self.monitor_combo, self.playlist_combo)
         for box in boxes:
             box.blockSignals(True)
         self.monitor_combo.clear()
@@ -737,7 +703,6 @@ class SettingsPage(QWidget):
             box.blockSignals(False)
         if self.selected is None:
             self.away_row.setVisible(False)
-            self.background_row.setVisible(False)
             return
         entry = self.entries[ids.index(self.selected)]
         self.monitor_combo.blockSignals(True)
@@ -748,14 +713,9 @@ class SettingsPage(QWidget):
         self.playlist_row.set_description(
             playlist_help(edited, self.selected, self.entries)
         )
-        select(self.mode_combo, mine.look.mode)
-        self.mode_row.set_description(MODE_HELP[mine.look.mode])
-        self.background_row.setVisible(mine.look.mode is ImageMode.FIT)
-        kind = background_kind(mine.look.background)
-        select(self.background_combo, kind)
-        self.background_row.set_description(BACKGROUND_HELP[kind])
-        self.colour_button.setVisible(kind == COLOUR)
-        self.colour_button.set_colour(colour_of(mine.look))
+        assert self._base is not None  # loaded (`_refresh`)
+        saved = self._base.look(self.selected)
+        self.look_editor.show_look(self.selected, mine.look, saved)
         away = entry.state != "drawn"
         self.away_row.setVisible(away)
         if away:
@@ -795,67 +755,18 @@ class SettingsPage(QWidget):
         row = edited.monitor(self.selected)
         self._monitors = edited.with_monitor(row.model_copy(update=update)).monitors
 
-    @Slot(int)
-    def _mode_chosen(self, index: int) -> None:
-        del index
+    @Slot(object, object)
+    def _look_edited(self, monitor_id: MonitorId, look: Look) -> None:
+        """
+        A look row changed (also while a slider or the colour dialog moves).
+        Only for the monitor selected: with none, the editor still holds the
+        last one shown (a reload while the colour dialog is open).
+        """
         edited = self.edited()
-        if edited is None or self.selected is None:
-            return
-        mode: ImageMode = self.mode_combo.currentData()
-        look = edited.monitor(self.selected).look
-        self._set_row(edited, look=mode_look(look, mode))
-        self._refresh()
-
-    @Slot(int)
-    def _background_chosen(self, index: int) -> None:
-        del index
-        edited = self.edited()
-        if edited is None or self.selected is None or self._base is None:
-            return
-        kind: BackgroundKind = self.background_combo.currentData()
-        look = edited.monitor(self.selected).look
-        if not isinstance(look.background, Background):
-            self._colours[self.selected] = look.background
-        background: Background | Colour
-        if isinstance(kind, Background):
-            background = kind
-        else:  # a fixed colour: the last one in this edit, else the saved one
-            saved = colour_of(self._base.look(self.selected))
-            background = self._colours.get(self.selected, saved)
-        self._set_row(edited, look=background_look(look, background))
-        self._refresh()
-
-    @Slot()
-    def _choose_colour(self) -> None:
-        """The colour dialog: the preview follows it, Cancel goes back."""
-        if self.edited() is None or self.selected is None:
-            return
-        before = QColor(self.colour_button.colour())
-        dialog = QColorDialog(before, self)
-        dialog.setWindowTitle("Background colour")
-        dialog.currentColorChanged.connect(self._colour_previewed)
-        # Its event loop may show another monitor, which keeps its colour.
-        self._colour_for = self.selected
-        try:
-            chosen = self._dialogs.colour(dialog)
-            colour = dialog.currentColor() if chosen else before
-            self._colour_previewed(colour)
-        finally:
-            self._colour_for = None
-            dialog.currentColorChanged.disconnect(self._colour_previewed)
-            dialog.deleteLater()
-
-    @Slot(QColor)
-    def _colour_previewed(self, colour: QColor) -> None:
-        """The background colour of the monitor the dialog is open for."""
-        edited = self.edited()
-        if edited is None or self._colour_for is None or not colour.isValid():
-            return
-        if self._colour_for != self.selected:
-            return
-        look = edited.monitor(self._colour_for).look
-        self._set_row(edited, look=background_look(look, colour.name()))
-        self._refresh()
+        if edited is not None and monitor_id == self.selected:
+            row = edited.monitor(monitor_id).model_copy(update={"look": look})
+            self._monitors = edited.with_monitor(row).monitors
+            self._refresh()
 
     @Slot()
     def _forget(self) -> None:

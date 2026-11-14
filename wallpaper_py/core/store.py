@@ -5,9 +5,13 @@ decks, per-playlist and per-monitor state. Favourites and to-remove are
 *not* here: they live only in their .txt files (see core.marks).
 
 The settings are saved as a whole (`save_settings`), in one transaction
-that also deletes the state of every playlist they no longer have. The
-table layout is private to the service: the settings window reads and
-writes them through the app's commands.
+that also deletes the state of every playlist they no longer have. They
+are one JSON document (`Settings`, as sent on the socket), as they are
+only ever read and written whole: a new setting with a default loads from
+a database saved before it, with no new schema. The state the service
+updates piece by piece (per playlist, on each tick), history and the
+shuffle decks are tables. The layout is private to the service: the
+settings window reads and writes the settings through the app's commands.
 
 The database is the single source of truth, so a one-shot CLI command
 (`wallpaper next`) and a running `wallpaper run` in another process see the
@@ -29,35 +33,21 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from .model import Background, Colour, ImageMode, Look, MonitorId, WallpaperError
-from .settings import (
-    MonitorSettings,
-    Order,
-    PlaylistSettings,
-    Settings,
-    StaleSettingsError,
-)
+from .model import MonitorId, WallpaperError
+from .settings import Settings, StaleSettingsError
 
 # Pre-release: the schema changes in place, without migrations. A database
 # of another version is refused (see Store._create).
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 8
 
 _SCHEMA = (
-    """CREATE TABLE settings (             -- one row: the general settings
-        id                INTEGER PRIMARY KEY CHECK (id = 1),
-        revision          INTEGER NOT NULL, -- one up with each save
-        pause_when_locked INTEGER NOT NULL,
-        pause_when_idle   REAL,             -- seconds; NULL: never
-        favourites_file   TEXT,             -- NULL: in the data directory
-        to_remove_file    TEXT
+    """CREATE TABLE settings (             -- one row
+        id       INTEGER PRIMARY KEY CHECK (id = 1),
+        revision INTEGER NOT NULL,         -- one up with each save
+        settings TEXT NOT NULL             -- core.settings.Settings as JSON
     )""",
-    """CREATE TABLE playlist (
-        id        TEXT PRIMARY KEY,
-        position  INTEGER NOT NULL,        -- where it is listed
-        name      TEXT NOT NULL,
-        directory TEXT NOT NULL,
-        ordering  TEXT NOT NULL,           -- core.settings.Order
-        interval  REAL,                    -- active seconds; NULL: manual
+    """CREATE TABLE playlist (             -- the state of each in the settings
+        id       TEXT PRIMARY KEY,         -- PlaylistSettings.id
         cursor   INTEGER,                  -- history.id shown now, NULL at first
         elapsed  REAL NOT NULL DEFAULT 0,  -- active seconds since the last change
         deck_pos REAL NOT NULL DEFAULT -1, -- shuffle: position of the last card drawn
@@ -78,15 +68,6 @@ _SCHEMA = (
         path     TEXT NOT NULL,
         PRIMARY KEY (playlist, position)
     ) WITHOUT ROWID""",
-    """CREATE TABLE monitor (
-        key        TEXT PRIMARY KEY,       -- MonitorId.key
-        id         TEXT NOT NULL,          -- as it was spelt
-        position   INTEGER NOT NULL,
-        playlist   TEXT,                   -- playlist.id; NULL: none
-        mode       TEXT NOT NULL,          -- its look: core.model.ImageMode
-        background TEXT NOT NULL           -- and Look.background: #rrggbb, or
-                                           -- a core.model.Background
-    )""",
     """CREATE TABLE applied (
         monitor_id TEXT PRIMARY KEY,      -- MonitorId.key
         playlist   TEXT NOT NULL,
@@ -183,10 +164,9 @@ class Store:
             for statement in _SCHEMA:
                 self._db.execute(statement)
             self._db.execute(
-                "INSERT INTO settings (id, revision, pause_when_locked) "
-                "VALUES (1, 0, 1)"
+                "INSERT INTO settings (id, revision, settings) VALUES (1, 0, ?)",
+                (Settings().model_dump_json(),),
             )
-            self._save_settings(Settings())
             self._db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
     # -- settings ------------------------------------------------------------
@@ -199,41 +179,10 @@ class Store:
         return int(revision)
 
     def settings(self) -> Settings:
-        general = self._db.execute(
-            "SELECT pause_when_locked, pause_when_idle, favourites_file, "
-            "to_remove_file FROM settings WHERE id = 1"
+        (text,) = self._db.execute(
+            "SELECT settings FROM settings WHERE id = 1"
         ).fetchone()
-        playlists = self._db.execute(
-            "SELECT id, name, directory, ordering, interval FROM playlist "
-            "ORDER BY position"
-        ).fetchall()
-        monitors = self._db.execute(
-            "SELECT id, playlist, mode, background FROM monitor ORDER BY position"
-        ).fetchall()
-        return Settings(
-            playlists=tuple(
-                PlaylistSettings(
-                    id=id_,
-                    name=name,
-                    directory=Path(directory),
-                    order=Order(ordering),
-                    interval=interval,
-                )
-                for id_, name, directory, ordering, interval in playlists
-            ),
-            monitors=tuple(
-                MonitorSettings(
-                    id=MonitorId(id_),
-                    playlist=playlist,
-                    look=Look(ImageMode(mode), background),
-                )
-                for id_, playlist, mode, background in monitors
-            ),
-            pause_when_locked=bool(general[0]),
-            pause_when_idle=general[1],
-            favourites_file=_path(general[2]),
-            to_remove_file=_path(general[3]),
-        )
+        return Settings.model_validate_json(text)
 
     def save_settings(self, settings: Settings, revision: int | None) -> int:
         """
@@ -260,16 +209,14 @@ class Store:
         return stored + 1
 
     def _save_settings(self, settings: Settings) -> None:
+        old = {p.id: p.directory for p in self.settings().playlists}
         kept = {p.id for p in settings.playlists}
         rows = self._db.execute("SELECT id FROM playlist").fetchall()
         for (playlist,) in rows:
             if playlist not in kept:
                 self._delete_playlist(playlist)
-        for position, p in enumerate(settings.playlists):
-            row = self._db.execute(
-                "SELECT directory FROM playlist WHERE id = ?", (p.id,)
-            ).fetchone()
-            if row is not None and row[0] != str(p.directory):
+        for p in settings.playlists:
+            if p.id in old and old[p.id] != p.directory:
                 # A new folder: a shuffle cycle of its own, and an image
                 # from it on the next tick.
                 self._db.execute("DELETE FROM deck WHERE playlist = ?", (p.id,))
@@ -279,38 +226,12 @@ class Store:
                     (p.id,),
                 )
             self._db.execute(
-                "INSERT INTO playlist (id, position, name, directory, ordering, "
-                "interval) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO UPDATE "
-                "SET position = excluded.position, name = excluded.name, "
-                "directory = excluded.directory, ordering = excluded.ordering, "
-                "interval = excluded.interval",
-                (p.id, position, p.name, str(p.directory), p.order.value, p.interval),
+                "INSERT INTO playlist (id) VALUES (?) ON CONFLICT (id) DO NOTHING",
+                (p.id,),
             )
-        self._db.execute("DELETE FROM monitor")
-        self._db.executemany(
-            "INSERT INTO monitor (key, id, position, playlist, mode, background) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                (
-                    m.id.key,
-                    str(m.id),
-                    position,
-                    m.playlist,
-                    m.look.mode.value,
-                    _stored(m.look.background),
-                )
-                for position, m in enumerate(settings.monitors)
-            ),
-        )
         self._db.execute(
-            "UPDATE settings SET pause_when_locked = ?, pause_when_idle = ?, "
-            "favourites_file = ?, to_remove_file = ? WHERE id = 1",
-            (
-                settings.pause_when_locked,
-                settings.pause_when_idle,
-                _text(settings.favourites_file),
-                _text(settings.to_remove_file),
-            ),
+            "UPDATE settings SET settings = ? WHERE id = 1",
+            (settings.model_dump_json(),),
         )
 
     def _delete_playlist(self, playlist: str) -> None:
@@ -560,19 +481,6 @@ class Store:
             self._db.execute(
                 "DELETE FROM applied WHERE monitor_id = ?", (monitor_id.key,)
             )
-
-
-def _text(path: Path | None) -> str | None:
-    return None if path is None else str(path)
-
-
-def _stored(background: Background | Colour) -> str:
-    """As the `background` column holds it (read back by `Look`)."""
-    return background.value if isinstance(background, Background) else background
-
-
-def _path(text: str | None) -> Path | None:
-    return None if text is None else Path(text)
 
 
 def _history(row: tuple[int, str, float]) -> HistoryEntry:

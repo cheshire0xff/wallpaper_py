@@ -280,7 +280,7 @@ def test_a_monitor_is_set_up_by_clicking_or_choosing_it(window: SettingsPage) ->
     assert window.playlist_row.description.text() == (
         "Mirrors PLX2783H: the same image, changed together"
     )
-    assert window.mode_combo.currentText() == "Fill"
+    assert window.look_editor.mode_combo.currentText() == "Fill"
     assert window.away_row.isHidden()
 
     window.monitor_combo.setCurrentIndex(2)  # by keyboard: ZeroMOD, switched off
@@ -289,8 +289,8 @@ def test_a_monitor_is_set_up_by_clicking_or_choosing_it(window: SettingsPage) ->
     assert window.playlist_row.description.text() == (
         "Pick the playlist of another monitor to mirror it"
     )
-    assert window.mode_combo.currentText() == "Fit"
-    assert window.mode_row.description.text() == (
+    assert window.look_editor.mode_combo.currentText() == "Fit"
+    assert window.look_editor.mode_row.description.text() == (
         "Shows the whole image; bars fill the rest"
     )
     assert window.away_row.isVisibleTo(window)
@@ -336,8 +336,10 @@ def test_a_monitor_changes_playlist_then_save(
 
 def test_a_monitors_mode(window: SettingsPage, client: FakeClient) -> None:
     window.select_monitor(AW.id)
-    window.mode_combo.setCurrentIndex(window.mode_combo.findData(ImageMode.STRETCH))
-    assert window.mode_row.description.text() == (
+    window.look_editor.mode_combo.setCurrentIndex(
+        window.look_editor.mode_combo.findData(ImageMode.STRETCH)
+    )
+    assert window.look_editor.mode_row.description.text() == (
         "Fills the screen; the image changes its shape"
     )
     assert window.status.text() == "Changes: mode of AW3225QF. Not saved yet."
@@ -345,9 +347,11 @@ def test_a_monitors_mode(window: SettingsPage, client: FakeClient) -> None:
     [aw] = [m for m in sent(client).settings.monitors if m.id == AW.id]
     assert aw.look == Look(ImageMode.STRETCH)
     # Back to fill: no change (and nothing new is stored for it).
-    window.mode_combo.setCurrentIndex(window.mode_combo.findData(ImageMode.FILL))
+    window.look_editor.mode_combo.setCurrentIndex(
+        window.look_editor.mode_combo.findData(ImageMode.FILL)
+    )
     window.select_monitor(PLX.id)
-    assert window.mode_combo.currentText() == "Fill"
+    assert window.look_editor.mode_combo.currentText() == "Fill"
 
 
 def edited_look(window: SettingsPage, monitor: MonitorId) -> Look:
@@ -383,7 +387,9 @@ def test_the_previews_show_the_edit(
         assert edge_colour(window, AW.id) == red  # fill: no bars
         # Fit, not saved yet: a bar on the left at once.
         window.select_monitor(AW.id)
-        window.mode_combo.setCurrentIndex(window.mode_combo.findData(ImageMode.FIT))
+        window.look_editor.mode_combo.setCurrentIndex(
+            window.look_editor.mode_combo.findData(ImageMode.FIT)
+        )
         assert edge_colour(window, AW.id) == (0, 0, 0)
         assert edge_colour(window, PLX.id) == red  # only that monitor
         # Another folder: its image is unknown until saved.
@@ -425,12 +431,14 @@ def test_a_fit_monitors_background(  # pylint: disable=too-many-statements
     qtbot.waitUntil(lambda: window.monitors_view.preview(AW.id) is not None)
     window.select_monitor(AW.id)
     row, box, swatch = (
-        window.background_row,
-        window.background_combo,
-        window.colour_button,
+        window.look_editor.background_row,
+        window.look_editor.background_combo,
+        window.look_editor.colour_button,
     )
     assert row.isHidden()  # fill
-    window.mode_combo.setCurrentIndex(window.mode_combo.findData(ImageMode.FIT))
+    window.look_editor.mode_combo.setCurrentIndex(
+        window.look_editor.mode_combo.findData(ImageMode.FIT)
+    )
     assert not row.isHidden() and not swatch.isHidden()
     assert box.currentText() == "Colour" and swatch.colour() == "#000000"
     assert edge_colour(window, AW.id) == black
@@ -442,9 +450,13 @@ def test_a_fit_monitors_background(  # pylint: disable=too-many-statements
         "Changes: mode of AW3225QF, background of AW3225QF. Not saved yet."
     )
     # Fill hides it; back to Fit, it is still there.
-    window.mode_combo.setCurrentIndex(window.mode_combo.findData(ImageMode.FILL))
+    window.look_editor.mode_combo.setCurrentIndex(
+        window.look_editor.mode_combo.findData(ImageMode.FILL)
+    )
     assert row.isHidden()
-    window.mode_combo.setCurrentIndex(window.mode_combo.findData(ImageMode.FIT))
+    window.look_editor.mode_combo.setCurrentIndex(
+        window.look_editor.mode_combo.findData(ImageMode.FIT)
+    )
     assert box.currentData() is Background.EDGES
     # A colour: black (none saved), then the dialog; the preview follows it
     # while it moves, and Cancel goes back.
@@ -471,24 +483,89 @@ def test_a_fit_monitors_background(  # pylint: disable=too-many-statements
     window.grab()  # paints
 
 
+def test_blur_and_darkening(
+    qtbot: QtBot, window: SettingsPage, client: FakeClient, tmp_path: Path
+) -> None:
+    """Sliders for the Blur background only; the preview follows them."""
+    red = (200, 40, 40)
+    show_square(client, tmp_path, red)
+    qtbot.waitUntil(lambda: window.monitors_view.preview(AW.id) is not None)
+    window.select_monitor(AW.id)
+    rows = (window.look_editor.blur_row, window.look_editor.darken_row)
+    window.look_editor.mode_combo.setCurrentIndex(
+        window.look_editor.mode_combo.findData(ImageMode.FIT)
+    )
+    assert all(row.isHidden() for row in rows)  # a colour
+    box = window.look_editor.background_combo
+    box.setCurrentIndex(box.findData(Background.BLUR))
+    assert not any(row.isHidden() for row in rows)
+    assert (
+        window.look_editor.blur_slider.value() == 0
+        and window.look_editor.darken_slider.value() == 5
+    )
+    assert edge_colour(window, AW.id) == (150, 30, 30)  # a quarter darker
+    # Moved (as while dragged): the draft and the preview follow at once.
+    window.look_editor.darken_slider.setValue(0)
+    assert edge_colour(window, AW.id) == red
+    window.look_editor.darken_slider.setValue(
+        window.look_editor.darken_slider.maximum()
+    )
+    assert edited_look(window, AW.id).darken == 0.8
+    assert edge_colour(window, AW.id) == (40, 8, 8)
+    window.look_editor.blur_slider.setValue(4)  # twice the default radius
+    assert edited_look(window, AW.id).blur == 0.01
+    assert window.status.text() == (
+        "Changes: mode of AW3225QF, background of AW3225QF, blur of AW3225QF, "
+        "1 more. Not saved yet."
+    )
+    # Another background hides them, and keeps the values.
+    box.setCurrentIndex(box.findData(Background.EDGES))
+    assert all(row.isHidden() for row in rows)
+    assert edited_look(window, AW.id).blur == 0.01
+    # Another monitor shows its own.
+    window.select_monitor(PLX.id)
+    assert all(row.isHidden() for row in rows)
+    assert window.look_editor.blur_slider.value() == 0
+    window.select_monitor(AW.id)
+    assert window.look_editor.blur_slider.value() == 4
+    window.save_button.click()
+    [aw] = [m for m in sent(client).settings.monitors if m.id == AW.id]
+    assert aw.look == Look(ImageMode.FIT, Background.EDGES, blur=0.01, darken=0.8)
+
+
+def test_a_look_edit_for_a_monitor_not_selected_is_dropped(
+    window: SettingsPage,
+) -> None:
+    """
+    The editor may still hold a monitor the page no longer selects (a
+    reload while the colour dialog is open): its edit changes nothing.
+    """
+    window.select_monitor(AW.id)
+    before = window.edited()
+    window.look_editor.edited.emit(PLX.id, Look(ImageMode.FIT))
+    assert window.edited() == before and not window.dirty()
+
+
 def test_a_background_colour_is_kept(
     window: SettingsPage, dialogs: FakeDialogs
 ) -> None:
     """Back to Colour: the one picked; a monitor shown meanwhile keeps its own."""
     window.select_monitor(AW.id)
-    window.mode_combo.setCurrentIndex(window.mode_combo.findData(ImageMode.FIT))
-    box = window.background_combo
+    window.look_editor.mode_combo.setCurrentIndex(
+        window.look_editor.mode_combo.findData(ImageMode.FIT)
+    )
+    box = window.look_editor.background_combo
 
     def pick(dialog: QColorDialog) -> bool:
         dialog.setCurrentColor(QColor("#3366cc"))
         return True
 
     dialogs.colour = pick
-    window.colour_button.click()
+    window.look_editor.colour_button.click()
     box.setCurrentIndex(box.findData(Background.AVERAGE))
     box.setCurrentIndex(box.findData(COLOUR))
     assert edited_look(window, AW.id).background == "#3366cc"
-    assert window.colour_button.colour() == "#3366cc"
+    assert window.look_editor.colour_button.colour() == "#3366cc"
 
     def elsewhere(dialog: QColorDialog) -> bool:
         window.select_monitor(PLX.id)
@@ -497,7 +574,7 @@ def test_a_background_colour_is_kept(
 
     plx = edited_look(window, PLX.id)
     dialogs.colour = elsewhere
-    window.colour_button.click()
+    window.look_editor.colour_button.click()
     assert edited_look(window, PLX.id) == plx
     assert edited_look(window, AW.id).background == "#3366cc"
 
@@ -539,7 +616,7 @@ def test_forget_a_monitor_not_connected(
 ) -> None:
     window.select_monitor(U27)
     assert window.away_row.label.text() == "Not connected"
-    assert window.mode_combo.currentText() == "Stretch"
+    assert window.look_editor.mode_combo.currentText() == "Stretch"
     window.forget_button.click()
     assert "DELA1B2 · not connected" not in labels(window)
     assert window.selected == PLX.id

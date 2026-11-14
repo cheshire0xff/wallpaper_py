@@ -5,7 +5,6 @@ import pytest
 from PIL import Image, ImageChops, ImageStat
 
 from wallpaper_py.core.imaging import (
-    BLUR_BRIGHTNESS,
     background_colour,
     fill_box,
     fit_size,
@@ -24,6 +23,9 @@ LOOKS = [
     *(Look(mode) for mode in ImageMode),
     Look(ImageMode.FIT, "#3366cc"),
     *(Look(ImageMode.FIT, background) for background in Background),
+    # Blur at the ends of its settings (core.model.MIN_BLUR, MAX_BLUR ...).
+    Look(ImageMode.FIT, Background.BLUR, blur=0.001, darken=0.0),
+    Look(ImageMode.FIT, Background.BLUR, blur=0.02, darken=0.8),
 ]
 # The backgrounds that are one colour (all but blur).
 COLOURS = [Background.AVERAGE, Background.DOMINANT, Background.EDGES]
@@ -150,21 +152,36 @@ def test_dominant_takes_similar_colours_together() -> None:
     assert close_to(colour, (240, 0, 0), tol=2)
 
 
-def test_blur_fills_the_bars_with_the_image_blurred() -> None:
+@pytest.mark.parametrize("darken", [0.0, 0.25, 0.8])
+def test_blur_fills_the_bars_with_the_image_blurred(darken: float) -> None:
     """
-    The bars show the image as Fill would, blurred and darker, under the
+    The bars show the image as Fill would, blurred and darkened as set, under the
     image itself, sharp.
     """
-    look = Look(ImageMode.FIT, Background.BLUR)
+    look = Look(ImageMode.FIT, Background.BLUR, darken=darken)
     result = render(stripes(300, 100), (600, 100), (600, 100), look)
     # The image in the middle (150..450), sharp to its edges.
     assert close_to(result.getpixel((152, 50)), RED, tol=4)
     assert close_to(result.getpixel((447, 50)), BLUE, tol=4)
     # Filled to the screen, its stripes are 200 px each: beside the image,
     # red on the left and blue on the right, darker.
-    dark = round(255 * BLUR_BRIGHTNESS)
+    dark = round(255 * (1 - darken))
     assert close_to(result.getpixel((20, 50)), (dark, 0, 0), tol=4)
     assert close_to(result.getpixel((580, 50)), (0, 0, dark), tol=4)
+
+
+def test_more_blur_spreads_further() -> None:
+    """The radius is the look's: next to the image, more blur mixes more."""
+    screen = (1200, 100)  # the image at 450..750
+
+    def mixed(blur: float) -> int:
+        look = Look(ImageMode.FIT, Background.BLUR, blur=blur, darken=0.0)
+        # In the left bar, beside the filled image's red/green border (400).
+        pixel = render(stripes(300, 100), screen, screen, look).getpixel((395, 50))
+        assert isinstance(pixel, tuple)
+        return int(pixel[1])  # the green in the red
+
+    assert mixed(0.001) < mixed(0.005) < mixed(0.02)
 
 
 def test_average_is_the_whole_images() -> None:

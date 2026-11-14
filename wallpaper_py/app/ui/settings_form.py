@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QSizePolicy,
+    QSlider,
     QVBoxLayout,
     QWidget,
 )
@@ -186,6 +187,35 @@ def control_row(*widgets: QWidget) -> QHBoxLayout:
         stretch = 1 if isinstance(widget, (QLineEdit, QComboBox, QLabel)) else 0
         layout.addWidget(widget, stretch)
     return layout
+
+
+def slider(parent: QWidget, name: str, steps: tuple[int, int]) -> QSlider:
+    """A slider over whole `steps` (first, last), one step per key press."""
+    widget = QSlider(Qt.Orientation.Horizontal, parent)
+    widget.setAccessibleName(name)
+    widget.setRange(*steps)
+    widget.setPageStep(2)
+    return widget
+
+
+def slider_row(widget: QSlider, low: str, high: str) -> QHBoxLayout:
+    """A slider between muted words for its ends ("Less", "More")."""
+    layout = QHBoxLayout()
+    layout.setContentsMargins(0, 0, 0, 0)
+    layout.setSpacing(theme.space(1.5))
+    parent = widget.parentWidget()
+    layout.addWidget(theme.muted(low, parent))
+    layout.addWidget(widget, 1)
+    layout.addWidget(theme.muted(high, parent))
+    return layout
+
+
+def set_step(widget: QSlider, step: int) -> None:
+    """Move the slider there, without reporting it as an edit."""
+    if step != widget.value():
+        widget.blockSignals(True)
+        widget.setValue(step)
+        widget.blockSignals(False)
 
 
 class ColourButton(theme.PaintedButton):

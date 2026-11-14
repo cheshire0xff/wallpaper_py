@@ -27,11 +27,8 @@ from .model import Background, Colour, ImageLoadError, ImageMode, Look
 TINY = 128  # px, both sides
 LEVELS = 8  # per channel, for `dominant`: 512 boxes of similar colours
 
-# `blur`: the bars are the image filled to the screen, blurred by this part of
-# the screen's longer side (a radius in screen pixels: a preview has the same
-# blur, smaller), and darkened so the sharp image stands out.
-BLUR = 0.005
-BLUR_BRIGHTNESS = 0.75
+# `blur`: the bars are the image filled to the screen, blurred by the look's
+# part of the screen's longer side and darkened (`Look.blur`, `Look.darken`).
 BLUR_WORK = 8  # px: the radius at the size the blur is worked out at
 
 # Renders are saved as BMP: lossless like PNG, but with no compression to
@@ -191,7 +188,7 @@ def render(
             max(1, round(inner[1] * output[1] / screen[1])),
         )
         sides = inner[0] < screen[0]  # bars left and right, else above and below
-        canvas = _bars(img, screen, output, look.background, sides=sides)
+        canvas = _bars(img, screen, output, look, sides=sides)
         offset = ((output[0] - size[0]) // 2, (output[1] - size[1]) // 2)
         canvas.paste(img.resize(size, lanczos), offset)
         return canvas
@@ -205,20 +202,21 @@ def _bars(
     img: Image.Image,
     screen: tuple[int, int],
     output: tuple[int, int],
-    background: Background | Colour,
+    look: Look,
     *,
     sides: bool,
 ) -> Image.Image:
     """Fit's canvas at `output`, before the image goes on it: its bars."""
+    background = look.background
     if background is Background.BLUR:
-        radius = BLUR * max(screen) * output[0] / screen[0]  # in output pixels
+        radius = look.blur * max(screen) * output[0] / screen[0]  # in output pixels
         # Blurred at a size where the radius is BLUR_WORK px, then enlarged:
         # the same to the eye (at most a few levels off), 5x faster at 4K.
         scale = min(1.0, BLUR_WORK / radius)
         work = (max(1, round(output[0] * scale)), max(1, round(output[1] * scale)))
         filled = img.resize(work, Image.Resampling.BOX, box=fill_box(img.size, screen))
         blurred = filled.filter(ImageFilter.GaussianBlur(radius * work[0] / output[0]))
-        darker = ImageEnhance.Brightness(blurred).enhance(BLUR_BRIGHTNESS)
+        darker = ImageEnhance.Brightness(blurred).enhance(1 - look.darken)
         return darker.resize(output, Image.Resampling.BICUBIC)
     return Image.new("RGB", output, background_colour(img, background, sides=sides))
 
