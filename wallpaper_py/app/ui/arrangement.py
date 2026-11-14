@@ -220,7 +220,7 @@ def caption(
     if twin is not None:
         state = f"{twin[0]} of {twin[1]}"
     else:
-        state = f"{g.width}×{g.height}" if g is not None else "off"
+        state = f"{g.screen[0]}×{g.screen[1]}" if g is not None else "off"
     return monitor.name, f"{state} · {playlist or 'no playlist'}"
 
 
@@ -404,7 +404,7 @@ class MonitorsView(QWidget):
         small = self._images.get(path) if path is not None else None
         if g is None or path is None or small is None:
             return None
-        screen = (g.width, g.height)
+        screen = g.screen
         output = preview_size(screen, round(PREVIEW_SIDE * self.devicePixelRatioF()))
         key = (path, monitor.look, screen, output)
         pixmap = self._renders.get(key)

@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -65,6 +66,14 @@ class TestApplyWallpaper:
         assert backend.set_calls[0].image == used
         with Image.open(used) as img:
             assert (img.format, img.size, img.mode) == ("BMP", (1920, 480), "RGB")
+
+    def test_a_scaled_screen_gets_its_pixels(self, image: Path, tmp_path: Path) -> None:
+        # Wayland at 150 %: 2560x1440 of the desktop, 3840x2160 pixels.
+        rect = Rectangle(0, 0, 2560, 1440, pixels=(3840, 2160))
+        backend = FakeBackend([replace(make_monitor("Main"), rect=rect)])
+        used = apply_wallpaper(backend, main_id(backend), image, Look(), tmp_path)
+        with Image.open(used) as img:
+            assert img.size == (3840, 2160)
 
     def test_the_look_is_used(self, image: Path, tmp_path: Path) -> None:
         backend = FakeBackend([make_monitor("A", size=(400, 100))])

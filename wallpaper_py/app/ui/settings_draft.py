@@ -392,8 +392,8 @@ def monitor_entries(
     for monitor in attached:
         name = monitor.name
         if (twin := numbers.get(monitor.id)) is not None and monitor.geometry:
-            g = monitor.geometry
-            name = f"{name} · {g.width}×{g.height} · {twin[0]} of {twin[1]}"
+            width, height = monitor.geometry.screen
+            name = f"{name} · {width}×{height} · {twin[0]} of {twin[1]}"
         entries.append(MonitorEntry(monitor.id, name, name, "drawn"))
     for monitor in listed:
         if monitor.geometry is None:

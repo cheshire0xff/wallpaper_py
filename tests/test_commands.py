@@ -1,6 +1,7 @@
 """Commands run on the service: data in, data out; and the overview."""
 
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 from typing import Literal
 
@@ -15,7 +16,7 @@ from wallpaper_py.commands import (
     overview,
 )
 from wallpaper_py.core import paths
-from wallpaper_py.core.model import ImageMode, Look, MonitorId
+from wallpaper_py.core.model import ImageMode, Look, MonitorId, Rectangle
 from wallpaper_py.core.service import (
     Change,
     ChangeReason,
@@ -68,7 +69,10 @@ STRIP_ID = MonitorId(fake_id("Strip"))  # not listed
 
 MAIN = make_monitor("Main")
 SIDE = make_monitor("Side", attached=False)
-LEFT = make_monitor("Left", x=-2560, size=(2560, 1440))  # in no playlist
+# In no playlist; a 4K at 150 % on Wayland: 2560x1440 of the desktop.
+LEFT = replace(
+    make_monitor("Left"), rect=Rectangle(-2560, 0, 0, 1440, pixels=(3840, 2160))
+)
 
 
 def example(tmp_path: Path, interval: float | None = 600.0) -> Settings:
@@ -340,7 +344,9 @@ def test_overview(service: PlaylistService, tmp_path: Path) -> None:
             DesktopMonitor(
                 id=LEFT.id,
                 name="Left",
-                geometry=Geometry(x=-2560, y=0, width=2560, height=1440),
+                geometry=Geometry(
+                    x=-2560, y=0, width=2560, height=1440, pixels=(3840, 2160)
+                ),
             ),
         ),
     )

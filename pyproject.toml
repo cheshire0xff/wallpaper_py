@@ -51,4 +51,7 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["windows: needs the real Windows desktop (IDesktopWallpaper)"]
+markers = [
+    "windows: needs the real Windows desktop (IDesktopWallpaper)",
+    "kde: reads the real KDE Plasma desktop (skipped elsewhere)",
+]

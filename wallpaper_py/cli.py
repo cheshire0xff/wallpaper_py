@@ -155,7 +155,7 @@ def format_monitors(monitors: Sequence[Monitor]) -> str:
         else:
             r = monitor.rect
             lines.append(f"    position:  {r.x1}, {r.y1}")
-            lines.append(f"    size:      {r.width}x{r.height}")
+            lines.append(f"    size:      {r.size[0]}x{r.size[1]}")
         lines.append(f"    wallpaper: {monitor.wallpaper or '-'}")
         lines.append(f"    id:        {monitor.id}")
     return "\n".join(lines)

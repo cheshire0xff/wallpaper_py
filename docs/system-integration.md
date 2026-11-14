@@ -14,9 +14,8 @@ remove all of it. Nothing here needs admin rights: everything is per user.
 | Rendered wallpapers (cache) | `%LOCALAPPDATA%\wallpaper_py\Cache\rendered\` | `~/.cache/wallpaper_py/rendered/` |
 | How its processes talk | named pipes `\\.\pipe\wallpaper_py-…` | socket files `wallpaper_py-…` in the temp folder (usually `/tmp`) |
 
-Linux support is planned (KDE Plasma, Phase 6): start at login and the
-paths above are already in place, but the app can't set wallpapers on
-Linux yet.
+On Linux, wallpapers are set on KDE Plasma only (other desktops get an
+error saying so).
 
 ## Start at login
 
@@ -80,7 +79,7 @@ The messages are documented in [protocol.md](protocol.md).
 ## What it changes on your desktop
 
 - **The wallpaper of each monitor**, through Windows' own per-monitor
-  wallpaper interface. Every image is first rendered to the monitor's
+  wallpaper interface (on KDE: below). Every image is first rendered to the monitor's
   exact size with its mode (fill, fit, stretch) and saved in the cache
   folder; Windows is then pointed at that file. Each monitor uses two cache
   files in turn, so the cache never grows.
@@ -88,11 +87,20 @@ The messages are documented in [protocol.md](protocol.md).
   monitors; wallpaper_py keeps it at *fill*, setting it only when it is
   something else (e.g. *tile* or *span*, which some other wallpaper tools
   use). With the images rendered to size, *fill* shows them exactly.
+- **On KDE Plasma**, the same through Plasma's desktop scripting (D-Bus):
+  for a monitor in a playlist, its desktop in every activity gets the
+  *Image* wallpaper (replacing a slideshow or another plugin there),
+  pointed at the rendered file, at *Scaled and Cropped*. Plasma keeps
+  these in `~/.config/plasma-org.kde.plasma.desktop-appletsrc`, as if set
+  in *Configure Desktop and Wallpaper*.
 - Nothing else: it doesn't change the lock screen, themes or colours.
 
 It *reads* (never changes): the list of monitors and their positions,
 whether the session is locked (to pause rotation), and how long since your
-last keyboard or mouse input (to pause while you're away).
+last keyboard or mouse input (to pause while you're away; Windows only:
+KDE on Wayland doesn't tell other programs). On KDE it runs
+`kscreen-doctor -j` and `busctl` for this, and reads monitor names from
+`/sys/class/drm/*/edid`.
 
 ## Removing everything
 
@@ -106,5 +114,5 @@ last keyboard or mouse input (to pause while you're away).
 
 Your wallpapers stay as they were last set (the last rendered images are
 in the cache folder you deleted, so Windows may fall back to a plain
-colour after the next sign-in; pick a wallpaper in Windows' settings if
-so).
+colour after the next sign-in, and Plasma shows none; pick a wallpaper in
+the system's settings if so).

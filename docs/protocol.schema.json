@@ -245,7 +245,7 @@
       }
     },
     "Geometry": {
-      "description": "A monitor's area in desktop pixels; x and y may be negative.",
+      "description": "A monitor's area in desktop coordinates (x and y may be negative), and\nits size in pixels if that differs (Wayland's logical coordinates:\ncore.model.Rectangle).",
       "properties": {
         "x": {
           "title": "X",
@@ -262,6 +262,28 @@
         "height": {
           "title": "Height",
           "type": "integer"
+        },
+        "pixels": {
+          "anyOf": [
+            {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "integer"
+                }
+              ],
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pixels"
         }
       },
       "required": [

@@ -33,9 +33,11 @@ per-user log directory: `%LOCALAPPDATA%\wallpaper_py\Logs` on Windows).
    on the screen have the colour of Home's preview (compare a screenshot of
    each); the same part of the image shows. Changing a monitor's mode or
    background in Settings and saving shows on the screen at once.
-4. **The system's own setting (Windows).** Personalisation > Background >
-   *Choose a fit* > Tile, then `wallpaper next`: back to Fill, and every
-   monitor shows its image as its look says.
+4. **The system's own setting.** Windows: Personalisation > Background >
+   *Choose a fit* > Tile; KDE: *Configure Desktop and Wallpaper* >
+   Positioning: Tiled on one monitor. Then `wallpaper next`: back to Fill
+   (Scaled and Cropped), and every monitor shows its image as its look
+   says.
 5. **The desktop restarted.** With the app running, restart Windows
    Explorer (Task Manager), or `plasmashell --replace` on KDE: at most one
    tick logs an error, then `wallpaper next` works and rotation goes on.
@@ -54,7 +56,8 @@ per-user log directory: `%LOCALAPPDATA%\wallpaper_py\Logs` on Windows).
 
 8. **Lock and idle.** Lock the session: within 5 s the log says `paused`,
    the tray icon turns grey and the window's sidebar says paused; unlock:
-   `resumed`. The same after idling past the idle pause.
+   `resumed`. The same after idling past the idle pause (Windows only: KDE
+   doesn't tell the app how long you've been idle).
 9. **Restart the PC** with *Start at login* ticked: the tray app runs, with
    no console window; every monitor has its current image, and shuffle goes
    on where it was. Untick it: the entry is gone (Windows: the HKCU Run key;

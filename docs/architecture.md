@@ -71,7 +71,9 @@ backends/                     one per platform, thin
   windows/       IDesktopWallpaper (COM) + EDID names via QueryDisplayConfig,
                  lock / idle via user32 (presence.py), Run key (autostart.py)
   xdg.py         XDG autostart entry (any Linux desktop)
-  (kde/)         planned: plasmashell D-Bus + KScreen
+  kde/           plasmashell's scripting over D-Bus (evaluateScript), KScreen
+                 outputs, EDID names from sysfs, lock via the ScreenSaver
+                 interface; through `kscreen-doctor` and `busctl` (tools.py)
 ```
 
 Rules:
@@ -349,6 +351,38 @@ it reads and writes a plain string; SQLite stores its `key` (case-folded).
 Where a protocol model shows a playlist's member (`MonitorView.id`), it is
 spelt as the desktop spells it when listed, else as the settings do.
 
+On KDE the id is the connector (`DP-4`): Plasma and KWin go by it, it
+stays while the monitor is off, and two monitors of one model differ by it.
+Like the Windows device path it belongs to the port (a monitor moved to
+another port is a new one). The name comes from the EDID in sysfs
+(`/sys/class/drm/card*-DP-4/edid`; the name descriptor, else the maker and
+product code as Windows spells it). KScreen lists only the outputs
+connected now, so the backend remembers every monitor it saw (with its
+name, as EDID is unreadable while off) and lists it as detached, as
+Windows does; one connected but disabled, or without a Plasma screen
+(mirroring another), is detached too.
+
+`Monitor.rect` is in desktop coordinates, with the screen's size in pixels
+beside it (`Rectangle.pixels`, `Geometry.pixels` on the socket). On
+Windows they are the same; on Wayland the desktop is logical, so a 4K
+screen at 150 % spans 2560x1440 of it but is rendered at 3840x2160
+(`Rectangle.size`). The drawings lay monitors out by their area and name
+and render them by their pixels. The KDE backend takes the area from
+Plasma (`screenGeometry`) and the pixels from KScreen (already rotated).
+
+Plasma is driven by desktop scripts (`evaluateScript`): one per
+`monitors()` (each connector's screen, geometry and current image, via
+`screenForConnector`) and one per `set_wallpaper`, which sets the image on
+that screen's desktop in every activity (so switching activity keeps the
+playlist) and keeps its positioning at *Scaled and Cropped* (Fill). The
+two render files per monitor are kept here too: a new path makes Plasma
+load the new picture instead of trusting one it cached. Both tools run without
+`QT_QPA_PLATFORM`: set (offscreen in tests, `xcb` by hand on Wayland),
+`kscreen-doctor` picks a KScreen backend that sees no outputs, silently.
+Presence on KDE knows only the lock (the ScreenSaver interface's
+`GetActive`): on Wayland the compositor keeps idle time to itself, so the
+idle pause doesn't apply there.
+
 Consequences in code:
 
 - `selection.resolve_monitor` refuses numbers.
@@ -363,7 +397,7 @@ Every image is rendered: `setter` renders it to the monitor's exact
 resolution with the monitor's `Look` (its mode, and Fit's background) and
 hands the render to the backend, which only ever shows exact-size images
 and keeps the system's own position at Fill (Windows has one for all
-monitors, set only when it differs; KDE will do the same per monitor).
+monitors, set only when it differs; KDE does the same per desktop).
 So every look works the same on every platform. Renders alternate between
 two files per monitor, because Windows may ignore a wallpaper whose path
 did not change.
