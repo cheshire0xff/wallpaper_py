@@ -14,8 +14,9 @@ thin. See [architecture.md](architecture.md) for the layers.
 | 4 | UI process, one window (Home, Library, Settings), pick / hold / manual | done |
 | 4b | Settings in the database, per-monitor looks, previews, backgrounds | done |
 | 4c | More backgrounds for Fit: dominant, blur | done |
+| 4d | Blur strength and darkening per monitor; the look stored as one value | next |
 | 5 | Library window | low priority |
-| 6 | KDE backend | next |
+| 6 | KDE backend | after 4d |
 | 7 | Polish | |
 
 Finished phases are described as they work now, not as they were planned:
@@ -42,6 +43,33 @@ Phase 4c's: `cd44203`).
 - **Stylesheets.** The look comes from the native style and the palette
   ([design/](design/README.md)).
 - **Golden-image tests** (see Phase 7).
+
+## Phase 4d: blur strength and darkening
+
+Decided 2026-11-14. The first blur was far too strong for the user and had
+to be lowered a lot: how much blur and darkening look right is taste, and
+depends on the screen too (the same part of a very wide strip's long side
+is a lot of blur for its height). So both become settings of the look, per
+monitor, for the *Blur* background:
+
+- `Look` gains the blur radius, as a part of the screen's longer side
+  (about 0.001 to 0.02; default today's `imaging.BLUR`, 0.005), and the
+  darkening (0, none, to about 0.8; default 0.25, today's
+  `BLUR_BRIGHTNESS` of 0.75). Both are kept when the background isn't
+  Blur, as the background is kept outside Fit. Their ranges are checked in
+  `check_settings`; strict floats from clients.
+- Stored as one value: the whole `Look` as JSON in one `monitor` column,
+  instead of the `mode` and `background` columns, so a later look field
+  with a default (a crop anchor) loads from existing rows without a schema
+  bump. This change bumps the schema once (state.db is deleted, the
+  playlists set up again).
+- Settings: under *Background*, for *Blur* only, two slider rows, *Blur*
+  (less to more) and *Darken* (none to more), with steps that feel even (a
+  log scale for the radius, probably); the preview follows while dragging,
+  and the footer names each change.
+- Tests: the preview-matches-wallpaper test at a few strengths and
+  darkenings; the range checks; the draft and the page's rows. The
+  protocol schema regenerated. No new desktop checks (step 3 covers looks).
 
 ## Phase 5: library window
 
