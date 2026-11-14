@@ -6,7 +6,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from wallpaper_py.core.model import ImageMode, Look, MonitorId
+from wallpaper_py.core.model import Background, ImageMode, Look, MonitorId
 from wallpaper_py.core.settings import (
     NO_PLAYLISTS,
     MonitorSettings,
@@ -107,6 +107,19 @@ def test_read_strictly_from_json() -> None:
     ):
         with pytest.raises(ValidationError):
             Settings.model_validate_json(bad)
+    # A background is #rrggbb (lower case, as the window sends it) or a kind.
+    for background in ('"#ABCDEF"', '"#abc"', '"black"', '"Edges"', "0", "true"):
+        look = f'{{"background": {background}}}'
+        with pytest.raises(ValidationError):
+            Settings.model_validate_json(
+                f'{{"monitors": [{{"id": "m", "look": {look}}}]}}'
+            )
+    read = Settings.model_validate_json(
+        '{"monitors": [{"id": "a", "look": {"mode": "fit", "background": "edges"}},'
+        ' {"id": "b", "look": {"background": "#0a1b2c"}}]}'
+    )
+    assert read.look(MonitorId("a")) == Look(ImageMode.FIT, Background.EDGES)
+    assert read.look(MonitorId("b")).background == "#0a1b2c"
     # Whole numbers are seconds too.
     whole = Settings.model_validate_json('{"pause_when_idle": 300}')
     assert whole.pause_when_idle == 300.0

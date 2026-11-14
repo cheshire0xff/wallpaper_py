@@ -6,9 +6,9 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, final, override
+from typing import Annotated, Any, final, override
 
-from pydantic import ConfigDict, GetCoreSchemaHandler
+from pydantic import ConfigDict, GetCoreSchemaHandler, StringConstraints
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 from pydantic_core import CoreSchema, core_schema
 
@@ -107,18 +107,37 @@ class ImageMode(Enum):
     STRETCH = "stretch"
 
 
+class Background(Enum):
+    """
+    A background worked out from the image (core.imaging): its average
+    colour, or the average of its edges next to the bars.
+    """
+
+    AVERAGE = "average"
+    EDGES = "edges"
+
+
+# A fixed background colour, as `#rrggbb` (lower case, as QColor.name()).
+Colour = Annotated[str, StringConstraints(strict=True, pattern=r"^#[0-9a-f]{6}$")]
+BLACK = "#000000"
+
+
 @pydantic_dataclass(frozen=True, config=ConfigDict(extra="forbid"))
 class Look:
     """
     How an image looks on one screen: everything the renderer needs besides
     the image and the sizes (core.imaging.render). Per monitor; more fields
-    (a background, later a crop anchor or a blur) join here.
+    (later a crop anchor) join here.
+
+    `background` fills the bars of Fit, and is kept (unused) in the other
+    modes, so going back to Fit brings it back.
 
     A pydantic dataclass: stored with the monitor's settings and sent on the
     socket (the overview, the settings), read strictly.
     """
 
     mode: ImageMode = ImageMode.FILL
+    background: Background | Colour = BLACK
 
 
 @dataclass(frozen=True)

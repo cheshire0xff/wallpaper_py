@@ -15,7 +15,8 @@ from PySide6.QtWidgets import QApplication
 from pytestqt.qtbot import QtBot
 
 from wallpaper_py.app.ui import theme
-from wallpaper_py.app.ui.settings import Choice, SettingsPage
+from wallpaper_py.app.ui.settings import SettingsPage
+from wallpaper_py.app.ui.settings_dialogs import Choice
 from wallpaper_py.app.ui.thumbnails import ThumbnailLoader
 from wallpaper_py.app.ui.window import MainWindow, status_of
 from wallpaper_py.core.settings import Settings

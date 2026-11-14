@@ -14,6 +14,15 @@
     }
   ],
   "$defs": {
+    "Background": {
+      "description": "A background worked out from the image (core.imaging): its average\ncolour, or the average of its edges next to the bars.",
+      "enum": [
+        "average",
+        "edges"
+      ],
+      "title": "Background",
+      "type": "string"
+    },
     "Change": {
       "properties": {
         "playlist": {
@@ -104,7 +113,8 @@
         "look": {
           "$ref": "#/$defs/Look",
           "default": {
-            "mode": "fill"
+            "mode": "fill",
+            "background": "#000000"
           }
         }
       },
@@ -299,11 +309,24 @@
     },
     "Look": {
       "additionalProperties": false,
-      "description": "How an image looks on one screen: everything the renderer needs besides\nthe image and the sizes (core.imaging.render). Per monitor; more fields\n(a background, later a crop anchor or a blur) join here.\n\nA pydantic dataclass: stored with the monitor's settings and sent on the\nsocket (the overview, the settings), read strictly.",
+      "description": "How an image looks on one screen: everything the renderer needs besides\nthe image and the sizes (core.imaging.render). Per monitor; more fields\n(later a crop anchor) join here.\n\n`background` fills the bars of Fit, and is kept (unused) in the other\nmodes, so going back to Fit brings it back.\n\nA pydantic dataclass: stored with the monitor's settings and sent on the\nsocket (the overview, the settings), read strictly.",
       "properties": {
         "mode": {
           "$ref": "#/$defs/ImageMode",
           "default": "fill"
+        },
+        "background": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Background"
+            },
+            {
+              "pattern": "^#[0-9a-f]{6}$",
+              "type": "string"
+            }
+          ],
+          "default": "#000000",
+          "title": "Background"
         }
       },
       "title": "Look",
@@ -371,7 +394,8 @@
         "look": {
           "$ref": "#/$defs/Look",
           "default": {
-            "mode": "fill"
+            "mode": "fill",
+            "background": "#000000"
           }
         }
       },
@@ -406,7 +430,8 @@
         "look": {
           "$ref": "#/$defs/Look",
           "default": {
-            "mode": "fill"
+            "mode": "fill",
+            "background": "#000000"
           }
         }
       },

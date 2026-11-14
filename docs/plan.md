@@ -12,8 +12,9 @@ thin. See [architecture.md](architecture.md) for the layers.
 | 2 | Playlists, mirrored groups, scheduler, history, favourites, to-remove | done |
 | 3 | App shell: tray, single instance, IPC, autostart | done |
 | 4 | UI process, one window (Home, Library, Settings), pick / hold / manual | done |
-| 4b | Settings in the database, per-monitor looks, previews | steps 1-4 done; step 5 (backgrounds) next |
-| 5 | Library window | |
+| 4b | Settings in the database, per-monitor looks, previews, backgrounds | done |
+| 4c | More backgrounds for Fit: dominant, blur | next |
+| 5 | Library window | low priority |
 | 6 | KDE backend | |
 | 7 | Polish | |
 
@@ -23,7 +24,7 @@ monitor identity, looks), [app-wiring.md](app-wiring.md),
 [protocol.md](protocol.md), and [design/](design/README.md) for the look.
 What is still to try by hand: [desktop-checks.md](desktop-checks.md). The
 plans of the finished phases, with the notes made while building them, are
-in git: `git show d771a26:docs/plan.md`.
+in git: `git show 92837ce:docs/plan.md`.
 
 ## Decided against (until missed)
 
@@ -41,41 +42,27 @@ in git: `git show d771a26:docs/plan.md`.
   ([design/](design/README.md)).
 - **Golden-image tests** (see Phase 7).
 
-## Phase 4b: settings in the database, per-monitor looks
+## Phase 4c: more backgrounds
 
-Steps 1-4 are done: the settings live in the state database, written only
-through `save_settings`; every image is rendered with its monitor's look;
-the Settings page is monitor-first (approved mockup:
-[design/settings-monitors.dc.html](design/settings-monitors.dc.html));
-previews are virtual monitors, made with the same renderer. How it works:
-[architecture.md](architecture.md), "App shell", "Playlist service" and
-"Image modes and looks".
+Before the library window (which is low priority). More choices in Fit's
+*Background* drop-down, in the same setting (`core.model.Background`),
+so they work everywhere a look does (the wallpaper, Home, the Settings
+preview) without code of their own:
 
-Step 5, **backgrounds**, is left:
-
-- `Look` gains a background, used by Fit only: a fixed colour
-  (`#rrggbb`), `average` (the image's average colour) or `edges` (the
-  average of the image's edges next to the bars). Later, in the same
-  setting: `dominant`, and `blur` (the bars filled with a blurred,
-  enlarged copy of the image).
-- Stored in the `monitor` table's `background` column (already there,
-  unread; default `#000000`), sent with the look in the overview and the
-  settings.
-- Automatic colours come from a fixed tiny copy of the image, never from
-  the output, so the wallpaper and its preview get the same colour (the
-  rule that a look depends on the screen, never on the output; extend its
-  test to backgrounds).
-- Settings: a *Background* row under *Mode*, shown only for Fit, with the
-  colour picker beside its drop-down only for *Colour*, as in the mockup.
-  Dragging the picker renders the preview again from the loaded image.
-  Home and Settings show it without preview code.
-- Desktop checks for it in [desktop-checks.md](desktop-checks.md).
-
-Open (todo.md, normal priority): whether Save asks first when it deletes
-a playlist's history (today the footer names it: "delete X and its
-history").
+- `dominant`: the image's most common colour (quantized), from the same
+  tiny copy as `average` and `edges` (`imaging.TINY`), so the wallpaper
+  and its preview get the same colour.
+- `blur`: the bars filled with a blurred, enlarged copy of the image
+  (Fill of the image, blurred, under the fitted image). The radius is in
+  screen pixels, scaled to the output, so a preview is the wallpaper
+  smaller (extend the preview tests in test_imaging.py to it); maybe
+  darkened a little so the image stands out.
+- Desktop checks for them in [desktop-checks.md](desktop-checks.md)
+  (section 13).
 
 ## Phase 5: library window
+
+Low priority: the app already covers most of what is needed day to day.
 
 Features: the "Library window" section of [todo.md](../todo.md) (enlarge
 with path / size / dimensions, toggles, filter, sort, ...), plus **"Show on
@@ -139,6 +126,10 @@ Linux Qt dependencies (promised early on, not done yet):
 
 Nice-to-haves from [todo.md](../todo.md): thumbnail fade-in, sound on
 wallpaper change, image overlay. Packaging/installer.
+
+Open (todo.md, normal priority): whether Save asks first when it deletes
+a playlist's history (today the footer names it: "delete X and its
+history").
 
 Sound on wallpaper change: a per-playlist setting (off by default), a row
 in the playlist's settings. Played by the app (it runs anyway; the UI

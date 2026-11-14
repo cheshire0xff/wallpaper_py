@@ -29,7 +29,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from .model import ImageMode, Look, MonitorId, WallpaperError
+from .model import Background, Colour, ImageMode, Look, MonitorId, WallpaperError
 from .settings import (
     MonitorSettings,
     Order,
@@ -84,7 +84,8 @@ _SCHEMA = (
         position   INTEGER NOT NULL,
         playlist   TEXT,                   -- playlist.id; NULL: none
         mode       TEXT NOT NULL,          -- its look: core.model.ImageMode
-        background TEXT NOT NULL DEFAULT '#000000' -- for Fit (Phase 4b step 5)
+        background TEXT NOT NULL           -- and Look.background: #rrggbb, or
+                                           -- a core.model.Background
     )""",
     """CREATE TABLE applied (
         monitor_id TEXT PRIMARY KEY,      -- MonitorId.key
@@ -207,7 +208,7 @@ class Store:
             "ORDER BY position"
         ).fetchall()
         monitors = self._db.execute(
-            "SELECT id, playlist, mode FROM monitor ORDER BY position"
+            "SELECT id, playlist, mode, background FROM monitor ORDER BY position"
         ).fetchall()
         return Settings(
             playlists=tuple(
@@ -222,9 +223,11 @@ class Store:
             ),
             monitors=tuple(
                 MonitorSettings(
-                    id=MonitorId(id_), playlist=playlist, look=Look(ImageMode(mode))
+                    id=MonitorId(id_),
+                    playlist=playlist,
+                    look=Look(ImageMode(mode), background),
                 )
-                for id_, playlist, mode in monitors
+                for id_, playlist, mode, background in monitors
             ),
             pause_when_locked=bool(general[0]),
             pause_when_idle=general[1],
@@ -285,10 +288,17 @@ class Store:
             )
         self._db.execute("DELETE FROM monitor")
         self._db.executemany(
-            "INSERT INTO monitor (key, id, position, playlist, mode) "
-            "VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO monitor (key, id, position, playlist, mode, background) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
             (
-                (m.id.key, str(m.id), position, m.playlist, m.look.mode.value)
+                (
+                    m.id.key,
+                    str(m.id),
+                    position,
+                    m.playlist,
+                    m.look.mode.value,
+                    _stored(m.look.background),
+                )
                 for position, m in enumerate(settings.monitors)
             ),
         )
@@ -554,6 +564,11 @@ class Store:
 
 def _text(path: Path | None) -> str | None:
     return None if path is None else str(path)
+
+
+def _stored(background: Background | Colour) -> str:
+    """As the `background` column holds it (read back by `Look`)."""
+    return background.value if isinstance(background, Background) else background
 
 
 def _path(text: str | None) -> Path | None:

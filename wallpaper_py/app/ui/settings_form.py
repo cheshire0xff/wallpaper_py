@@ -7,8 +7,9 @@ right, all controls in one column; fields are borderless and filled.
 One `PlaylistEditor` per playlist: a header row (its name, a muted summary
 while closed, a chevron) that opens or closes it, and when open its rows:
 Name, Folder, Order, Changes, the read-only *Shown on*, and *Delete
-playlist*. Also the `Problem` shown under a field. Widgets only report
-edits; the page owns the draft (settings_draft.py).
+playlist*. Also the `Problem` shown under a field, and the `ColourButton`
+of a monitor's background. Widgets only report edits; the page owns the
+draft (settings_draft.py).
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from collections.abc import Mapping
 from typing import override
 
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, Signal, Slot
-from PySide6.QtGui import QPainter, QPaintEvent, QPalette
+from PySide6.QtGui import QColor, QPainter, QPaintEvent, QPalette, QPen
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
@@ -184,6 +185,51 @@ def control_row(*widgets: QWidget) -> QHBoxLayout:
         stretch = 1 if isinstance(widget, (QLineEdit, QComboBox, QLabel)) else 0
         layout.addWidget(widget, stretch)
     return layout
+
+
+class ColourButton(theme.PaintedButton):
+    """
+    A colour as a swatch on a field-toned button, beside a drop-down; a
+    click is for choosing another (the page opens the dialog).
+    """
+
+    def __init__(self, name: str, parent: QWidget | None = None) -> None:
+        super().__init__(name, parent)
+        self.setFixedSize(theme.space(7), theme.FIELD_HEIGHT)
+        self._colour = QColor("#000000")
+
+    def set_colour(self, colour: str) -> None:
+        """`#rrggbb`."""
+        self._colour = QColor(colour)
+        self.setToolTip(f"{colour}: click to choose another colour")
+        self.update()
+
+    def colour(self) -> str:
+        return self._colour.name()
+
+    @override
+    def paintEvent(self, event: QPaintEvent) -> None:  # pylint: disable=invalid-name
+        del event
+        tones = theme.tones()
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        area = QRectF(self.rect())
+        fill = tones.field
+        if self.underMouse() and self.isEnabled():
+            fill = theme.mix(fill, tones.text, 0.08)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(fill)
+        painter.drawRoundedRect(area, theme.RADIUS_SMALL, theme.RADIUS_SMALL)
+        # The swatch, outlined so black shows on a dark field (white on light).
+        swatch = area.adjusted(5.5, 5.5, -5.5, -5.5)
+        painter.setPen(QPen(tones.line, 1))
+        painter.setBrush(self._colour)
+        if not self.isEnabled():
+            painter.setOpacity(0.4)
+        painter.drawRoundedRect(swatch, 2, 2)
+        painter.setOpacity(1.0)
+        self.focus_ring(painter)
+        painter.end()
 
 
 class PlaylistSummary(theme.PaintedButton):

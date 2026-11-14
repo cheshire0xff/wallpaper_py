@@ -16,9 +16,11 @@ again. The page never reads the database itself.
   monitor's rows: *Monitor* (a drop-down that also lists switched-off and
   not-connected monitors, which aren't drawn; those get *Forget
   monitor*), *Playlist* (None, each playlist, *New playlist…*; several
-  monitors on one playlist mirror it), *Mode*. Then one editor per
-  playlist (settings_form.PlaylistEditor): at most one is open, the others
-  show a summary.
+  monitors on one playlist mirror it), *Mode*, and for Fit *Background*
+  (a colour, with a swatch that opens a colour dialog: the preview follows
+  the colour while it is being chosen; or the image's average or edges).
+  Then one editor per playlist (settings_form.PlaylistEditor): at most one
+  is open, the others show a summary.
 - *General*: pausing, and where the favourites / to-remove lists are.
 - *About*: the version and the data locations (about.py).
 
@@ -26,27 +28,26 @@ Save and Revert work only while something changed. Problems show next to
 their field and keep Save disabled; the line beside it says why (else what
 changed). Unsaved edits stay while other pages are shown; closing the
 window with them asks Save / Discard / Cancel (`confirm_close`): Save
-closes the window once the app has saved.
+closes the window once the app has saved. The dialogs it opens are
+settings_dialogs.py's.
 """
 
 from __future__ import annotations
 
 import weakref
 from collections.abc import Callable
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, override
 
 from PySide6.QtCore import QEvent, Qt, Signal, Slot
-from PySide6.QtGui import QDesktopServices, QFont, QPalette
+from PySide6.QtGui import QColor, QDesktopServices, QFont, QPalette
 from PySide6.QtWidgets import (
     QCheckBox,
-    QFileDialog,
+    QColorDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMessageBox,
     QPushButton,
     QScrollArea,
     QStackedWidget,
@@ -56,7 +57,7 @@ from PySide6.QtWidgets import (
 from shiboken6 import Shiboken
 
 from ...core import paths
-from ...core.model import ImageMode, MonitorId
+from ...core.model import Background, Colour, ImageMode, MonitorId
 from ...core.settings import MonitorSettings, Settings, SettingsError, check_settings
 from ...protocol import (
     DesktopMonitor,
@@ -74,6 +75,9 @@ from .about import AboutPage, OpenUrl, data_locations, version_text
 from .arrangement import MonitorsView
 from .client import Client
 from .settings_draft import (
+    BACKGROUND_HELP,
+    BACKGROUND_NAMES,
+    COLOUR,
     DEFAULT_IDLE,
     FAVOURITES,
     IDLE,
@@ -81,9 +85,13 @@ from .settings_draft import (
     MODE_NAMES,
     TO_REMOVE,
     Draft,
+    BackgroundKind,
     Field,
     MonitorEntry,
+    background_kind,
+    background_look,
     change_summary,
+    colour_of,
     current_images,
     drawing,
     entry_names,
@@ -95,8 +103,10 @@ from .settings_draft import (
     shown_on,
     summary_text,
 )
+from .settings_dialogs import Dialogs
 from .thumbnails import ThumbnailLoader
 from .settings_form import (
+    ColourButton,
     PlaylistEditor,
     Problem,
     SettingRow,
@@ -111,50 +121,6 @@ TABS = ("Playlists", "General", "About")
 _KEY = "key"  # Qt property: the general setting a button is about
 NEW = "new"  # the Playlist drop-down's "New playlist…"
 NO_PLAYLIST = ""  # its "None"
-
-# -- the questions (modal; tests replace them) ---------------------------------------
-
-Choice = Literal["save", "discard", "cancel"]
-
-
-def ask_unsaved(parent: QWidget) -> Choice:
-    buttons = QMessageBox.StandardButton
-    box = QMessageBox(
-        QMessageBox.Icon.Question,
-        "Unsaved changes",
-        "Save the changes to the settings before closing?",
-        buttons.Save | buttons.Discard | buttons.Cancel,
-        parent,
-    )
-    box.setDefaultButton(buttons.Save)
-    answer = box.exec()
-    if answer == buttons.Save:
-        return "save"
-    return "discard" if answer == buttons.Discard else "cancel"
-
-
-def choose_folder(parent: QWidget, start: str) -> str | None:
-    chosen = QFileDialog.getExistingDirectory(parent, "Choose the folder", start)
-    return chosen or None
-
-
-def choose_list_file(parent: QWidget, start: str) -> str | None:
-    chosen, _ = QFileDialog.getSaveFileName(
-        parent,
-        "Choose the list file",
-        start,
-        "Text files (*.txt);;All files (*)",
-        options=QFileDialog.Option.DontConfirmOverwrite,
-    )
-    return chosen or None
-
-
-@dataclass(frozen=True)
-class Dialogs:
-    unsaved: Callable[[QWidget], Choice] = field(default=ask_unsaved)
-    folder: Callable[[QWidget, str], str | None] = field(default=choose_folder)
-    list_file: Callable[[QWidget, str], str | None] = field(default=choose_list_file)
-
 
 # -- the page ------------------------------------------------------------------------
 
@@ -288,9 +254,22 @@ class SettingsPage(QWidget):
         self.mode_row = SettingRow(
             "Mode", "", self.mode_combo, parent=self, indent=indent
         )
+        self.background_combo = combo(self, "Background")
+        for kind, name in BACKGROUND_NAMES.items():
+            self.background_combo.addItem(name, kind)
+        self.colour_button = ColourButton("Background colour", self)
+        self.background_row = SettingRow(
+            "Background",
+            "",
+            control_row(self.background_combo, self.colour_button),
+            parent=self,
+            indent=indent,
+        )
         self.monitor_combo.currentIndexChanged.connect(self._monitor_chosen)
         self.playlist_combo.currentIndexChanged.connect(self._playlist_chosen)
         self.mode_combo.currentIndexChanged.connect(self._mode_chosen)
+        self.background_combo.currentIndexChanged.connect(self._background_chosen)
+        self.colour_button.clicked.connect(self._choose_colour)
         self.forget_button.clicked.connect(self._forget)
 
     def _build_general(self) -> None:
@@ -397,7 +376,14 @@ class SettingsPage(QWidget):
         )
         layout.addWidget(self.monitors_view)
         layout.addSpacing(theme.space())
-        for row in (self.monitor_row, self.away_row, self.playlist_row, self.mode_row):
+        rows = (
+            self.monitor_row,
+            self.away_row,
+            self.playlist_row,
+            self.mode_row,
+            self.background_row,
+        )
+        for row in rows:
             layout.addWidget(row)
         layout.addSpacing(theme.space(2))
         layout.addWidget(theme.Divider(content))
@@ -722,7 +708,7 @@ class SettingsPage(QWidget):
     # -- the selected monitor ----------------------------------------------------
 
     def _show_monitor(self, edited: Draft) -> None:
-        """The Monitor, Playlist and Mode rows, for the selected monitor."""
+        """The Monitor, Playlist, Mode and Background rows, for the selected one."""
         ids = [e.id for e in self.entries]
         if self.selected not in ids:
             self.selected = ids[0] if ids else None
@@ -745,6 +731,7 @@ class SettingsPage(QWidget):
             box.blockSignals(False)
         if self.selected is None:
             self.away_row.setVisible(False)
+            self.background_row.setVisible(False)
             return
         entry = self.entries[ids.index(self.selected)]
         self.monitor_combo.blockSignals(True)
@@ -757,6 +744,12 @@ class SettingsPage(QWidget):
         )
         select(self.mode_combo, mine.look.mode)
         self.mode_row.set_description(MODE_HELP[mine.look.mode])
+        self.background_row.setVisible(mine.look.mode is ImageMode.FIT)
+        kind = background_kind(mine.look.background)
+        select(self.background_combo, kind)
+        self.background_row.set_description(BACKGROUND_HELP[kind])
+        self.colour_button.setVisible(kind == COLOUR)
+        self.colour_button.set_colour(colour_of(mine.look))
         away = entry.state != "drawn"
         self.away_row.setVisible(away)
         if away:
@@ -805,6 +798,49 @@ class SettingsPage(QWidget):
         mode: ImageMode = self.mode_combo.currentData()
         look = edited.monitor(self.selected).look
         self._set_row(edited, look=mode_look(look, mode))
+        self._refresh()
+
+    @Slot(int)
+    def _background_chosen(self, index: int) -> None:
+        del index
+        edited = self.edited()
+        if edited is None or self.selected is None or self._base is None:
+            return
+        kind: BackgroundKind = self.background_combo.currentData()
+        background: Background | Colour
+        if isinstance(kind, Background):
+            background = kind
+        else:  # a fixed colour: the one saved for the monitor, else black
+            background = colour_of(self._base.look(self.selected))
+        look = edited.monitor(self.selected).look
+        self._set_row(edited, look=background_look(look, background))
+        self._refresh()
+
+    @Slot()
+    def _choose_colour(self) -> None:
+        """The colour dialog: the preview follows it, Cancel goes back."""
+        if self.edited() is None or self.selected is None:
+            return
+        before = QColor(self.colour_button.colour())
+        dialog = QColorDialog(before, self)
+        dialog.setWindowTitle("Background colour")
+        dialog.currentColorChanged.connect(self._colour_previewed)
+        try:
+            chosen = self._dialogs.colour(dialog)
+            colour = dialog.currentColor() if chosen else before
+        finally:
+            dialog.currentColorChanged.disconnect(self._colour_previewed)
+            dialog.deleteLater()
+        self._colour_previewed(colour)
+
+    @Slot(QColor)
+    def _colour_previewed(self, colour: QColor) -> None:
+        """The selected monitor's background colour (the dialog's, as it moves)."""
+        edited = self.edited()
+        if edited is None or self.selected is None or not colour.isValid():
+            return
+        look = edited.monitor(self.selected).look
+        self._set_row(edited, look=background_look(look, colour.name()))
         self._refresh()
 
     @Slot()

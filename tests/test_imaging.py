@@ -4,6 +4,8 @@ import pytest
 from PIL import Image, ImageChops, ImageStat
 
 from wallpaper_py.core.imaging import (
+    TINY,
+    background_colour,
     fill_box,
     fit_size,
     image_size,
@@ -12,9 +14,17 @@ from wallpaper_py.core.imaging import (
     preview_size,
     render,
 )
-from wallpaper_py.core.model import ImageLoadError, ImageMode, Look
+from wallpaper_py.core.model import Background, ImageLoadError, ImageMode, Look
 
 RED, GREEN, BLUE, BLACK = (255, 0, 0), (0, 255, 0), (0, 0, 255), (0, 0, 0)
+
+# Every mode, and Fit with each kind of background.
+LOOKS = [
+    *(Look(mode) for mode in ImageMode),
+    Look(ImageMode.FIT, "#3366cc"),
+    Look(ImageMode.FIT, Background.AVERAGE),
+    Look(ImageMode.FIT, Background.EDGES),
+]
 
 
 def stripes(width: int = 300, height: int = 100) -> Image.Image:
@@ -75,6 +85,45 @@ def test_fit_letterboxes_with_black() -> None:
     assert close_to(result.getpixel((94, 50)), BLUE)
 
 
+def test_fit_fills_the_bars_with_the_background() -> None:
+    look = Look(ImageMode.FIT, "#3366cc")
+    result = render(stripes(), (100, 100), (100, 100), look)
+    assert result.getpixel((50, 5)) == (0x33, 0x66, 0xCC)
+    assert close_to(result.getpixel((50, 50)), GREEN)
+
+
+@pytest.mark.parametrize(
+    ("screen", "expected"),
+    [
+        ((900, 100), (128, 0, 128)),  # bars left and right: red and blue
+        ((100, 300), (85, 85, 85)),  # above and below: every stripe, mixed
+    ],
+)
+def test_the_edges_are_the_ones_next_to_the_bars(
+    screen: tuple[int, int], expected: tuple[int, int, int]
+) -> None:
+    result = render(stripes(), screen, screen, Look(ImageMode.FIT, Background.EDGES))
+    assert close_to(result.getpixel((0, 0)), expected, tol=2)
+
+
+def test_average_is_the_whole_images() -> None:
+    img = Image.new("RGB", (400, 100), RED)
+    img.paste(BLUE, (0, 0, 100, 100))  # a quarter blue
+    colour = background_colour(img, Background.AVERAGE, sides=True)
+    assert close_to(colour, (191, 0, 64), tol=1)
+
+
+def test_automatic_colours_dont_depend_on_the_images_size() -> None:
+    """From the file or a small copy: the same tiny copy, so the same colour."""
+    img = stripes(3000, 1000)
+    img.paste((255, 255, 255), (1400, 400, 1600, 600))
+    small = img.resize((TINY * 9, TINY * 3), Image.Resampling.LANCZOS)
+    for kind in Background:
+        for sides in (True, False):
+            big = background_colour(img, kind, sides=sides)
+            assert close_to(background_colour(small, kind, sides=sides), big, tol=2)
+
+
 def test_stretch_keeps_everything() -> None:
     result = render(stripes(), (90, 200), (90, 200), Look(ImageMode.STRETCH))
     assert result.size == (90, 200)
@@ -86,7 +135,7 @@ def test_the_default_look_is_fill() -> None:
     assert Look() == Look(ImageMode.FILL)
 
 
-@pytest.mark.parametrize("mode", list(ImageMode))
+@pytest.mark.parametrize("look", LOOKS, ids=str)
 @pytest.mark.parametrize(
     ("screen", "output"),
     [
@@ -96,7 +145,7 @@ def test_the_default_look_is_fill() -> None:
     ],
 )
 def test_a_preview_is_the_full_render_smaller(
-    mode: ImageMode, screen: tuple[int, int], output: tuple[int, int]
+    look: Look, screen: tuple[int, int], output: tuple[int, int]
 ) -> None:
     """
     The rule every look keeps: it depends on the screen, never on the
@@ -104,7 +153,6 @@ def test_a_preview_is_the_full_render_smaller(
     """
     img = stripes(900, 400)
     img.paste((255, 255, 255), (400, 150, 500, 250))  # a square: shapes show
-    look = Look(mode)
     full = render(img, screen, screen, look)
     preview = render(img, screen, output, look)
     assert full.size == screen and preview.size == output
@@ -192,10 +240,10 @@ def test_image_size_needs_an_image(tmp_path: Path) -> None:
         image_size(fake)
 
 
-@pytest.mark.parametrize("mode", list(ImageMode))
+@pytest.mark.parametrize("look", LOOKS, ids=str)
 @pytest.mark.parametrize("screen", [(3840, 2160), (1080, 1920), (5120, 1440)])
 def test_a_preview_from_the_small_copy_is_the_wallpaper_smaller(
-    tmp_path: Path, mode: ImageMode, screen: tuple[int, int]
+    tmp_path: Path, look: Look, screen: tuple[int, int]
 ) -> None:
     """
     What the windows show (a small copy, rendered small) is the wallpaper
@@ -206,7 +254,6 @@ def test_a_preview_from_the_small_copy_is_the_wallpaper_smaller(
     img.paste((255, 255, 255), (1200, 450, 1500, 750))
     source = tmp_path / "image.png"
     img.save(source)
-    look = Look(mode)
     side = 480
     output = preview_size(screen, side)
     wallpaper = render(load(source, screen), screen, screen, look)

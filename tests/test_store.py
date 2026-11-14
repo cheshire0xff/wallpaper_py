@@ -2,7 +2,13 @@ from pathlib import Path
 
 import pytest
 
-from wallpaper_py.core.model import ImageMode, Look, MonitorId, WallpaperError
+from wallpaper_py.core.model import (
+    Background,
+    ImageMode,
+    Look,
+    MonitorId,
+    WallpaperError,
+)
 from wallpaper_py.core.settings import (
     MonitorSettings,
     Order,
@@ -115,8 +121,11 @@ def test_settings_survive_reopening(tmp_path: Path) -> None:
             ),
         ),
         monitors=(
-            MonitorSettings(id=monitor, playlist="a", look=Look(ImageMode.FIT)),
+            MonitorSettings(
+                id=monitor, playlist="a", look=Look(ImageMode.FIT, Background.EDGES)
+            ),
             MonitorSettings(id=MonitorId("other")),  # a look but no playlist
+            MonitorSettings(id=MonitorId("third"), look=Look(background="#12ab9f")),
         ),
         pause_when_locked=False,
         pause_when_idle=None,

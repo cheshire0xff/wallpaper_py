@@ -1,5 +1,6 @@
 """
-Render an image as it looks on a screen (a `Look`: fill / fit / stretch).
+Render an image as it looks on a screen (a `Look`: fill / fit / stretch,
+and the background of Fit's bars).
 
 Every wallpaper is rendered to its monitor's exact resolution (core.setter),
 so the system only ever shows exact-size images and every look is the
@@ -11,14 +12,19 @@ where the result goes.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
-from PIL import Image, ImageOps
+from PIL import Image, ImageColor, ImageOps, ImageStat
 
-from .model import ImageLoadError, ImageMode, Look
+from .model import Background, Colour, ImageLoadError, ImageMode, Look
 
-BACKGROUND = (0, 0, 0)
+# Automatic backgrounds come from a copy of the image this small, never from
+# the output: from the full file or from a preview's small copy, it is about
+# the same, so a wallpaper and its preview get the same colour.
+TINY = 32  # px, both sides (the image's shape doesn't matter for averages)
+EDGE = 2  # the tiny copy's columns (or rows) on each side that are its edges
 
 # Renders are saved as BMP: lossless like PNG, but with no compression to
 # compute (a 4K render saves in ~15 ms instead of ~150 ms). The cost is disk:
@@ -176,8 +182,48 @@ def render(
             max(1, round(inner[0] * output[0] / screen[0])),
             max(1, round(inner[1] * output[1] / screen[1])),
         )
-        canvas = Image.new("RGB", output, BACKGROUND)
+        sides = inner[0] < screen[0]  # bars left and right, else above and below
+        colour = background_colour(img, look.background, sides=sides)
+        canvas = Image.new("RGB", output, colour)
         offset = ((output[0] - size[0]) // 2, (output[1] - size[1]) // 2)
         canvas.paste(img.resize(size, lanczos), offset)
         return canvas
     raise ValueError(f"Unsupported mode: {mode}")
+
+
+RGB = tuple[int, int, int]
+
+
+def background_colour(
+    img: Image.Image, background: Background | Colour, *, sides: bool
+) -> RGB:
+    """
+    The colour of Fit's bars: a fixed one, or worked out from a tiny copy
+    of `img` (`TINY`): its average, or the average of its edges next to
+    the bars (`sides`: the left and right ones, else the top and bottom).
+    """
+    if not isinstance(background, Background):
+        red, green, blue = ImageColor.getrgb(background)[:3]
+        return red, green, blue
+    tiny = img.resize((TINY, TINY), Image.Resampling.BOX)
+    if background is Background.AVERAGE:
+        return _mean(ImageStat.Stat(tiny))
+    if background is Background.EDGES:
+        last = TINY - EDGE
+        if sides:
+            boxes = ((0, 0, EDGE, TINY), (last, 0, TINY, TINY))
+        else:
+            boxes = ((0, 0, TINY, EDGE), (0, last, TINY, TINY))
+        # Two strips of one size: the mean of their means is theirs.
+        first, second = (ImageStat.Stat(tiny.crop(box)).mean for box in boxes)
+        return _rgb((a + b) / 2 for a, b in zip(first, second))
+    raise ValueError(f"Unsupported background: {background}")
+
+
+def _mean(stat: ImageStat.Stat) -> RGB:
+    return _rgb(stat.mean)
+
+
+def _rgb(values: Iterable[float]) -> RGB:
+    red, green, blue = (round(value) for value in list(values)[:3])
+    return red, green, blue

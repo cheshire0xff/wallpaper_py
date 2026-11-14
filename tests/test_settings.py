@@ -14,19 +14,21 @@ from pathlib import Path
 import pytest
 from PIL import Image
 from PySide6.QtCore import QUrl
-from PySide6.QtGui import QGuiApplication
-from PySide6.QtWidgets import QStyleFactory, QWidget
+from PySide6.QtGui import QColor, QGuiApplication
+from PySide6.QtWidgets import QColorDialog, QStyleFactory, QWidget
 from pytestqt.qtbot import QtBot
 
 from wallpaper_py.app import ipc
 from wallpaper_py.app.ui import theme
 from wallpaper_py.app.ui.about import existing_folder, version_text
 from wallpaper_py.app.ui.client import ReplyCallback, SocketClient
-from wallpaper_py.app.ui.settings import Choice, Dialogs, SettingsPage
+from wallpaper_py.app.ui.settings import SettingsPage
+from wallpaper_py.app.ui.settings_dialogs import Choice, Dialogs
+from wallpaper_py.app.ui.settings_draft import COLOUR
 from wallpaper_py.app.ui.settings_form import PlaylistEditor, combo, line_edit
 from wallpaper_py.app.ui.thumbnails import Sizes, ThumbnailLoader
 from wallpaper_py.core import paths
-from wallpaper_py.core.model import ImageMode, Look, MonitorId
+from wallpaper_py.core.model import Background, ImageMode, Look, MonitorId
 from wallpaper_py.core.settings import (
     MonitorSettings,
     Order,
@@ -78,13 +80,19 @@ class FakeDialogs:
         self.asked = 0
         self.folder: str | None = None
         self.list_file: str | None = None
+        # The colour dialog, run by the test: it may move the colour; True: OK.
+        self.colour: Callable[[QColorDialog], bool] = lambda _dialog: False
 
     def dialogs(self) -> Dialogs:
         return Dialogs(
             unsaved=self._unsaved,
             folder=lambda _parent, _start: self.folder,
             list_file=lambda _parent, _start: self.list_file,
+            colour=self._colour,
         )
+
+    def _colour(self, dialog: QColorDialog) -> bool:
+        return self.colour(dialog)
 
     def _unsaved(self, _parent: object) -> Choice:
         self.asked += 1
@@ -385,6 +393,76 @@ def test_the_previews_show_the_edit(
         window.grab()  # paints
     finally:
         window.loader.close()
+
+
+def show_square(client: FakeClient, tmp_path: Path, rgb: tuple[int, int, int]) -> None:
+    """konachan (AW + PLX) shows a square image of one colour."""
+    image = tmp_path / "konachan" / "square.png"
+    Image.new("RGB", (900, 900), rgb).save(image)
+    members = tuple(MonitorView(id=m.id, name=m.name, attached=True) for m in (AW, PLX))
+    playlist = PlaylistView(
+        name="konachan", monitors=members, current=image, favourite=False
+    )
+    client.publish(Overview(playlists=(playlist,), monitors=LISTED))
+
+
+def test_a_fit_monitors_background(  # pylint: disable=too-many-statements
+    qtbot: QtBot,
+    window: SettingsPage,
+    client: FakeClient,
+    dialogs: FakeDialogs,
+    tmp_path: Path,
+) -> None:
+    """Only for Fit; the image's edges, or a colour from the dialog, previewed."""
+    red, black, blue = (200, 40, 40), (0, 0, 0), (0x33, 0x66, 0xCC)
+    show_square(client, tmp_path, red)
+    qtbot.waitUntil(lambda: window.monitors_view.preview(AW.id) is not None)
+    window.select_monitor(AW.id)
+    row, box, swatch = (
+        window.background_row,
+        window.background_combo,
+        window.colour_button,
+    )
+    assert row.isHidden()  # fill
+    window.mode_combo.setCurrentIndex(window.mode_combo.findData(ImageMode.FIT))
+    assert not row.isHidden() and not swatch.isHidden()
+    assert box.currentText() == "Colour" and swatch.colour() == "#000000"
+    assert edge_colour(window, AW.id) == black
+    # The image's edges: the bars beside the square are red; no swatch.
+    box.setCurrentIndex(box.findData(Background.EDGES))
+    assert swatch.isHidden()
+    assert edge_colour(window, AW.id) == red
+    assert window.status.text() == (
+        "Changes: mode of AW3225QF, background of AW3225QF. Not saved yet."
+    )
+    # Fill hides it; back to Fit, it is still there.
+    window.mode_combo.setCurrentIndex(window.mode_combo.findData(ImageMode.FILL))
+    assert row.isHidden()
+    window.mode_combo.setCurrentIndex(window.mode_combo.findData(ImageMode.FIT))
+    assert box.currentData() is Background.EDGES
+    # A colour: black (none saved), then the dialog; the preview follows it
+    # while it moves, and Cancel goes back.
+    box.setCurrentIndex(box.findData(COLOUR))
+    assert edge_colour(window, AW.id) == black
+    seen = []
+
+    def move(dialog: QColorDialog, ok: bool) -> bool:
+        assert dialog.currentColor() == QColor(swatch.colour())  # starts there
+        dialog.setCurrentColor(QColor("#3366cc"))
+        seen.append(edge_colour(window, AW.id))
+        return ok
+
+    dialogs.colour = lambda dialog: move(dialog, False)
+    swatch.click()
+    assert seen == [blue]
+    assert edge_colour(window, AW.id) == black and swatch.colour() == "#000000"
+    dialogs.colour = lambda dialog: move(dialog, True)
+    swatch.click()
+    assert edge_colour(window, AW.id) == blue and swatch.colour() == "#3366cc"
+    window.save_button.click()
+    [aw] = [m for m in sent(client).settings.monitors if m.id == AW.id]
+    assert aw.look == Look(ImageMode.FIT, "#3366cc")
+    window.grab()  # paints
 
 
 def test_a_new_playlist_from_a_monitor(

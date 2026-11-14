@@ -18,7 +18,7 @@ from wallpaper_py.app.ui.settings_draft import (
     problems,
     short_id,
 )
-from wallpaper_py.core.model import ImageMode, Look, MonitorId
+from wallpaper_py.core.model import Background, ImageMode, Look, MonitorId
 from wallpaper_py.core.settings import (
     MANUAL,
     MonitorSettings,
@@ -190,6 +190,11 @@ def test_change_summary(saved: Settings, tmp_path: Path) -> None:
     assert change_summary(saved, edited, names, {A, B}) == (
         "mode of A, B shows art, name of walls, 1 more"
     )
+    edges = Look(ImageMode.FIT, Background.EDGES)
+    looks = saved.model_copy(
+        update={"monitors": (MonitorSettings(id=A, playlist="w", look=edges),)}
+    )
+    assert change_summary(saved, looks, names, {A, B}) == ("mode of A, background of A")
     gone = saved.model_copy(update={"playlists": (), "monitors": ()})
     # A not listed now, its row gone: forgotten; listed: it shows nothing.
     assert change_summary(saved, gone, names, set()) == (

@@ -351,7 +351,7 @@ Consequences in code:
 ## Image modes and looks
 
 Every image is rendered: `setter` renders it to the monitor's exact
-resolution with the monitor's `Look` (mode now; a background later) and
+resolution with the monitor's `Look` (its mode, and Fit's background) and
 hands the render to the backend, which only ever shows exact-size images
 and keeps the system's own position at Fill (Windows has one for all
 monitors, set only when it differs; KDE will do the same per monitor).
@@ -377,3 +377,12 @@ before replying, so a changed look shows at once.
 The look is per monitor (`MonitorSettings.look`, `Settings.look`), the
 timing per playlist: how an image looks depends on a screen's shape,
 while mirrored monitors must change together.
+
+Fit's bars are filled with the look's `background`: a fixed colour
+(`#rrggbb`), the image's average colour, or the average of its edges
+next to the bars (left and right, or top and bottom, as the screen's
+shape puts them). Automatic colours come from a fixed tiny copy of the
+image (`imaging.TINY`, 32x32), never from the output, so the wallpaper
+(from the file) and its preview (from the small copy) get the same
+colour; the tests above cover every background. The background is kept
+in the other modes, unused, so going back to Fit brings it back.

@@ -166,7 +166,8 @@ the new overview is published, both before the reply.
 | `PlaylistEditor.toggle_requested` (a playlist's header row clicked) | `SettingsPage._toggle_playlist` -> `SettingsPage.open_playlist` (the others close) |
 | `MonitorsView.clicked` (a monitor's id; the Settings drawing is clickable) | `SettingsPage.select_monitor` (outlined; its rows below) |
 | the *Monitor* drop-down's `currentIndexChanged` | `SettingsPage._monitor_chosen` -> `SettingsPage.select_monitor` |
-| the *Playlist* and *Mode* drop-downs' `currentIndexChanged`, *Forget monitor* | `SettingsPage._playlist_chosen`, `SettingsPage._mode_chosen`, `SettingsPage._forget` (the selected monitor's row in the draft) |
+| the *Playlist*, *Mode* and *Background* drop-downs' `currentIndexChanged`, *Forget monitor* | `SettingsPage._playlist_chosen`, `SettingsPage._mode_chosen`, `SettingsPage._background_chosen`, `SettingsPage._forget` (the selected monitor's row in the draft) |
+| the background colour's swatch (`ColourButton.clicked`) | `SettingsPage._choose_colour`: a modal `QColorDialog`, whose `currentColorChanged` goes to `SettingsPage._colour_previewed` while it is open (the draft and the preview follow the colour); Cancel puts the colour back |
 | `PlaylistEditor.delete_requested`, `PlaylistEditor.browse_requested` | `SettingsPage._delete_playlist`, `SettingsPage._browse_folder` |
 | *Save* / *Revert* / *Load the settings again* | `SettingsPage.save` (via `SettingsPage._save_clicked`), `SettingsPage.revert`, `SettingsPage.load` |
 | `MainWindow.closed` (the window closed) | `process._Closer.window_closed`: `UiServer` closes; `QApplication.quit` now, or on `SocketClient.idle` if a command still waits for its reply (`SocketClient.busy`) |

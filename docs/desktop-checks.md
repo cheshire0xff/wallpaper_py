@@ -28,6 +28,7 @@ Status: **ok** (with the date, when known) all steps seen working;
 | [10. Looks: always rendered](#10-looks-always-rendered) | todo | todo | todo |
 | [11. Settings in the database](#11-settings-in-the-database) | todo | todo | todo |
 | [12. Previews: virtual monitors](#12-previews-virtual-monitors) | todo | todo | todo |
+| [13. Fit's background](#13-fits-background) | todo | todo | todo |
 
 ## 1. Monitors and `set`
 
@@ -396,3 +397,33 @@ shows it, rendered by the same renderer at a small size.
 6. **The window stays responsive.** With large PNGs, press *Next* several
    times quickly on Home and resize the window: no stall; each monitor
    ends on its current image, in its look.
+
+## 13. Fit's background
+
+Phase 4b step 5: Fit's bars are filled with a colour, or one worked out
+from the image.
+
+1. **Only for Fit.** In Settings, select a monitor on Fill: no
+   *Background* row. Switch it to Fit: *Background* shows under *Mode*,
+   *Colour* with a black swatch beside it. Stretch or Fill hides it again.
+2. **A colour, live.** Click the swatch: a colour dialog opens. Drag in
+   its colour field: the monitor's preview bars follow the colour while
+   you drag (the real screen doesn't change). Cancel: the bars are black
+   again. Choose a colour with OK: the swatch and the bars show it, and
+   the footer says "background of <monitor>". Save: the screen shows the
+   current image with bars of that colour.
+3. **From the image.** *Average of the image*: the swatch goes, the bars
+   take the image's overall colour. *Edges of the image*: with a portrait
+   image on a landscape monitor, the bars match the image's left and
+   right edges (mixed into one colour); with a wide image on a portrait
+   monitor, its top and bottom. Save: the screen's bars have the same
+   colour as the preview's (compare them side by side, e.g. a screenshot
+   of the screen and of Home).
+4. **Kept when not used.** On a monitor with *Edges*, switch *Mode* to
+   Fill and back to Fit before saving: still *Edges*. Save on Fill, then
+   Fit again later: still *Edges*.
+5. **Each monitor its own.** On a mirrored playlist, give one monitor
+   *Edges* and the other a colour: both change together, each with its
+   own bars; Home shows the same.
+6. **KDE**: the colour dialog is Plasma's own; check that the preview
+   follows it while you drag (if it only changes after OK, note it here).

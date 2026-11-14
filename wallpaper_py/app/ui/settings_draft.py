@@ -21,7 +21,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
 
-from ...core.model import ImageMode, Look, MonitorId
+from ...core.model import BLACK, Background, Colour, ImageMode, Look, MonitorId
 from ...core.settings import (
     DEFAULT_IDLE_S,
     DEFAULT_INTERVAL_S,
@@ -66,6 +66,20 @@ MODE_HELP = {
     ImageMode.FILL: "Covers the screen; what doesn't fit is cut off",
     ImageMode.FIT: "Shows the whole image; bars fill the rest",
     ImageMode.STRETCH: "Fills the screen; the image changes its shape",
+}
+
+# The Background drop-down (Fit only): a fixed colour, or one from the image.
+COLOUR: Literal["colour"] = "colour"
+BackgroundKind = Background | Literal["colour"]
+BACKGROUND_NAMES: dict[BackgroundKind, str] = {
+    COLOUR: "Colour",
+    Background.AVERAGE: "Average of the image",
+    Background.EDGES: "Edges of the image",
+}
+BACKGROUND_HELP: dict[BackgroundKind, str] = {
+    COLOUR: "Fills the bars beside the image",
+    Background.AVERAGE: "The image's average colour fills the bars",
+    Background.EDGES: "The colour of the image's edges beside the bars",
 }
 
 
@@ -512,8 +526,10 @@ def _monitor_changes(
         if old.playlist != new.playlist:
             shows = playlists.get(new.playlist or "", "no playlist")
             parts.append(f"{name} shows {shows}")
-        if old.look != new.look:
+        if old.look.mode != new.look.mode:
             parts.append(f"mode of {name}")
+        if old.look.background != new.look.background:
+            parts.append(f"background of {name}")
     return parts
 
 
@@ -525,6 +541,21 @@ def _row(settings: Settings, monitor_id: MonitorId) -> MonitorSettings | None:
 
 def mode_look(look: Look, mode: ImageMode) -> Look:
     return replace(look, mode=mode)
+
+
+def background_kind(background: Background | Colour) -> BackgroundKind:
+    """Its item in the Background drop-down."""
+    return background if isinstance(background, Background) else COLOUR
+
+
+def background_look(look: Look, background: Background | Colour) -> Look:
+    return replace(look, background=background)
+
+
+def colour_of(look: Look) -> Colour:
+    """The look's fixed background colour (black if it has none)."""
+    background = look.background
+    return BLACK if isinstance(background, Background) else background
 
 
 def current_images(
