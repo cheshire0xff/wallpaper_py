@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>wallpaper_py main window</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+a{color:#005fb8}a:hover{color:#003d75}
+</style>
+</helmet>
+<div style="width: 1280px; height: 800px; box-sizing: border-box; display: flex; flex-direction: column; background: {{t.win}}; color: {{t.text}}; font-family: 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif; font-size: 14px; border: 1px solid {{t.line}}; overflow: hidden">
+
+  <div style="height: 36px; flex-shrink: 0; display: flex; align-items: center; padding-left: 14px; gap: 10px; font-size: 12px; background: {{t.side}}; border-bottom: 1px solid {{t.sideLine}}">
+    <span style="flex-grow: 1">wallpaper_py</span>
+    <span style="width: 46px; text-align: center; color: {{t.muted}}" aria-hidden="true">—</span>
+    <span style="width: 46px; text-align: center; color: {{t.muted}}" aria-hidden="true">☐</span>
+    <span style="width: 46px; text-align: center; color: {{t.muted}}" aria-hidden="true">✕</span>
+  </div>
+
+  <div style="flex-grow: 1; display: flex; min-height: 0">
+
+    <nav aria-label="Pages" style="width: 220px; flex-shrink: 0; box-sizing: border-box; background: {{t.side}}; border-right: 1px solid {{t.sideLine}}; padding: 12px 12px; display: flex; flex-direction: column; gap: 4px">
+      <span style="font-size: 17px; font-weight: 600; padding: 4px 12px 16px">wallpaper_py</span>
+      <sc-for list="{{nav}}" as="item" hint-placeholder-count="3">
+        <button aria-label="{{item.label}}" aria-current="{{item.current}}" style="height: 40px; border: 0; border-radius: 4px; background: {{item.bg}}; color: {{t.text}}; display: flex; align-items: center; gap: 12px; padding: 0 14px; position: relative; font: inherit; font-weight: {{item.weight}}; text-align: left">
+          <span style="position: absolute; left: 0; top: 10px; width: 3px; height: 20px; border-radius: 2px; background: {{item.bar}}"></span>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="{{item.iconColor}}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <sc-if value="{{item.isLayout}}" hint-placeholder-val="{{true}}"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"></path><path d="M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path></sc-if>
+            <sc-if value="{{item.isLibrary}}" hint-placeholder-val="{{false}}"><path d="M18 22H4a2 2 0 0 1-2-2V6"></path><path d="m22 13-1.296-1.296a2.41 2.41 0 0 0-3.408 0L11 18"></path><circle cx="12" cy="8" r="2"></circle><rect width="16" height="16" x="6" y="2" rx="2"></rect></sc-if>
+            <sc-if value="{{item.isSettings}}" hint-placeholder-val="{{false}}"><line x1="21" x2="14" y1="4" y2="4"></line><line x1="10" x2="3" y1="4" y2="4"></line><line x1="21" x2="12" y1="12" y2="12"></line><line x1="8" x2="3" y1="12" y2="12"></line><line x1="21" x2="16" y1="20" y2="20"></line><line x1="12" x2="3" y1="20" y2="20"></line><line x1="14" x2="14" y1="2" y2="6"></line><line x1="8" x2="8" y1="10" y2="14"></line><line x1="16" x2="16" y1="18" y2="22"></line></sc-if>
+          </svg>
+          <span>{{item.label}}</span>
+        </button>
+      </sc-for>
+      <span style="flex-grow: 1"></span>
+      <span style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: {{t.muted}}; padding: 8px 12px">
+        <span style="width: 8px; height: 8px; border-radius: 4px; background: {{t.ok}}"></span>
+        Rotation active
+      </span>
+    </nav>
+
+    <sc-if value="{{isLayout}}" hint-placeholder-val="{{true}}">
+    <main style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column; gap: 16px; padding: 20px 28px 28px">
+      <h1 style="margin: 0; font-size: 20px; font-weight: 600">Monitors</h1>
+      <div style="height: 290px; flex-shrink: 0; box-sizing: border-box; border-radius: 8px; background: {{t.backdrop}}; display: flex; justify-content: center; align-items: flex-start; gap: 10px; padding: 28px 24px">
+        <div style="display: flex; flex-direction: column; gap: 8px; width: 210px">
+          <div style="width: 210px; height: 118px; box-sizing: border-box; border-radius: 3px; background: #2f3d5c; outline: 2px solid {{t.accentOnDark}}; outline-offset: -2px"></div>
+          <div style="display: flex; flex-direction: column; gap: 2px; align-items: center">
+            <span style="font-size: 13px; font-weight: 600; color: #f2f2f2">PLX2783H</span>
+            <span style="font-size: 12px; color: #b8b8b8">1920×1080 · konachan</span>
+          </div>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 8px; width: 420px">
+          <div style="width: 420px; height: 236px; box-sizing: border-box; border-radius: 3px; background: #2f3d5c; outline: 2px solid {{t.accentOnDark}}; outline-offset: -2px"></div>
+          <div style="display: flex; flex-direction: column; gap: 2px; align-items: center">
+            <span style="font-size: 13px; font-weight: 600; color: #f2f2f2">AW3225QF</span>
+            <span style="font-size: 12px; color: #b8b8b8">3840×2160 · konachan</span>
+          </div>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 8px; width: 210px">
+          <div style="width: 210px; height: 52px; border-radius: 3px; background: #4d3f2e"></div>
+          <div style="display: flex; flex-direction: column; gap: 2px; align-items: center">
+            <span style="font-size: 13px; font-weight: 600; color: #f2f2f2">ZeroMOD</span>
+            <span style="font-size: 12px; color: #b8b8b8">1920×480 · fantasy</span>
+          </div>
+        </div>
+      </div>
+      <h2 style="margin: 0; font-size: 20px; font-weight: 600">Playlists</h2>
+      <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px">
+        <div style="border-radius: 8px; background: {{t.card}}; border: 2px solid {{t.accent}}; padding: 15px; display: flex; gap: 16px">
+          <div style="width: 160px; height: 90px; flex-shrink: 0; border-radius: 4px; background: #2f3d5c"></div>
+          <div style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px">
+            <span style="font-size: 15px; font-weight: 600">konachan <span style="font-size: 12px; font-weight: 400; color: {{t.muted}}">AW3225QF + PLX2783H</span></span>
+            <span style="font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">konachan - 260116 armor fate_grand_order….jpg</span>
+            <span style="font-size: 12px; color: {{t.muted}}">2560×1440 · 1.8 MB · shuffle, 25 min · next in 21 min</span>
+            <span style="font-size: 12px; color: {{t.muted}}; margin-top: 8px">(hovered: its monitors are outlined)</span>
+          </div>
+        </div>
+        <div style="border-radius: 8px; background: {{t.card}}; border: 1px solid {{t.line}}; padding: 16px; display: flex; gap: 16px">
+          <div style="width: 160px; height: 90px; flex-shrink: 0; border-radius: 4px; background: {{t.backdrop}}; display: flex; align-items: center"><div style="width: 160px; height: 40px; background: #4d3f2e"></div></div>
+          <div style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px">
+            <span style="font-size: 15px; font-weight: 600">fantasy <span style="font-size: 12px; font-weight: 400; color: {{t.muted}}">ZeroMOD</span></span>
+            <span style="font-size: 13px">dbejufz-c8be7420.jpg</span>
+            <span style="font-size: 12px; color: {{t.muted}}">1920×480 · 640 KB · sorted, 10 min · next in 7 min</span>
+          </div>
+        </div>
+      </div>
+    </main>
+    </sc-if>
+
+    <sc-if value="{{isSettings}}" hint-placeholder-val="{{false}}">
+    <main style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column; gap: 16px; padding: 20px 28px 20px">
+      <h1 style="margin: 0; font-size: 20px; font-weight: 600">Settings</h1>
+      <div role="tablist" style="display: flex; gap: 4px; border-bottom: 1px solid {{t.line}}">
+        <button role="tab" aria-selected="true" style="border: 0; background: transparent; color: {{t.text}}; font: inherit; font-weight: 600; padding: 8px 14px; border-bottom: 2px solid {{t.accent}}">Playlists</button>
+        <button role="tab" aria-selected="false" style="border: 0; background: transparent; color: {{t.muted}}; font: inherit; padding: 8px 14px">General</button>
+        <button role="tab" aria-selected="false" style="border: 0; background: transparent; color: {{t.muted}}; font: inherit; padding: 8px 14px">About</button>
+      </div>
+      <div style="height: 200px; flex-shrink: 0; box-sizing: border-box; border-radius: 8px; background: {{t.backdrop}}; display: flex; justify-content: center; align-items: flex-start; gap: 10px; padding: 20px 24px">
+        <div style="display: flex; flex-direction: column; gap: 6px; width: 150px; align-items: center"><div style="width: 150px; height: 84px; border-radius: 3px; background: {{t.tile}}"></div><span style="font-size: 12px; color: #e8e8e8">PLX2783H · konachan</span></div>
+        <div style="display: flex; flex-direction: column; gap: 6px; width: 300px; align-items: center"><div style="width: 300px; height: 168px; border-radius: 3px; background: {{t.tile}}"></div></div>
+        <div style="display: flex; flex-direction: column; gap: 6px; width: 150px; align-items: center"><div style="width: 150px; height: 38px; border-radius: 3px; background: {{t.tile}}"></div><span style="font-size: 12px; color: #e8e8e8">ZeroMOD · fantasy</span></div>
+      </div>
+      <span style="font-size: 12px; color: {{t.muted}}; margin-top: -8px">Click a monitor to choose its playlist.</span>
+      <div style="border-radius: 8px; background: {{t.card}}; border: 1px solid {{t.line}}; padding: 16px; display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 10px 16px; align-items: center">
+        <label for="n" style="color: {{t.muted}}">Name</label>
+        <input id="n" value="konachan" style="height: 30px; box-sizing: border-box; border: 1px solid {{t.line}}; border-radius: 4px; background: {{t.input}}; color: {{t.text}}; padding: 0 8px; font: inherit; width: 260px">
+        <label for="d" style="color: {{t.muted}}">Folder</label>
+        <div style="display: flex; gap: 8px"><input id="d" value="D:\pictures\KONACHAN" style="height: 30px; box-sizing: border-box; flex-grow: 1; border: 1px solid {{t.line}}; border-radius: 4px; background: {{t.input}}; color: {{t.text}}; padding: 0 8px; font: inherit"><button style="height: 30px; border: 1px solid {{t.line}}; border-radius: 4px; background: {{t.btn}}; color: {{t.text}}; font: inherit; padding: 0 12px">Browse…</button></div>
+        <label for="o" style="color: {{t.muted}}">Order</label>
+        <select id="o" style="height: 30px; width: 160px; border: 1px solid {{t.line}}; border-radius: 4px; background: {{t.input}}; color: {{t.text}}; font: inherit; padding: 0 8px"><option>Shuffle</option><option>Sorted</option></select>
+        <label for="c" style="color: {{t.muted}}">Changes</label>
+        <div style="display: flex; gap: 8px; align-items: center">
+          <select id="c" style="height: 30px; width: 160px; border: 1px solid {{t.line}}; border-radius: 4px; background: {{t.input}}; color: {{t.text}}; font: inherit; padding: 0 8px"><option>Every</option><option>Manually</option></select>
+          <input aria-label="Interval" value="25m" style="height: 30px; width: 90px; box-sizing: border-box; border: 1px solid {{t.line}}; border-radius: 4px; background: {{t.input}}; color: {{t.text}}; padding: 0 8px; font: inherit">
+          <span style="font-size: 13px; color: {{t.muted}}">of active time</span>
+        </div>
+        <label for="m" style="color: {{t.muted}}">Mode</label>
+        <select id="m" style="height: 30px; width: 160px; border: 1px solid {{t.line}}; border-radius: 4px; background: {{t.input}}; color: {{t.text}}; font: inherit; padding: 0 8px"><option>Fill</option><option>Fit</option><option>Stretch</option><option>As is</option></select>
+        <span style="color: {{t.muted}}">Monitors</span>
+        <span>AW3225QF, PLX2783H (mirrored)</span>
+      </div>
+      <span style="flex-grow: 1"></span>
+      <div style="display: flex; gap: 8px; align-items: center; justify-content: flex-end">
+        <span style="flex-grow: 1; font-size: 13px; color: {{t.muted}}">Interval changed: not saved yet</span>
+        <button style="height: 32px; border: 1px solid {{t.line}}; border-radius: 4px; background: {{t.btn}}; color: {{t.text}}; font: inherit; padding: 0 16px">Revert</button>
+        <button style="height: 32px; border: 1px solid {{t.accent}}; border-radius: 4px; background: {{t.accent}}; color: {{t.onAccent}}; font: inherit; font-weight: 600; padding: 0 16px">Save</button>
+      </div>
+    </main>
+    </sc-if>
+
+    <sc-if value="{{isHomeFlow}}" hint-placeholder-val="{{false}}">
+    <main style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; padding: 20px 32px 0">
+      <h1 style="margin: 0 0 16px; font-size: 22px; font-weight: 600">Home</h1>
+
+      <section aria-label="Monitors" style="border-radius: 6px; background: {{t.backdrop}}; display: flex; flex-direction: column; flex-shrink: 0">
+        <div style="display: flex; align-items: center; gap: 12px; padding: 14px 20px">
+          <h2 style="margin: 0; font-size: 16px; font-weight: 600; flex-grow: 1">Monitors (3)</h2>
+          <span style="font-size: 13px; color: {{t.muted}}">Hover a playlist to see its monitors</span>
+        </div>
+        <div style="border-top: 1px solid {{t.sideLine}}; margin: 0 20px"></div>
+        <div style="height: 250px; display: flex; justify-content: center; align-items: flex-start; gap: 8px; padding: 24px 20px 16px">
+          <div style="display: flex; flex-direction: column; gap: 8px; width: 200px; align-items: center">
+            <div style="width: 200px; height: 112px; border-radius: 4px; background: {{konachanPaint}}; outline: 2px solid {{t.accentOnDark}}; outline-offset: -2px"></div>
+            <span style="font-size: 13px; font-weight: 600">PLX2783H</span>
+            <span style="font-size: 12px; color: {{t.muted}}; margin-top: -6px">1920×1080 · konachan</span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 8px; width: 360px; align-items: center">
+            <div style="width: 360px; height: 202px; border-radius: 4px; background: {{konachanPaint}}; outline: 2px solid {{t.accentOnDark}}; outline-offset: -2px"></div>
+            <span style="font-size: 13px; font-weight: 600">AW3225QF</span>
+            <span style="font-size: 12px; color: {{t.muted}}; margin-top: -6px">3840×2160 · konachan</span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 8px; width: 200px; align-items: center">
+            <div style="width: 200px; height: 50px; border-radius: 4px; background: {{fantasyPaint}}"></div>
+            <span style="font-size: 13px; font-weight: 600">ZeroMOD</span>
+            <span style="font-size: 12px; color: {{t.muted}}; margin-top: -6px">1920×480 · fantasy</span>
+          </div>
+        </div>
+      </section>
+
+      <h2 style="margin: 24px 0 4px; font-size: 16px; font-weight: 600">Playlists</h2>
+
+      <div style="display: flex; align-items: center; gap: 20px; padding: 14px 8px 14px 0; border-radius: 6px; background: {{t.hover}}">
+        <div style="width: 176px; height: 99px; flex-shrink: 0; border-radius: 4px; background: {{konachanPaint}}"></div>
+        <div style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px">
+          <div style="display: flex; align-items: center; gap: 8px">
+            <span style="font-size: 16px; font-weight: 600">konachan</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="{{t.muted}}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Mirrored" role="img"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
+            <span style="font-size: 13px; color: {{t.muted}}">AW3225QF + PLX2783H</span>
+          </div>
+          <span style="font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">konachan - 260116 armor fate_grand_order tomoe_gozen [Safe][v1][waifu2x].jpg</span>
+          <span style="font-size: 13px; color: {{t.muted}}">2560×1440 · 1.8 MB · shuffle, every 25m · next in 21m</span>
+        </div>
+        <div style="display: flex; gap: 4px; align-items: center">
+          <button aria-label="Previous" style="width: 38px; height: 34px; border: 0; border-radius: 4px; background: transparent; color: {{t.text}}; display: flex; align-items: center; justify-content: center; padding: 0"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="19 20 9 12 19 4 19 20"></polygon><line x1="5" y1="19" x2="5" y2="5"></line></svg></button>
+          <button aria-label="Next" style="width: 38px; height: 34px; border: 0; border-radius: 4px; background: transparent; color: {{t.text}}; display: flex; align-items: center; justify-content: center; padding: 0"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="5 4 15 12 5 20 5 4"></polygon><line x1="19" y1="5" x2="19" y2="19"></line></svg></button>
+          <span style="width: 1px; height: 20px; background: {{t.divider}}; margin: 0 6px"></span>
+          <button aria-label="Remove from favourites" aria-pressed="true" style="width: 38px; height: 34px; border: 0; border-radius: 4px; background: {{t.accentFill}}; color: {{t.accent}}; display: flex; align-items: center; justify-content: center; padding: 0"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg></button>
+          <button aria-label="Remove (list and move on)" style="width: 38px; height: 34px; border: 0; border-radius: 4px; background: transparent; color: {{t.text}}; display: flex; align-items: center; justify-content: center; padding: 0"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></button>
+          <button aria-label="Hold" aria-pressed="false" style="width: 38px; height: 34px; border: 0; border-radius: 4px; background: transparent; color: {{t.text}}; display: flex; align-items: center; justify-content: center; padding: 0"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17v5"></path><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"></path></svg></button>
+        </div>
+      </div>
+      <div style="border-top: 1px solid {{t.divider}}"></div>
+
+      <div style="display: flex; align-items: center; gap: 20px; padding: 14px 8px 14px 0">
+        <div style="width: 176px; height: 99px; flex-shrink: 0; border-radius: 4px; background: {{t.backdrop}}; display: flex; align-items: center"><div style="width: 176px; height: 44px; background: {{fantasyPaint}}"></div></div>
+        <div style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px">
+          <div style="display: flex; align-items: center; gap: 8px">
+            <span style="font-size: 16px; font-weight: 600">fantasy</span>
+            <span style="font-size: 13px; color: {{t.muted}}">ZeroMOD</span>
+            <span style="font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 10px; background: {{t.accentFill}}; color: {{t.accent}}">Held</span>
+          </div>
+          <span style="font-size: 14px">dbejufz-c8be7420-2704-47b3.jpg</span>
+          <span style="font-size: 13px; color: {{t.muted}}">1920×480 · 640 KB · sorted, every 10m · 5m50s left once resumed</span>
+        </div>
+        <div style="display: flex; gap: 4px; align-items: center">
+          <button aria-label="Previous" style="width: 38px; height: 34px; border: 0; border-radius: 4px; background: transparent; color: {{t.text}}; display: flex; align-items: center; justify-content: center; padding: 0"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="19 20 9 12 19 4 19 20"></polygon><line x1="5" y1="19" x2="5" y2="5"></line></svg></button>
+          <button aria-label="Next" style="width: 38px; height: 34px; border: 0; border-radius: 4px; background: transparent; color: {{t.text}}; display: flex; align-items: center; justify-content: center; padding: 0"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="5 4 15 12 5 20 5 4"></polygon><line x1="19" y1="5" x2="19" y2="19"></line></svg></button>
+          <span style="width: 1px; height: 20px; background: {{t.divider}}; margin: 0 6px"></span>
+          <button aria-label="Favourite" aria-pressed="false" style="width: 38px; height: 34px; border: 0; border-radius: 4px; background: transparent; color: {{t.text}}; display: flex; align-items: center; justify-content: center; padding: 0"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg></button>
+          <button aria-label="Remove (list and move on)" style="width: 38px; height: 34px; border: 0; border-radius: 4px; background: transparent; color: {{t.text}}; display: flex; align-items: center; justify-content: center; padding: 0"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"></path><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></button>
+          <button aria-label="Resume" aria-pressed="true" style="width: 38px; height: 34px; border: 0; border-radius: 4px; background: {{t.accentFill}}; color: {{t.accent}}; display: flex; align-items: center; justify-content: center; padding: 0"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 17v5"></path><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"></path></svg></button>
+        </div>
+      </div>
+    </main>
+    </sc-if>
+
+    <sc-if value="{{isLibrary}}" hint-placeholder-val="{{false}}">
+    <main style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0">
+      <div style="padding: 20px 32px 0; display: flex; flex-direction: column; gap: 12px">
+        <div style="display: flex; align-items: baseline; gap: 12px">
+          <h1 style="margin: 0; font-size: 22px; font-weight: 600">Library</h1>
+          <span style="font-size: 13px; color: {{t.muted}}">konachan · 20,431 images</span>
+        </div>
+        <div role="tablist" style="display: flex; gap: 8px; border-bottom: 1px solid {{t.divider}}">
+          <button role="tab" aria-selected="true" style="border: 0; background: transparent; color: {{t.text}}; font: inherit; font-size: 15px; font-weight: 600; padding: 10px 18px; border-bottom: 3px solid {{t.accent}}">All images</button>
+          <button role="tab" aria-selected="false" style="border: 0; background: transparent; color: {{t.muted}}; font: inherit; font-size: 15px; padding: 10px 18px">Favourites</button>
+          <button role="tab" aria-selected="false" style="border: 0; background: transparent; color: {{t.muted}}; font: inherit; font-size: 15px; padding: 10px 18px">To remove</button>
+          <button role="tab" aria-selected="false" style="border: 0; background: transparent; color: {{t.muted}}; font: inherit; font-size: 15px; padding: 10px 18px">History</button>
+          <button role="tab" aria-selected="false" style="border: 0; background: transparent; color: {{t.muted}}; font: inherit; font-size: 15px; padding: 10px 18px">Upcoming</button>
+        </div>
+        <div style="display: flex; gap: 12px; align-items: center; padding: 4px 0 8px">
+          <div style="display: flex; align-items: center; gap: 8px; height: 34px; width: 320px; box-sizing: border-box; border-radius: 4px; background: {{t.field}}; padding: 0 10px; color: {{t.muted}}">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
+            <input aria-label="Filter by name" placeholder="Filter by name" style="flex-grow: 1; min-width: 0; border: 0; background: transparent; color: {{t.text}}; font: inherit; outline: none">
+          </div>
+          <select aria-label="Sort" style="height: 34px; width: 170px; border: 0; border-radius: 4px; background: {{t.field}}; color: {{t.text}}; font: inherit; padding: 0 10px"><option>Name A–Z</option><option>Name Z–A</option><option>Newest added</option><option>Oldest added</option></select>
+          <span style="flex-grow: 1"></span>
+          <span style="font-size: 13px">Hide removed</span>
+          <button role="switch" aria-checked="true" aria-label="Hide removed" style="width: 40px; height: 20px; border: 0; border-radius: 10px; background: {{t.accent}}; position: relative; padding: 0">
+            <span style="position: absolute; right: 3px; top: 3px; width: 14px; height: 14px; border-radius: 7px; background: {{t.onAccent}}"></span>
+          </button>
+        </div>
+      </div>
+
+      <div style="flex-grow: 1; min-height: 0; position: relative; overflow: hidden; padding: 0 44px 0 32px">
+        <div style="display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px">
+          <sc-for list="{{tiles}}" as="tile" hint-placeholder-count="30">
+            <div style="aspect-ratio: 16 / 9; border-radius: 4px; background: {{t.backdrop}}; display: flex; justify-content: center; position: relative; overflow: hidden; outline: {{tile.outline}}; outline-offset: -2px">
+              <div style="height: 100%; width: {{tile.width}}; background: {{tile.paint}}"></div>
+              <sc-if value="{{tile.fav}}" hint-placeholder-val="{{false}}">
+                <span style="position: absolute; right: 6px; top: 6px; width: 22px; height: 22px; border-radius: 11px; background: rgba(0,0,0,0.55); display: flex; align-items: center; justify-content: center">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="#ffd54a" stroke="#ffd54a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="Favourite" role="img"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>
+                </span>
+              </sc-if>
+              <sc-if value="{{tile.current}}" hint-placeholder-val="{{false}}">
+                <span style="position: absolute; left: 6px; bottom: 6px; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 10px; background: rgba(0,0,0,0.6); color: #ffffff">On screen</span>
+              </sc-if>
+            </div>
+          </sc-for>
+        </div>
+        <div aria-hidden="true" style="position: absolute; right: 14px; top: 0; bottom: 12px; width: 6px; border-radius: 3px; background: {{t.field}}">
+          <div style="position: absolute; left: 0; right: 0; top: 18%; height: 36px; border-radius: 3px; background: {{t.muted}}"></div>
+        </div>
+      </div>
+    </main>
+    </sc-if>
+
+    <sc-if value="{{isFlow}}" hint-placeholder-val="{{false}}">
+    <main style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0">
+      <div style="padding: 20px 32px 0; display: flex; flex-direction: column; gap: 12px">
+        <h1 style="margin: 0; font-size: 22px; font-weight: 600">Settings</h1>
+        <div role="tablist" style="display: flex; gap: 8px; border-bottom: 1px solid {{t.divider}}">
+          <button role="tab" aria-selected="true" style="border: 0; background: transparent; color: {{t.text}}; font: inherit; font-size: 15px; font-weight: 600; padding: 10px 18px; border-bottom: 3px solid {{t.accent}}">Playlists</button>
+          <button role="tab" aria-selected="false" style="border: 0; background: transparent; color: {{t.muted}}; font: inherit; font-size: 15px; padding: 10px 18px">General</button>
+          <button role="tab" aria-selected="false" style="border: 0; background: transparent; color: {{t.muted}}; font: inherit; font-size: 15px; padding: 10px 18px">About</button>
+        </div>
+      </div>
+
+      <div style="flex-grow: 1; min-height: 0; overflow: hidden; padding: 0 32px; display: flex; flex-direction: column">
+
+        <div style="display: flex; align-items: baseline; gap: 16px; padding: 18px 0 10px">
+          <h2 style="margin: 0; font-size: 16px; font-weight: 600; flex-grow: 1">Monitors</h2>
+          <span style="font-size: 13px; color: {{t.muted}}">Click a monitor to choose its playlist</span>
+        </div>
+        <div style="height: 150px; flex-shrink: 0; box-sizing: border-box; border-radius: 6px; background: {{t.backdrop}}; display: flex; justify-content: center; align-items: flex-start; gap: 8px; padding: 16px 24px">
+          <div style="display: flex; flex-direction: column; gap: 5px; width: 140px; align-items: center"><div style="width: 140px; height: 79px; border-radius: 3px; background: {{t.tile}}"></div><span style="font-size: 12px; color: #e8e8e8">PLX2783H · konachan</span></div>
+          <div style="display: flex; flex-direction: column; gap: 5px; width: 210px; align-items: center"><div style="width: 210px; height: 118px; border-radius: 3px; background: {{t.tile}}"></div></div>
+          <div style="display: flex; flex-direction: column; gap: 5px; width: 140px; align-items: center"><div style="width: 140px; height: 35px; border-radius: 3px; background: {{t.tile}}"></div><span style="font-size: 12px; color: #e8e8e8">ZeroMOD · fantasy</span></div>
+        </div>
+
+        <div style="border-top: 1px solid {{t.divider}}; margin-top: 20px"></div>
+        <div style="display: flex; align-items: center; gap: 16px; padding: 16px 0 4px">
+          <h2 style="margin: 0; font-size: 16px; font-weight: 600; flex-grow: 1">konachan</h2>
+          <button style="border: 0; background: transparent; color: {{t.accent}}; font: inherit; font-size: 13px; font-weight: 600; padding: 4px 0">Delete playlist</button>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 24px; min-height: 50px; padding-left: 24px">
+          <label for="fn" style="flex-grow: 1">Name</label>
+          <input id="fn" value="konachan" style="height: 34px; width: 360px; box-sizing: border-box; border: 0; border-radius: 4px; background: {{t.field}}; color: {{t.text}}; padding: 0 12px; font: inherit">
+        </div>
+        <div style="display: flex; align-items: center; gap: 24px; min-height: 58px; padding-left: 24px">
+          <div style="flex-grow: 1; display: flex; flex-direction: column; gap: 2px"><label for="fd">Folder</label><span style="font-size: 13px; color: {{t.muted}}">Scanned with its subfolders</span></div>
+          <div style="display: flex; gap: 12px; align-items: center; width: 360px">
+            <input id="fd" value="D:\pictures\KONACHAN" style="height: 34px; flex-grow: 1; min-width: 0; box-sizing: border-box; border: 0; border-radius: 4px; background: {{t.field}}; color: {{t.text}}; padding: 0 12px; font: inherit">
+            <button style="border: 0; background: transparent; color: {{t.accent}}; font: inherit; font-size: 13px; font-weight: 600; padding: 4px 0">Browse…</button>
+          </div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 24px; min-height: 58px; padding-left: 24px">
+          <div style="flex-grow: 1; display: flex; flex-direction: column; gap: 2px"><label for="fo">Order</label><span style="font-size: 13px; color: {{t.muted}}">Shuffle shows every image once before any repeats</span></div>
+          <select id="fo" style="height: 34px; width: 360px; border: 0; border-radius: 4px; background: {{t.field}}; color: {{t.text}}; font: inherit; padding: 0 10px"><option>Shuffle</option><option>Sorted</option></select>
+        </div>
+        <div style="display: flex; align-items: center; gap: 24px; min-height: 58px; padding-left: 24px">
+          <div style="flex-grow: 1; display: flex; flex-direction: column; gap: 2px"><label for="fc">Changes</label><span style="font-size: 13px; color: {{t.muted}}">Active time: pauses while locked, idle or asleep</span></div>
+          <div style="display: flex; gap: 8px; width: 360px">
+            <select id="fc" style="height: 34px; flex-grow: 1; border: 0; border-radius: 4px; background: {{t.field}}; color: {{t.text}}; font: inherit; padding: 0 10px"><option>Every</option><option>Manually</option></select>
+            <input aria-label="Interval" value="25m" style="height: 34px; width: 110px; box-sizing: border-box; border: 0; border-radius: 4px; background: {{t.field}}; color: {{t.text}}; padding: 0 12px; font: inherit">
+          </div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 24px; min-height: 58px; padding-left: 24px">
+          <div style="flex-grow: 1; display: flex; flex-direction: column; gap: 2px"><label for="fm">Mode</label><span style="font-size: 13px; color: {{t.muted}}">How an image fits its monitor</span></div>
+          <select id="fm" style="height: 34px; width: 360px; border: 0; border-radius: 4px; background: {{t.field}}; color: {{t.text}}; font: inherit; padding: 0 10px"><option>Fill</option><option>Fit</option><option>Stretch</option><option>As is</option></select>
+        </div>
+        <div style="display: flex; align-items: center; gap: 24px; min-height: 58px; padding-left: 24px">
+          <div style="flex-grow: 1; display: flex; flex-direction: column; gap: 2px"><span>Monitors</span><span style="font-size: 13px; color: {{t.muted}}">Two or more show the same image (mirrored)</span></div>
+          <span style="width: 360px">AW3225QF + PLX2783H</span>
+        </div>
+
+        <div style="border-top: 1px solid {{t.divider}}; margin-top: 12px"></div>
+        <button aria-expanded="false" style="display: flex; align-items: center; gap: 16px; min-height: 56px; border: 0; background: transparent; color: {{t.text}}; font: inherit; padding: 0; text-align: left">
+          <span style="font-size: 16px; font-weight: 600">fantasy</span>
+          <span style="flex-grow: 1; font-size: 13px; color: {{t.muted}}">ZeroMOD · sorted · every 10m · fill</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"></path></svg>
+        </button>
+        <div style="border-top: 1px solid {{t.divider}}"></div>
+        <button style="align-self: flex-start; border: 0; background: transparent; color: {{t.accent}}; font: inherit; font-size: 13px; font-weight: 600; padding: 14px 0">+ Add playlist</button>
+      </div>
+
+      <div style="flex-shrink: 0; display: flex; gap: 12px; align-items: center; padding: 12px 32px; border-top: 1px solid {{t.divider}}">
+        <span style="flex-grow: 1; font-size: 13px; color: {{t.muted}}">Changes: interval of konachan. Not saved yet.</span>
+        <button style="height: 34px; border: 0; border-radius: 4px; background: {{t.field}}; color: {{t.text}}; font: inherit; padding: 0 18px">Revert</button>
+        <button style="height: 34px; border: 0; border-radius: 4px; background: {{t.accent}}; color: {{t.onAccent}}; font: inherit; font-weight: 600; padding: 0 18px">Save</button>
+      </div>
+    </main>
+    </sc-if>
+
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"page":{"editor":"enum","options":["layout","library","settings"],"default":"layout"},"flow":{"editor":"boolean","default":false},"$preview":{"width":1280,"height":800}}'>
+class Component extends DCLogic {
+renderVals() {
+const light = {
+backdrop: '#1f1f1f', tile: '#2a2a2a', sideLine: '#dcdcdc',
+win: '#f3f3f3', side: '#f3f3f3', card: '#ffffff', btn: '#fbfbfb', input: '#ffffff', line: '#d6d6d6',
+text: '#1a1a1a', muted: '#5c5c5c', accent: '#005fb8', onAccent: '#ffffff', accentFill: 'rgba(0,95,184,0.12)',
+hover: 'rgba(0,0,0,0.05)', accentOnDark: '#4cc2ff', ok: '#0f7b0f',
+field: '#e6e6e6', divider: '#dcdcdc'
+};
+const dark = {
+backdrop: '#242424', tile: '#333333', sideLine: '#2f2f2f',
+win: '#1a1a1a', side: '#1a1a1a', card: '#242424', btn: '#2e2e2e', input: '#2b2b2b', line: '#383838',
+text: '#ffffff', muted: '#c8c8c8', accent: '#60cdff', onAccent: '#000000', accentFill: 'rgba(96,205,255,0.14)',
+hover: 'rgba(255,255,255,0.06)', accentOnDark: '#60cdff', ok: '#6ccb5f',
+field: '#2b2b2b', divider: '#2f2f2f'
+};
+const t = this.props.dark ? dark : light;
+const page = this.props.page ?? 'layout';
+const nav = [
+{ id: 'layout', label: 'Home' },
+{ id: 'library', label: 'Library' },
+{ id: 'settings', label: 'Settings' }
+].map((p) => {
+const on = p.id === page;
+return {
+label: p.label,
+current: on ? 'page' : 'false',
+bg: on ? t.accentFill : 'transparent',
+bar: on ? t.accent : 'transparent',
+iconColor: on ? t.accent : t.text,
+weight: on ? 600 : 400,
+isLayout: p.id === 'layout',
+isLibrary: p.id === 'library',
+isSettings: p.id === 'settings'
+};
+});
+const flow = !!this.props.flow;
+// Stand-ins for wallpapers: vivid, varied colours; a few portrait images
+// (letterboxed on the backdrop), favourites, one on screen, one hovered.
+const tiles = Array.from({ length: 30 }, (_, i) => {
+const h = (i * 47 + 12) % 360;
+const h2 = (h + 40 + (i % 3) * 60) % 360;
+const h3 = (h + 180) % 360;
+const x = 20 + ((i * 37) % 60);
+const y = 15 + ((i * 53) % 55);
+return {
+paint: 'radial-gradient(circle at ' + x + '% ' + y + '%, hsla(' + h3 + ',85%,70%,0.85), transparent 38%), ' +
+'radial-gradient(circle at ' + (100 - x) + '% ' + (90 - y / 2) + '%, hsla(' + h2 + ',90%,55%,0.9), transparent 45%), ' +
+'linear-gradient(' + ((i * 29) % 180) + 'deg, hsl(' + h + ',70%,' + (25 + (i % 4) * 8) + '%), hsl(' + h2 + ',65%,' + (15 + (i % 5) * 6) + '%))',
+width: (i % 7 === 3 || i % 11 === 5) ? '38%' : '100%',
+fav: i % 6 === 1 || i === 9,
+current: i === 7,
+outline: i === 12 ? '2px solid ' + t.accentOnDark : 'none'
+};
+});
+return {
+t,
+nav,
+tiles,
+konachanPaint: 'radial-gradient(circle at 70% 30%, hsla(330,85%,72%,0.85), transparent 40%), radial-gradient(circle at 25% 80%, hsla(200,90%,55%,0.9), transparent 45%), linear-gradient(135deg, hsl(260,60%,35%), hsl(220,70%,18%))',
+fantasyPaint: 'radial-gradient(circle at 30% 40%, hsla(45,95%,65%,0.9), transparent 35%), radial-gradient(circle at 80% 60%, hsla(15,85%,55%,0.85), transparent 45%), linear-gradient(90deg, hsl(160,55%,22%), hsl(190,60%,30%))',
+isLibrary: page === 'library',
+isHomeFlow: page === 'layout' && flow,
+isLayout: page === 'layout' && !flow,
+isSettings: page === 'settings' && !flow,
+isFlow: page === 'settings' && flow
+};
+}
+}
+</script>
+</body>
+</html>
