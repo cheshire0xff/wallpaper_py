@@ -11,16 +11,16 @@ the arrangement, in a row to its right, at their last known size (else
 
 `MonitorsView` paints it: each monitor with the current image of its
 playlist, and under each its name, resolution and playlist ("no playlist"
-for one no playlist drives). No outlines, except on hover: pointing at a
-monitor (`hovered`) or at a playlist's card highlights that playlist's
-monitors in the accent (`set_highlight`), so the accent only ever means
-"what you point at". Made clickable (`set_clickable`, the settings page),
-a click on a monitor emits `clicked` with its id. Its height follows its
-width within limits (`set_heights`: Home draws it larger than Settings).
-Compact (`set_compact`, Settings' smaller drawing), a caption is one line,
-"PLX2783H · konachan", or two (the name, then the playlist) for a monitor
-too narrow for that; room for two lines is kept under the monitors only
-when some caption needs them.
+for one no playlist drives). Monitors sharing a name (two of one model)
+are told apart by a number counted left to right instead of the
+resolution: "1 of 2 · konachan" (`twins`). No outlines, except on hover:
+pointing at a monitor (`hovered`) or at a playlist's card highlights that
+playlist's monitors in the accent (`set_highlight`), so the accent only
+ever means "what you point at" or, on the Settings page, "what you are
+setting up" (`set_selected`: outlined, a little apart from the monitor).
+Made clickable (`set_clickable`, the settings page), a click on a monitor
+emits `clicked` with its id. Its height follows its width within limits
+(`set_heights`).
 """
 
 from __future__ import annotations
@@ -33,8 +33,6 @@ from typing import override
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, Signal, Slot
 from PySide6.QtGui import (
     QColor,
-    QFont,
-    QFontMetricsF,
     QMouseEvent,
     QPainter,
     QPainterPath,
@@ -53,12 +51,12 @@ DEFAULT_SIZE = (1920, 1080)  # for a detached monitor never seen attached
 DETACHED_GAP = 0.15  # between the arrangement and detached ones, x its height
 MARGIN = theme.space(2)
 LABEL_HEIGHT = 40  # two lines under each monitor
-CAPTION_TOP = 4  # px between a monitor and its caption
 MIN_HEIGHT = 220
 MAX_HEIGHT = 400
 HEIGHT_RATIO = 0.3  # of the width
 INSET = 3  # px between neighbouring monitors, so they read as separate
 HIGHLIGHT_WIDTH = 2  # px, the hover outline
+SELECTED_GAP = 3  # px between a selected monitor and its outline
 
 
 @dataclass(frozen=True)
@@ -170,15 +168,44 @@ def playlists_by_monitor(overview: Overview) -> dict[MonitorId, str]:
     return result
 
 
-def compact_caption(monitor: DesktopMonitor, playlist: str | None) -> str:
-    """A compact caption on one line: "PLX2783H · konachan"."""
-    return f"{monitor.name} · {playlist or 'no playlist'}"
+def twins(monitors: Sequence[DesktopMonitor]) -> dict[MonitorId, tuple[int, int]]:
+    """
+    Attached monitors that share their name with another attached one (two
+    of one model): id -> (its number, how many), counted left to right
+    (then top to bottom), from the current arrangement.
+    """
+    by_name: dict[str, list[DesktopMonitor]] = {}
+    for monitor in monitors:
+        if monitor.geometry is not None:
+            by_name.setdefault(monitor.name, []).append(monitor)
+    result: dict[MonitorId, tuple[int, int]] = {}
+    for group in by_name.values():
+        if len(group) < 2:
+            continue
+        group.sort(key=_position)
+        for number, monitor in enumerate(group, 1):
+            result[monitor.id] = (number, len(group))
+    return result
 
 
-def caption(monitor: DesktopMonitor, playlist: str | None) -> tuple[str, str]:
-    """The two lines under a monitor: its name, then size (or off) · playlist."""
+def _position(monitor: DesktopMonitor) -> tuple[int, int]:
     g = monitor.geometry
-    state = f"{g.width}×{g.height}" if g is not None else "off"
+    assert g is not None
+    return g.x, g.y
+
+
+def caption(
+    monitor: DesktopMonitor, playlist: str | None, twin: tuple[int, int] | None = None
+) -> tuple[str, str]:
+    """
+    The two lines under a monitor: its name, then size (or off; "1 of 2"
+    for a `twin`) · playlist.
+    """
+    g = monitor.geometry
+    if twin is not None:
+        state = f"{twin[0]} of {twin[1]}"
+    else:
+        state = f"{g.width}×{g.height}" if g is not None else "off"
     return monitor.name, f"{state} · {playlist or 'no playlist'}"
 
 
@@ -194,6 +221,8 @@ class MonitorsView(QWidget):
         super().__init__(parent)
         self._overview = Overview()
         self._highlight: str | None = None  # playlist outlined in the accent
+        self._selected: MonitorId | None = None  # outlined apart (Settings)
+        self._twins: dict[MonitorId, tuple[int, int]] = {}
         self._hovered: str | None = None
         self._clickable = False
         self._pressed: MonitorId | None = None  # monitor under a press
@@ -201,61 +230,9 @@ class MonitorsView(QWidget):
         self._images: dict[Path, QPixmap] = {}
         self._last_sizes: dict[MonitorId, tuple[int, int]] = {}
         self._heights = (MIN_HEIGHT, MAX_HEIGHT, HEIGHT_RATIO)
-        self._compact = False
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setFixedHeight(MIN_HEIGHT)
         self.setAccessibleName("Monitors")
-
-    def set_compact(self, compact: bool) -> None:
-        """Compact captions: "PLX2783H · konachan", no size (see the module)."""
-        self._compact = compact
-        self.update()
-
-    def _caption_font(self) -> QFont:
-        return theme.scaled_font(self.font(), 0.86)
-
-    def _caption_metrics(self) -> QFontMetricsF:
-        return QFontMetricsF(self._caption_font(), self)
-
-    def _compact_height(self, lines: int) -> float:
-        """The room under the monitors for `lines` compact caption lines."""
-        return CAPTION_TOP + lines * self._caption_metrics().height() + 2
-
-    def _label_height(self) -> float:
-        if not self._compact:
-            return LABEL_HEIGHT
-        # Two lines if any one-line caption is wider than its monitor; with
-        # room for two the monitors only get smaller, so that stays true.
-        one = self._compact_height(1)
-        metrics = self._caption_metrics()
-        by_monitor = playlists_by_monitor(self._overview)
-        for item in arrange(
-            self._overview.monitors, self.width(), self.height(), self._last_sizes, one
-        ):
-            text = compact_caption(item.monitor, by_monitor.get(item.monitor.id))
-            if metrics.horizontalAdvance(text) > item.box.width:
-                return self._compact_height(2)
-        return one
-
-    def caption_lines(self, item: Placed) -> tuple[str, ...]:
-        """
-        The compact caption as drawn under `item`: one line if it fits the
-        monitor's width, else the name and the playlist, each elided.
-        """
-        playlist = playlists_by_monitor(self._overview).get(item.monitor.id)
-        metrics = self._caption_metrics()
-        width = item.box.width
-        text = compact_caption(item.monitor, playlist)
-        if metrics.horizontalAdvance(text) <= width:
-            return (text,)
-        return tuple(
-            metrics.elidedText(line, Qt.TextElideMode.ElideRight, width)
-            for line in (item.monitor.name, playlist or "no playlist")
-        )
-
-    def caption_area(self, item: Placed) -> Box:
-        """Where `item`'s caption goes (see `_caption_area`)."""
-        return self._caption_box(item.box, [p.box for p in self.placed()])
 
     def set_heights(self, least: int, most: int, ratio: float) -> None:
         """Its height: `ratio` of its width, from `least` to `most` px."""
@@ -279,12 +256,15 @@ class MonitorsView(QWidget):
         for monitor in overview.monitors:
             if (g := monitor.geometry) is not None:
                 self._last_sizes[monitor.id] = (g.width, g.height)
+        self._twins = twins(overview.monitors)
         current = {p.current for p in overview.playlists if p.current is not None}
         self._images = {p: i for p, i in self._images.items() if p in current}
         lines = []
         by_monitor = playlists_by_monitor(overview)
         for monitor in overview.monitors:
-            name, detail = caption(monitor, by_monitor.get(monitor.id))
+            name, detail = caption(
+                monitor, by_monitor.get(monitor.id), self._twins.get(monitor.id)
+            )
             lines.append(f"{name}: {detail}")
         self.setAccessibleDescription("; ".join(lines))
         self.setToolTip("\n".join(lines))
@@ -299,6 +279,15 @@ class MonitorsView(QWidget):
 
     def highlight(self) -> str | None:
         return self._highlight
+
+    def set_selected(self, monitor_id: MonitorId | None) -> None:
+        """Outline this monitor, a little apart from it (None: none)."""
+        if monitor_id != self._selected:
+            self._selected = monitor_id
+            self.update()
+
+    def selected(self) -> MonitorId | None:
+        return self._selected
 
     def set_clickable(self, clickable: bool) -> None:
         self._clickable = clickable
@@ -375,7 +364,7 @@ class MonitorsView(QWidget):
             self.width(),
             self.height(),
             self._last_sizes,
-            self._label_height(),
+            LABEL_HEIGHT,
         )
 
     @override
@@ -409,6 +398,8 @@ class MonitorsView(QWidget):
                 self._images.get(image) if image is not None else None,
                 tones.panel_accent if lit else None,
             )
+            if item.monitor.id == self._selected:
+                self._paint_selected(painter, item.box, tones.panel_accent)
         boxes = [p.box for p in placed]
         for item in placed:
             self._paint_caption(painter, item, by_monitor.get(item.monitor.id), boxes)
@@ -448,6 +439,16 @@ class MonitorsView(QWidget):
             painter.drawRect(rect.adjusted(half, half, -half, -half))
         painter.restore()
 
+    @staticmethod
+    def _paint_selected(painter: QPainter, box: Box, color: QColor) -> None:
+        rect = QRectF(box.x, box.y, box.width, box.height)
+        out = SELECTED_GAP - INSET + HIGHLIGHT_WIDTH / 2  # outside the fill
+        painter.save()
+        painter.setPen(QPen(color, HIGHLIGHT_WIDTH))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRoundedRect(rect.adjusted(-out, -out, out, out), 3, 3)
+        painter.restore()
+
     def _paint_caption(
         self,
         painter: QPainter,
@@ -457,10 +458,7 @@ class MonitorsView(QWidget):
     ) -> None:
         tones = theme.tones()
         below = self._caption_area(painter, item.box, boxes)
-        if self._compact:
-            self._paint_compact_caption(painter, item, below)
-            return
-        name, detail = caption(item.monitor, playlist)
+        name, detail = caption(item.monitor, playlist, self._twins.get(item.monitor.id))
         rect = QRectF(below.x, below.y + 4, below.width, below.height - 4)
         painter.save()
         if not item.attached:
@@ -499,30 +497,11 @@ class MonitorsView(QWidget):
         return below
 
     def _caption_box(self, box: Box, boxes: Sequence[Box]) -> Box:
-        label = self._label_height()
+        label = LABEL_HEIGHT
         below = Box(box.x, box.bottom, box.width, label)
         if any(b is not box and below.intersects(b) for b in boxes):
             below = Box(box.x, box.bottom - label, box.width, label)
         return below
-
-    def _paint_compact_caption(
-        self, painter: QPainter, item: Placed, below: Box
-    ) -> None:
-        """`caption_lines`, centred under the monitor (as wide as it)."""
-        painter.save()
-        if not item.attached:
-            painter.setOpacity(0.6)
-        painter.setFont(self._caption_font())
-        painter.setPen(theme.tones().panel_text)
-        line_height = self._caption_metrics().height()
-        flags = int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
-        top = below.y + CAPTION_TOP
-        for line in self.caption_lines(item):
-            painter.drawText(
-                QRectF(below.x, top, below.width, line_height), flags, line
-            )
-            top += line_height
-        painter.restore()
 
 
 def _cover(rect: QRectF, pixmap: QPixmap) -> QRectF:

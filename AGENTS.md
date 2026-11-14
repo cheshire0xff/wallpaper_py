@@ -42,26 +42,22 @@ steps there for new desktop-facing behaviour, for the user to try.
   library's) is marked `@override` (`typing`); mypy enforces it
   (`explicit-override`). A misspelt Qt event handler is then an error,
   not a method Qt never calls.
-- mypy is strict; pydantic models for anything (de)serialized, also
-  files people write by hand: the settings are `Settings` in
-  `core/settings.py` (stored in the state database, sent on the socket;
-  a new setting goes there, with its meaning checked in
-  `check_settings`), and until Phase 4b step 3b the keys and types of
-  config.toml are `ConfigFile` / `PlaylistTable` in `core/config.py`
-  (with `_PROBLEMS` for its error messages), not `isinstance` checks.
+- mypy is strict; pydantic models for anything (de)serialized: the
+  settings are `Settings` in `core/settings.py` (stored in the state
+  database, sent on the socket; a new setting goes there, with its
+  meaning checked in `check_settings`), not `isinstance` checks.
   Hand-written code checks only what values mean (durations, paths,
-  uniqueness). Use `StrictInt` / `StrictStr` / `StrictBool` for
-  values people type: lax pydantic takes `true` as an int and `0` as
-  `Literal[False]`.
-- config.toml is written by the settings window; people aren't expected
-  to edit it by hand. It holds monitors by id only (never names: two
-  monitors of one model share one) and generated playlist ids. A hand
-  edit is still checked like any other, but don't add rules or helpers
-  just to make hand editing convenient. No file, or no playlists, is a
-  valid config that rotates nothing.
+  uniqueness). Use `StrictInt` / `StrictStr` / `StrictBool` and
+  `Field(strict=True)` for values a client sends: lax pydantic takes
+  `true` as an int and `0` as `Literal[False]`.
+- The settings are written only by the app, through `save_settings`
+  (the Settings page); there is no settings file. They hold monitors by
+  id only (never names: two monitors of one model share one) and
+  generated playlist ids. No playlists is valid settings that rotate
+  nothing.
 - Pre-release: no migrations or backward compatibility for stored state or
   the protocol; change it in place.
-- Files people write by hand (config.toml, the list files) are UTF-8
+- Files people write by hand (the favourites and to-remove lists) are UTF-8
   without a byte order mark, nothing else; a BOM is a `ConfigError` that
   says so (`marks.decode_text`). This is on purpose: don't add BOM
   tolerance (`utf-8-sig`), and don't report it in reviews.
@@ -84,8 +80,7 @@ kind, one line each, nothing to fix by default:
 
 Don't report at all:
 
-- hand edits of config.toml made easier or friendlier (it is written by
-  the settings window), and files from before a change (no migrations);
+- state or files from before a change (no migrations);
 - a decision already written down in this file or in docs/.
 
 ## Qt for Python rules (easy to miss, costly when missed)

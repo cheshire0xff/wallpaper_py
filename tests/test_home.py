@@ -21,8 +21,8 @@ from wallpaper_py.app.ui.arrangement import (
     MonitorsView,
     arrange,
     caption,
-    compact_caption,
     playlists_by_monitor,
+    twins,
 )
 from wallpaper_py.app.ui.home import (
     HomePage,
@@ -188,101 +188,31 @@ def test_captions_and_monitors_in_no_playlist() -> None:
     assert caption(ZERO, "fantasy") == ("ZeroMOD", "off · fantasy")
 
 
-def compact_view(qtbot: QtBot, overview: Overview, width: int) -> MonitorsView:
-    """Settings' drawing: compact captions."""
+def test_monitors_sharing_a_name_are_numbered_left_to_right() -> None:
+    left = PLX.model_copy(update={"id": MonitorId("plx-2")})
+    right = PLX.model_copy(
+        update={"geometry": Geometry(x=3840, y=0, width=1920, height=1080)}
+    )
+    off = PLX.model_copy(update={"id": MonitorId("plx-3"), "geometry": None})
+    numbers = twins([AW, right, left, off])
+    # Only attached ones count; the switched-off one is "off" anyway.
+    assert numbers == {MonitorId("plx-2"): (1, 2), MonitorId("plx"): (2, 2)}
+    assert caption(left, "konachan", numbers[left.id]) == (
+        "PLX2783H",
+        "1 of 2 · konachan",
+    )
+
+
+def test_the_selected_monitor_is_outlined(qtbot: QtBot) -> None:
     view = MonitorsView()
     qtbot.addWidget(view)
-    view.set_compact(True)
-    view.resize(width, 200)
-    view.set_heights(150, 2000, 0.3)  # taller as it widens: wide enough fits
-    view.show_overview(overview)
-    return view
-
-
-def captions(view: MonitorsView) -> dict[str, tuple[str, ...]]:
-    return {str(p.monitor.id): view.caption_lines(p) for p in view.placed()}
-
-
-def assert_captions_overlap_no_monitor(view: MonitorsView) -> None:
-    placed = view.placed()
-    for item in placed:
-        area = view.caption_area(item)
-        assert area.width == pytest.approx(item.box.width)  # never beside
-        assert area.bottom <= view.height() + 1e-6
-        for other in placed:
-            if other is not item:
-                assert not area.intersects(other.box), (item.monitor.id, other)
-
-
-def narrowest_one_line(qtbot: QtBot, overview: Overview) -> int:
-    """The narrowest drawing in which every compact caption fits one line
-    (found by trying, so the test doesn't depend on the font)."""
-    for width in range(200, 4000, 10):
-        view = compact_view(qtbot, overview, width)
-        if all(len(lines) == 1 for lines in captions(view).values()):
-            return width
-    raise AssertionError("captions never fit on one line")
-
-
-def test_compact_captions_fit_on_one_line_when_they_can(qtbot: QtBot) -> None:
-    pair = Overview(playlists=(KONACHAN,), monitors=(AW, PLX))
-    view = compact_view(qtbot, pair, narrowest_one_line(qtbot, pair))
-    assert compact_caption(PLX, "konachan") == "PLX2783H · konachan"
-    assert captions(view) == {
-        "aw": ("AW3225QF · konachan",),
-        "plx": ("PLX2783H · konachan",),
-    }
-    assert_captions_overlap_no_monitor(view)
-    view.grab()
-
-
-def test_compact_captions_take_two_lines_when_one_is_too_wide(
-    qtbot: QtBot,
-) -> None:
-    pair = Overview(playlists=(KONACHAN,), monitors=(AW, PLX))
-    width = narrowest_one_line(qtbot, pair)
-    wide = compact_view(qtbot, pair, width)
-    one_line = wide.caption_area(wide.placed()[0]).height
-    view = compact_view(qtbot, pair, width - 10)  # the PLX2783H just too narrow
-    lines = captions(view)
-    # The playlist stays (that is what this drawing is for), on its own line.
-    assert lines["plx"] == ("PLX2783H", "konachan")
-    assert lines["aw"] == ("AW3225QF · konachan",)  # twice as wide: one line
-    # Room for two lines under every monitor, and no overlap.
-    assert view.caption_area(view.placed()[0]).height > one_line
-    assert_captions_overlap_no_monitor(view)
-    view.grab()
-
-
-def test_compact_captions_elide_each_line_and_stay_off_other_monitors(
-    qtbot: QtBot,
-) -> None:
-    long_name = KONACHAN.model_copy(update={"name": "a-rather-long-playlist-name"})
-    top = DesktopMonitor(
-        id=MonitorId("t"),
-        name="TopMonitor",
-        geometry=Geometry(x=0, y=-1080, width=1920, height=1080),
-    )
-    bottom = DesktopMonitor(
-        id=MonitorId("b"),
-        name="Bottom",
-        geometry=Geometry(x=0, y=0, width=1920, height=1080),
-    )
-    members = (
-        MonitorView(id=MonitorId("t"), name="TopMonitor", attached=True),
-        MonitorView(id=MonitorId("b"), name="Bottom", attached=True),
-    )
-    stacked = Overview(
-        playlists=(long_name.model_copy(update={"monitors": members}),),
-        monitors=(top, bottom),
-    )
-    view = compact_view(qtbot, stacked, 600)
-    lines = captions(view)
-    name, playlist = lines["t"]  # two lines: each elided, none dropped
-    assert name == "TopMonitor" or (name.startswith("Top") and name.endswith("…"))
-    assert playlist.startswith("a-") and playlist.endswith("…")
-    assert_captions_overlap_no_monitor(view)  # inside the top one: a monitor below
-    view.grab()
+    view.resize(900, 300)
+    view.show_overview(OVERVIEW)
+    view.set_selected(MonitorId("aw"))
+    assert view.selected() == MonitorId("aw")
+    view.grab()  # paints without error
+    view.set_selected(None)
+    assert view.selected() is None
 
 
 def test_monitors_view_draws_every_monitor(qtbot: QtBot) -> None:
@@ -312,7 +242,7 @@ def test_formats() -> None:
     assert format_size(12_300) == "12 KB"
     assert format_size(4_200_000) == "4.2 MB"
     assert format_size(1_100_000_000) == "1.1 GB"
-    # As the config writes durations; seconds only under 10 minutes.
+    # As the settings write durations; seconds only under 10 minutes.
     assert format_duration(30) == "30s"
     assert format_duration(350) == "5m50s"
     assert format_duration(300) == "5m"
@@ -604,9 +534,9 @@ def test_no_playlists_offers_settings(page: HomePage, client: FakeClient) -> Non
     assert page.empty.isHidden()
 
 
-def test_config_error_and_unreachable_app(page: HomePage, client: FakeClient) -> None:
-    client.publish(Overview(error="No config file"))
-    assert page.banner.text() == "Error: No config file"
+def test_service_error_and_unreachable_app(page: HomePage, client: FakeClient) -> None:
+    client.publish(Overview(error="favourites.txt is not UTF-8 text"))
+    assert page.banner.text() == "Error: favourites.txt is not UTF-8 text"
     assert not page.rows and page.empty.isHidden()
     assert not client.calls  # no status while the service is down
     client.failed.emit("could not start wallpaper_py")
@@ -622,7 +552,7 @@ def test_a_reply_after_closing_is_ignored(page: HomePage, client: FakeClient) ->
     client.publish(OVERVIEW)  # nor from a late overview
 
 
-def test_rows_follow_the_config_order_with_dividers_between(
+def test_rows_follow_the_settings_order_with_dividers_between(
     page: HomePage, client: FakeClient
 ) -> None:
     third = KONACHAN.model_copy(update={"name": "third"})
@@ -631,7 +561,7 @@ def test_rows_follow_the_config_order_with_dividers_between(
     )
     assert list(page.rows) == ["third", "konachan", "fantasy"]
     assert [r.divider() for r in page.rows.values()] == [False, True, True]
-    # A playlist gone from the config: its row goes too.
+    # A playlist gone from the settings: its row goes too.
     client.publish(OVERVIEW)
     assert list(page.rows) == ["konachan", "fantasy"]
     assert [r.divider() for r in page.rows.values()] == [False, True]

@@ -1,6 +1,6 @@
 """
 Shared test setup: Qt runs offscreen (CI has no desktop, and tests never
-show a tray icon), and every test gets its own data / config / cache / log
+show a tray icon), and every test gets its own data / cache / log
 directories, so no test can reach a real running app or real state.
 """
 
@@ -28,6 +28,5 @@ def qt_application(qapp: QApplication) -> QApplication:
 def isolated_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     home = tmp_path / "user"
     monkeypatch.setattr(paths, "data_dir", lambda: home / "data")
-    monkeypatch.setattr(paths, "config_dir", lambda: home / "config")
     monkeypatch.setattr(paths, "cache_dir", lambda: home / "cache")
     monkeypatch.setattr(paths, "log_file", lambda: home / "logs" / "wallpaper.log")

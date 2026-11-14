@@ -19,8 +19,6 @@ actions.
     Open wallpaper_py         (the window on Home, in the UI process,
     Library                    started if needed; on Library)
     Settings…                 (on Settings)
-    Reload config             (the `reload` command; errors and warnings notify)
-    Open config folder
     [ ] Start at login
     Quit
 
@@ -56,7 +54,6 @@ from ..protocol import (
     MonitorView,
     Overview,
     PlaylistView,
-    ReloadResult,
     Reply,
     Request,
 )
@@ -78,8 +75,6 @@ class MenuActions(Protocol):
     def run(self, request: Request) -> None: ...
     def open_image(self, image: Path) -> None: ...
     def open_window(self, page: PageName) -> None: ...
-    def reload(self) -> None: ...
-    def open_config_folder(self) -> None: ...
     def set_autostart(self, enabled: bool) -> None: ...
     def quit(self) -> None: ...
 
@@ -87,8 +82,6 @@ class MenuActions(Protocol):
 class AppItem(Enum):
     """Menu items about the app rather than a playlist."""
 
-    RELOAD = "reload"
-    CONFIG_FOLDER = "config folder"
     AUTOSTART = "autostart"
     QUIT = "quit"
 
@@ -109,10 +102,6 @@ def activate(action: QAction, actions: MenuActions) -> None:
             actions.open_image(item)
         case "home" | "library" | "settings":
             actions.open_window(item)
-        case AppItem.RELOAD:
-            actions.reload()
-        case AppItem.CONFIG_FOLDER:
-            actions.open_config_folder()
         case AppItem.AUTOSTART:
             actions.set_autostart(action.isChecked())  # already toggled
         case AppItem.QUIT:
@@ -149,8 +138,6 @@ def fill_menu(menu: QMenu, overview: Overview | None, autostart: bool) -> QActio
     _add(menu, f"Open {APP_TITLE}", "home")
     _add(menu, "Library", "library")
     _add(menu, "Settings…", "settings")
-    _add(menu, "Reload config", AppItem.RELOAD)
-    _add(menu, "Open config folder", AppItem.CONFIG_FOLDER)
     start_at_login = _add(menu, "Start at login", AppItem.AUTOSTART)
     start_at_login.setCheckable(True)
     start_at_login.setChecked(autostart)
@@ -250,7 +237,6 @@ class Tray(QObject):
         host: ServiceHost,
         autostart: Autostart,
         autostart_command: Sequence[str],
-        config_folder: Path,
         quit_app: Callable[[], None],
         *,
         open_window: Callable[[PageName], None],
@@ -260,12 +246,10 @@ class Tray(QObject):
         self._open_window = open_window
         self._autostart = autostart
         self._autostart_command = list(autostart_command)
-        self._config_folder = config_folder
         self._quit_app = quit_app
         self._icons: dict[IconState, QIcon] = {}
         self._overview: Overview | None = None
         self._error_shown: str | None = None
-        self._reloading = False  # the reload's reply tells what happened
         self._stale = False
         self._started = False  # a first overview without an error came
         self._message_opens: PageName | None = None  # clicking the notification
@@ -294,11 +278,7 @@ class Tray(QObject):
     def show_overview(self, overview: Overview) -> None:
         self._overview = overview
         self._update_icon()
-        if (
-            overview.error
-            and overview.error != self._error_shown
-            and not self._reloading
-        ):
+        if overview.error and overview.error != self._error_shown:
             self.notify(overview.error)
         self._error_shown = overview.error
         if not self._started and not overview.error:
@@ -323,14 +303,6 @@ class Tray(QObject):
 
     def open_window(self, page: PageName) -> None:
         self._open_window(page)
-
-    def reload(self) -> None:
-        self._reloading = True
-        self._host.reload(self._reloaded)
-
-    def open_config_folder(self) -> None:
-        self._config_folder.mkdir(parents=True, exist_ok=True)
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._config_folder)))
 
     def autostart_enabled(self) -> bool:
         try:
@@ -385,14 +357,6 @@ class Tray(QObject):
     def _replied(self, reply: Reply) -> None:
         if isinstance(reply, ErrorReply):
             self.notify(reply.error.message)
-
-    def _reloaded(self, reply: Reply) -> None:
-        """Reload config: the error (even if it is the old one), or warnings."""
-        self._reloading = False
-        if isinstance(reply, ErrorReply):
-            self.notify(reply.error.message)
-        elif isinstance(reply, ReloadResult) and reply.warnings:
-            self.notify("\n".join(reply.warnings))
 
     @Slot(str)
     def notify(self, message: str) -> None:

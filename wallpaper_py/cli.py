@@ -7,11 +7,7 @@ overlap its ticks. If it isn't, they run here, holding the app's lock (an
 app starting meanwhile waits for it), and nothing is left running after:
 only the app rotates. Replies are data (protocol.py); the text printed here
 is made here. `run` and `tray` start the app, `ui` the windows (see
-wallpaper_py.app).
-
-Which config: `run` / `tray` (and a command run here) use --config, else
-the default file. A command sends --config only if it was given: without
-it, it means whatever config the running app uses.
+wallpaper_py.app). The settings are edited in the window (`ui settings`).
 """
 
 from __future__ import annotations
@@ -49,10 +45,6 @@ from .protocol import (
     PickResult,
     PlaylistDetails,
     PrevResult,
-    PruneRequest,
-    PruneResult,
-    ReloadRequest,
-    ReloadResult,
     RemoveResult,
     Reply,
     Request,
@@ -68,9 +60,9 @@ PAGES = ("home", "library", "settings")
 
 BackendFactory = Callable[[], Backend]
 PresenceFactory = Callable[[], Presence]
-# Runs a request in this process, on this config file: no app is running,
-# and this process holds its lock.
-RunHere = Callable[[CommandRequest, Path], Reply]
+# Runs a request in this process: no app is running, and this process holds
+# its lock.
+RunHere = Callable[[CommandRequest], Reply]
 
 
 class Answer(NamedTuple):
@@ -78,9 +70,8 @@ class Answer(NamedTuple):
     here: bool = False  # run in this process: no app was running
 
 
-# Runs a request in the running app, else with `RunHere`. The config: the
-# one the user named, or None (whatever the app runs).
-AppClient = Callable[[CommandRequest, Path | None, RunHere], Answer]
+# Runs a request in the running app, else with `RunHere`.
+AppClient = Callable[[CommandRequest, RunHere], Answer]
 
 log = logging.getLogger(__name__)
 
@@ -91,21 +82,18 @@ NOT_RUNNING = (
 )
 
 
-def send_to_app(
-    request: CommandRequest, config_path: Path | None, run_here: RunHere
-) -> Answer:
+def send_to_app(request: CommandRequest, run_here: RunHere) -> Answer:
     """
     Run `request` in the running app; if none is running, take its lock and
-    run it here (on `config_path`, else the default config). The lock held
-    but nobody answering: an app is starting, or another command runs here;
-    wait for either. `config_path` None: the app may run any config.
+    run it here. The lock held but nobody answering: an app is starting, or
+    another command runs here; wait for either.
     """
     # pylint: disable=import-outside-toplevel
     from .app import ipc  # Qt is imported only for playlist commands
     from .app.instance import InstanceLock
 
     name = ipc.server_name(paths.data_dir())
-    envelope = Envelope(request=request, config=config_path)
+    envelope = Envelope(request=request)
     lock = InstanceLock(paths.instance_lock())
     log.info("Asking the running app (socket %s)", name)
     deadline = time.monotonic() + WAIT_TIMEOUT_S
@@ -118,8 +106,7 @@ def send_to_app(
         if lock.acquire():
             try:
                 log.info("No app is running: running the command here")
-                config = config_path or paths.config_file()
-                return Answer(run_here(request, config), here=True)
+                return Answer(run_here(request), here=True)
             finally:
                 lock.release()
         if time.monotonic() > deadline:
@@ -137,14 +124,8 @@ def send_to_app(
 class Context:
     backend_factory: BackendFactory
     presence_factory: PresenceFactory
-    config: Path | None  # --config, if given
     app_client: AppClient
     _backend: Backend | None = field(default=None, init=False)
-
-    @property
-    def config_path(self) -> Path:
-        """The config to start the app on: --config, else the default."""
-        return self.config or paths.config_file()
 
     @property
     def backend(self) -> Backend:
@@ -153,14 +134,10 @@ class Context:
             self._backend = self.backend_factory()
         return self._backend
 
-    def run_here(self, request: CommandRequest, config_path: Path) -> Reply:
+    def run_here(self, request: CommandRequest) -> Reply:
         """`request` in this process, as the app runs it (but no tick first)."""
         try:
-            with open_service(
-                config_path, self.backend, self.presence_factory()
-            ) as service:
-                if isinstance(request, ReloadRequest):  # nothing to restart
-                    return ReloadResult(warnings=tuple(service.settings.warnings()))
+            with open_service(self.backend, self.presence_factory()) as service:
                 return execute(service, request).reply
         except AppError as err:
             return error_reply(err)
@@ -213,19 +190,15 @@ class Text(NamedTuple):
 
 
 def cmd_playlist(ctx: Context, args: argparse.Namespace) -> int:
-    """status, pick, prune, reload and the TARGET_COMMANDS: in the app, or here."""
+    """status, pick and the TARGET_COMMANDS: in the app, or here."""
     target: str | None = getattr(args, "target", None)
     request: CommandRequest
     if args.command == "pick":
         request = PickRequest(target=target, image=args.image)
-    elif args.command == "prune":
-        request = PruneRequest()
-    elif args.command == "reload":
-        request = ReloadRequest()
     else:
         command: Command = args.command  # a subparser name from Command
         request = Request(command=command, target=target)
-    answer = ctx.app_client(request, ctx.config, ctx.run_here)
+    answer = ctx.app_client(request, ctx.run_here)
     log.info("Reply: %s", answer.reply.model_dump_json())
     text = format_answer(answer)
     if text.out:
@@ -236,7 +209,7 @@ def cmd_playlist(ctx: Context, args: argparse.Namespace) -> int:
 
 
 def format_answer(answer: Answer) -> Text:
-    """The reply's text; run here, `status` and `reload` say so."""
+    """The reply's text; run here, `status` says so."""
     text = format_reply(answer.reply)
     if not answer.here:
         return text
@@ -245,11 +218,6 @@ def format_answer(answer: Answer) -> Text:
             playlists, paused = answer.reply.playlists, answer.reply.paused
             out = format_status(playlists, paused, running=False)
             return text._replace(out=out)
-        case ReloadResult():
-            return text._replace(
-                out="Config is valid (wallpaper_py isn't running; "
-                "it reads the file when it starts)"
-            )
     return text
 
 
@@ -285,11 +253,6 @@ def format_reply(reply: Reply) -> Text:
             return Text(0, "\n".join(lines))
         case HoldResult() | ResumeResult():
             return Text(0, _hold_text(reply))
-        case ReloadResult():
-            warnings = "\n".join(f"Warning: {w}" for w in reply.warnings)
-            return Text(0, "Config reloaded", warnings)
-        case PruneResult():
-            return Text(0, _prune_text(reply.dropped))
         case SettingsResult() | SaveSettingsResult():  # for the window; as data
             return Text(0, reply.model_dump_json(indent=2))
     raise AssertionError(f"Unhandled reply {reply!r}")
@@ -322,15 +285,6 @@ def format_status(
     else:
         lines.append("Rotation active")
     return "\n".join(lines)
-
-
-def _prune_text(dropped: Sequence[str]) -> str:
-    if not dropped:
-        return "Nothing to drop: every playlist with state is in the settings"
-    return (
-        "Dropped the state (history, shuffle deck, hold) of playlist ids "
-        f"no longer in the settings: {', '.join(dropped)}"
-    )
 
 
 def _hold_text(reply: HoldResult | ResumeResult) -> str:
@@ -373,7 +327,6 @@ def cmd_app(ctx: Context, args: argparse.Namespace) -> int:
     tray = args.command == "tray"
     setup_logging(paths.log_file() if tray else None)
     options = AppOptions(
-        ctx.config_path,
         tray=tray,
         tick_period=args.poll,
         quit_after_ticks=args.ticks,
@@ -383,13 +336,14 @@ def cmd_app(ctx: Context, args: argparse.Namespace) -> int:
 
 def cmd_ui(ctx: Context, args: argparse.Namespace) -> int:
     """`ui [home|library|settings]`: the window, in its own process."""
+    del ctx  # the window talks to the app, which has the backend
     # pylint: disable=import-outside-toplevel
     from .app.processes import setup_logging
     from .app.ui.process import UiOptions, run_ui
 
     setup_logging(paths.ui_log_file())
     try:
-        return run_ui(UiOptions(ctx.config, args.page))
+        return run_ui(UiOptions(args.page))
     except AppError as err:  # started by the tray, nobody sees stderr
         logging.getLogger(__name__).error("%s", err)
         raise
@@ -428,16 +382,6 @@ def positive_seconds(value: str) -> float:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="wallpaper", description="Per-monitor wallpaper management"
-    )
-    parser.add_argument(
-        "-c",
-        "--config",
-        type=absolute_path,
-        default=None,
-        help=(
-            f"playlist config file (default: {paths.config_file()}); for "
-            f"commands to the running app, only needed to insist on one"
-        ),
     )
     parser.add_argument(
         "--verbose",
@@ -501,14 +445,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     status_parser = sub.add_parser("status", help="show playlists and their state")
     status_parser.set_defaults(handler=cmd_playlist)
-    sub.add_parser(
-        "reload", help="read the config file again (after editing it)"
-    ).set_defaults(handler=cmd_playlist)
-    sub.add_parser(
-        "prune",
-        help="drop the state (history, shuffle deck, hold) of playlists no "
-        "longer in the config",
-    ).set_defaults(handler=cmd_playlist)
 
     target_help = "playlist name, or a monitor it drives; optional with one playlist"
     helps = {
@@ -543,13 +479,6 @@ def main(
     parser = build_parser()
     args = parser.parse_args(argv)
     handler: Callable[[Context, argparse.Namespace], int] = args.handler
-    if args.config is not None and not args.config.is_file():
-        # A command given a missing file: a typo, which would otherwise run
-        # an empty config and keep state for it. The app and the windows
-        # start on it anyway: autostart may name a file that is briefly
-        # gone, and with no console nobody would see why nothing started.
-        if handler not in (cmd_app, cmd_ui):
-            parser.error(f"no config file at {args.config}")
     if args.verbose and handler not in (cmd_app, cmd_ui):  # those set up their own
         # pylint: disable=import-outside-toplevel
         from .app.processes import setup_logging
@@ -558,7 +487,6 @@ def main(
     ctx = Context(
         backend_factory=backend_factory,
         presence_factory=presence_factory,
-        config=args.config,
         app_client=app_client,
     )
     try:

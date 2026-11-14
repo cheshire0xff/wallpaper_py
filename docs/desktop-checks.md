@@ -19,11 +19,11 @@ Status: **ok** (with the date, when known) all steps seen working;
 | [3. Pause on lock and idle](#3-pause-on-lock-and-idle) | ok | todo | todo |
 | [4. Monitor switched off](#4-monitor-switched-off) | ok 2026-11-11 for a mirrored group (from the log); a single-monitor playlist not yet | todo | todo |
 | [5. CLI and the app](#5-cli-and-the-app) | ok 2026-11-12 (steps 1 and 3 after the CLI started running commands itself) | todo | todo |
-| [6. Tray](#6-tray) | ok, except step 2 and a broken config (step 3) | todo | todo |
+| [6. Tray](#6-tray) | ok, except step 2 | todo | todo |
 | [7. Start at login](#7-start-at-login) | todo | todo | todo |
 | [8.1 The window: opening, pages, closing](#81-opening-pages-and-closing) | steps 2, 3, 4, 9, 10 ok 2026-11-12 (step 9 before the silver light-mode panel); 1, 5-8 todo | todo | todo |
 | [8.2 The window: Home](#82-home) | step 1 ok 2026-11-12; 2-7 todo as rows (as the layout window: ok 2026-11-11, except *Remove* and steps 4, 5, 6) | todo | todo |
-| [8.3 The window: Settings](#83-settings) | steps 1, 2, 4, 7 ok 2026-11-12 (step 1 also on a copy of the real config); 3, 5, 6, 8-11 todo | todo | todo |
+| [8.3 The window: Settings](#83-settings) | todo (the monitor-first page) | todo | todo |
 | [9. Pick, hold and manual](#9-pick-hold-and-manual) | ok 2026-11-11, except waiting past an interval (steps 3, 6) | todo | todo |
 | [10. Looks: always rendered](#10-looks-always-rendered) | todo | todo | todo |
 | [11. Settings in the database](#11-settings-in-the-database) | todo | todo | todo |
@@ -38,7 +38,7 @@ Status: **ok** (with the date, when known) all steps seen working;
 
 ## 2. Playlists
 
-With the real config (a mirrored group and a single monitor):
+With the real settings (a mirrored group and a single monitor):
 
 1. The first run creates the data directory with the state database.
 2. Each playlist changes after its interval; a mirrored group shows the
@@ -85,18 +85,14 @@ monitor.
 1. With no app running, `wallpaper --verbose next` says it ran the command
    here; the wallpaper changes, no tray icon appears and no `pythonw` is
    left in Task Manager. `wallpaper status` ends with *wallpaper_py isn't
-   running, so nothing rotates*, and `wallpaper reload` says the config is
-   valid.
+   running, so nothing rotates*.
 2. With the app running (`wallpaper tray`): `--verbose` says the running app
    answered, and `status` ends with *Rotation active*.
 3. `wallpaper tray` while one runs exits without starting a second (after
    about 5 s: it waits in case a CLI command holds the lock).
-4. **Deleting a playlist deletes its history.** Comment out a playlist
-   in config.toml and *Reload config*, then put it back and reload: it
+4. **Deleting a playlist deletes its history.** Delete a playlist in
+   Settings and Save, then add one with the same name and folder: it
    starts afresh (its first image again, *Previous* has nothing).
-   `wallpaper prune`, with the app running and without, has nothing to
-   drop. With config.toml renamed away, a restart keeps every playlist
-   (the settings are in the state database).
 
 ## 6. Tray
 
@@ -107,9 +103,9 @@ monitor.
 3. The menu shows each playlist with its monitors and current image;
    *Next*, *Previous*, *Favourite*, *Remove* work from it.
 4. Clicking the image name opens it.
-5. *Reload config* after an edit applies it; a broken config shows the red
-   badge and a notification, and fixing it clears both.
-6. *Open config folder* opens it. *Quit* stops the app.
+5. A list file the app can't read (see 8.3, step 17) shows the red
+   badge and a notification; fixing the file clears both within a tick.
+6. *Quit* stops the app.
 
 ## 7. Start at login
 
@@ -125,8 +121,8 @@ own. What the tests can't see: the real desktop, real images, the
 system's theme, the real tray and focus. The logic is tested with fakes
 (`tests/test_window.py`: pages, the sidebar, closing with unsaved
 settings, the tones; `test_home.py`, `test_settings.py`,
-`test_ui_process.py`, `test_thumbnails.py`, `test_theme.py`,
-`test_config_edit.py`). Compare the look with the mockups in
+`test_settings_draft.py`, `test_ui_process.py`, `test_thumbnails.py`,
+`test_theme.py`). Compare the look with the mockups in
 [design/](design/README.md) (dark mode; light mode only has to be usable).
 
 ### 8.1 Opening, pages and closing
@@ -198,95 +194,104 @@ settings, the tones; `test_home.py`, `test_settings.py`,
 
 ### 8.3 Settings
 
-The Settings page (`wallpaper ui settings`, tray *Settings…*). Back up
-config.toml first (copy it next to itself).
+The Settings page, monitor-first (`wallpaper ui settings`, tray
+*Settings…*; compare with design/settings-monitors.dc.html). The settings
+are in the state database: back up `state.sqlite3` (in the data folder,
+with the app quit) if you want to go back to them.
 
-1. **Round trip keeps your comments.** Open Settings, change nothing,
-   close the window: config.toml is byte for byte the same (compare with
-   the backup, e.g. `fc /b config.toml config.backup.toml`). Then change
-   one interval and Save: a diff against the backup shows that one line
-   changed, its comment still in the same column; every other comment and
-   blank line as it was. Revert it the same way (or by hand).
-2. **Assigning a monitor to another playlist.** Click the PLX2783H in the
-   drawing and choose *fantasy*: the caption under it and both playlists'
-   *Monitors* lines (and fantasy's summary row) change; Save. The tray's
-   sections and Home show the PLX2783H under fantasy within a few seconds,
-   and it gets fantasy's current image; the AW3225QF keeps konachan's. The
-   file's `monitors` lines are the only ones changed. Move it back.
-3. **A conflicting hand edit is detected.** With an unsaved change in the
-   page, edit config.toml in an editor (add a comment) and save it there.
-   Then Save in the page: it says the file changed on disk and writes
-   nothing (your comment is still there); *Load the file again* shows the
-   file as it is now.
-4. **Unsaved changes stay and are asked about.** Change an interval, go to
+1. **Opening.** The drawing shows only the attached monitors, the
+   left-most one outlined (selected) a little apart from it; under each
+   its name, then resolution · playlist. The *Monitor* list has the drawn
+   ones left to right, then switched-off ones ("ZeroMOD · switched off")
+   and monitors the settings have but Windows doesn't list ("DELA1B2 ·
+   not connected"). Its rows below say the selected monitor's playlist
+   and mode; the footer says "No unsaved changes."
+2. **Selecting.** Click the AW3225QF: it is outlined instead, and the
+   *Playlist* row says "Mirrors PLX2783H: the same image, changed
+   together". Choose ZeroMOD in the *Monitor* list (keyboard too): a row
+   says it is switched off, with *Forget monitor*. Looking around changes
+   nothing (no "*" in the title).
+3. **Another playlist for a monitor.** Select the PLX2783H and choose
+   *fantasy*: its caption, both playlists' *Shown on* (and closed summary
+   rows) change, and the footer says "Changes: PLX2783H shows fantasy. Not
+   saved yet." Save: the footer says "Saving…", then "No unsaved
+   changes."; by then the PLX2783H already shows fantasy's current image,
+   the AW3225QF keeps konachan's, and the tray and Home follow. Move it
+   back.
+4. **A monitor's mode.** Select a monitor, *Mode* Fit (the description
+   follows the choice), Save: it shows its current image letterboxed at
+   once (the log says "restored"); the other monitors of its playlist keep
+   their own mode.
+5. **A new playlist from a monitor.** Select a monitor, *Playlist* > *New
+   playlist…*: a playlist "New playlist" opens below with its name
+   selected, on that monitor; Save is off ("Can't save yet. New playlist,
+   folder: Choose a folder"). *Browse…* a folder, Save: the monitor starts
+   rotating it. *+ Add playlist* adds one on no monitor ("No monitor: it
+   doesn't rotate and keeps its history").
+6. **Deleting a playlist.** Open it (click its header row: the chevron
+   turns up; click again to close it), *Delete playlist*: its monitors show
+   *None*, and the footer says "delete <name> and its history". Revert
+   brings it back; Save deletes it, and a new playlist with the same name
+   later starts afresh.
+7. **Forget a monitor.** For a monitor shown as not connected, *Forget
+   monitor* and Save: it is gone from the list. A switched-off one keeps
+   being listed (Windows still knows it), with no playlist after Forget.
+8. **Unsaved changes stay and are asked about.** Change an interval, go to
    Home and Library and back: the change is still there (the title shows
    "*"). Close the window from Home: it switches to Settings and asks Save
-   / Discard / Cancel: *Cancel* keeps the window open on Settings with the
-   change; *Discard* closes without writing; *Save* writes, then closes,
-   and the app reloads it (the tray shows the new interval; no
-   `wallpaper reload` needed). With nothing changed, it closes without
-   asking.
-5. Validation shows next to the field, not as a dialog, and *Save* says why
-   it is off (hover it, or the line beside it): an interval like `30`, a
-   folder that doesn't exist, a name with a space, a playlist with no
-   monitor. A closed playlist with a problem shows an alert in its summary
-   row. With valid changes, the line says what changed ("Changes: interval
-   of konachan. Not saved yet.").
-6. **Rows and one open playlist.** Settings as rows without boxes: name
-   and a one-line description on the left, the control on the right, all
-   controls in one column; fields filled, without a border. One playlist
-   is open; the others are a summary row ("ZeroMOD · sorted · manually ·
-   fill") that opens on click (and the open one closes). *+ Add playlist*
-   and *New playlist…* (from a monitor's menu) open the new one. *Browse…*,
-   *Delete playlist*, *Choose…* (the monitors menu) are accent text.
-7. **Changes.** Set a playlist to *Manually*: the duration field goes; Save:
-   the file says `interval = "manual"` and the tray shows *(manual)*. Back
-   to *Every*: the duration shows again.
-8. Switch the ZeroMOD off (OLED refresh) with the page open: it is drawn
-   dimmed and stays in fantasy. If Windows stops listing it, fantasy's
-   *Monitors* line says "ZeroMOD (not connected)" and saving other changes
-   keeps it in the file.
-9. *About*: the version shows the git commit; each *Open folder* opens
-   Explorer at the right place (the nearest existing folder for ones not
-   created yet, e.g. the thumbnail cache); *Copy path* puts the path on the
-   clipboard.
-10. `wallpaper reload` after a hand edit: "Config reloaded" (plus any
-    warnings); with a broken file, the error, and the tray's *Reload
-    config* notifies the same error once.
-11. With the app started on a custom config (`wallpaper -c other.toml
-    tray`), plain `wallpaper next` and `wallpaper ui settings` (no `-c`)
-    reach it, and the page edits other.toml.
+   / Discard / Cancel: *Cancel* keeps the window open with the change;
+   *Discard* closes without saving; *Save* saves, then closes once the app
+   answered (the tray shows the new interval). With nothing changed, it
+   closes without asking.
+9. Validation shows next to the field, not as a dialog, and *Save* says
+   why it is off (hover it, or the line beside it): an interval like `30`
+   or `5s`, a folder that doesn't exist or isn't a full path, a name
+   another playlist has (case-insensitively). A closed playlist with a
+   problem shows an alert in its header row. A saved folder on a drive
+   that is unplugged doesn't block saving something else.
+10. **Rows.** Settings as rows without boxes: name and a one-line
+    description on the left, the control on the right, all controls in one
+    column; fields filled, without a border. Closed playlists read
+    "monitors · order · interval" ("ZeroMOD (switched off) · sorted ·
+    manually"). *Browse…*, *Delete playlist*, *Forget monitor* and *+ Add
+    playlist* are accent text.
+11. **Changes.** Set a playlist to *Manually*: the duration field goes;
+    Save: the tray shows *(manual)*. Back to *Every*: the duration shows
+    again.
 12. **A rename keeps the playlist's state.** Hold konachan, note its
-    current image, rename it to *anime* in Settings and Save: the same
-    image stays on its monitors, it is still held, and *Previous* goes
-    back through the same history. Rename it back by hand in the file and
-    *Reload config*: the same again (the state goes by `id`, not the name).
-13. **First start without a config.** Quit the app, move config.toml
-    and the state database (state.sqlite3 in the data folder) away and
-    start it: no error; a notification says "No playlists yet", and
-    clicking it opens the window on Settings. The tray menu starts with
-    *No playlists yet: add one…* (opens Settings), the tooltip says "No
-    playlists yet", Home shows *Add one in Settings* (switches to
-    Settings), and `wallpaper status` warns "No playlists yet". In
-    Settings, click a monitor, *New playlist…*, choose a folder, Save:
-    the file is created (with the monitor's id and a random playlist id),
-    the monitor starts rotating, and the tray item and Home's button are
-    gone. Restart the app: no notification now. Put both files back
-    afterwards.
+    current image, rename it to *anime* and Save: the same image stays on
+    its monitors, it is still held, and *Previous* goes back through the
+    same history.
+13. **Two monitors of one model** (if you have them): the drawing's
+    captions say "1 of 2 · <playlist>" and "2 of 2 · …", left to right, and
+    the *Monitor* list "PLX2783H · 1920×1080 · 1 of 2".
+14. **A warning.** Set the idle pause (General) longer than a playlist's
+    interval and Save: it saves, and a line above the tabs warns that an
+    image can change unseen.
 15. **A monitor moved to another port** (Windows). Move a monitor's cable
     to another port with the app running: Windows gives it a new id, so
-    its playlist stops changing (the old id shows as off) and every other
-    playlist keeps going. Assign the monitor again in Settings: it rotates
-    again, with the playlist's history.
-16. **Playlist ids.** Delete fantasy in Settings and add a new playlist
-    in the same edit, on the ZeroMOD: Save writes it with a new random
-    `id`, and it starts with an empty history (not fantasy's). By hand,
-    delete the new playlist's `id` line and *Reload config*: the error
-    gives a line to add. Restore the config afterwards.
-14. **Only UTF-8 without BOM.** Save favourites.txt as "UTF-16 LE" (or
+    its playlist stops changing on it (the old id is listed as not
+    connected) and every other playlist keeps going. Choose the playlist
+    for the monitor again: it rotates again, with the playlist's history;
+    forget the old entry.
+16. **First start without settings.** Quit the app, move `state.sqlite3`
+    away and start it: no error; a notification says "No playlists yet",
+    and clicking it opens the window on Settings. The tray menu starts
+    with *No playlists yet: add one…*, Home shows *Add one in Settings*,
+    and `wallpaper status` warns "No playlists yet". In Settings select a
+    monitor, *New playlist…*, choose a folder, Save: the monitor starts
+    rotating, and the tray item and Home's button are gone. Quit and put
+    the old database back.
+17. **Only UTF-8 without BOM.** Save favourites.txt as "UTF-16 LE" (or
     "UTF-8 with BOM") in Notepad: within a tick the tray shows the error
-    naming the file, and the file is left as it is. Save it as UTF-8 and
-    *Reload config*: running again, the favourites as before.
+    naming the file, the window's sidebar says "Error", and the file is
+    left as it is. Save it as UTF-8 again: within a tick the app runs
+    again, the favourites as before (no restart needed).
+18. *About*: the version shows the git commit; the first location is
+    "Settings and state" (state.sqlite3); each *Open folder* opens
+    Explorer at the right place (the nearest existing folder for ones not
+    created yet, e.g. the thumbnail cache); *Copy path* puts the path on
+    the clipboard.
 
 ## 9. Pick, hold and manual
 
@@ -313,7 +318,7 @@ on the right monitors, the real tray menu, and a real quit and restart.
    is still held, and its monitors get its current image back.
 5. Untick *Hold* (or `wallpaper resume`): it changes again once the rest of
    its interval has passed.
-6. Set a playlist to `interval = "manual"` and *Reload config*: the header
+6. Set a playlist to *Manually* in Settings and Save: the header
    says *(manual)*, there is no *Hold* item, and it never changes by itself
    (leave it well past its old interval, also across an app restart).
    `wallpaper hold <it>` says why it can't be held; `next` and `pick` work.
@@ -325,10 +330,9 @@ on the right monitors, the real tray menu, and a real quit and restart.
 2. **Position kept at Fill (Windows).** Settings > Personalisation >
    Background > *Choose a fit* > Tile, then `wallpaper next`: the position
    is Fill again and every monitor shows its image as its mode says.
-3. **A changed mode shows at once.** In Settings, change a playlist from
-   Fill to Fit and Save: its monitors show the current image letterboxed
-   right away, without waiting for the next image (the log says
-   "restored").
+3. **A changed mode shows at once.** In Settings, change a monitor from
+   Fill to Fit and Save: it shows the current image letterboxed right
+   away, without waiting for the next image (the log says "restored").
 4. **A resolution change.** Change a monitor's resolution in Display
    settings: within a few seconds its image is rendered again for the new
    size (log: "changed resolution: rendering again"), with no stretching
@@ -336,20 +340,23 @@ on the right monitors, the real tray menu, and a real quit and restart.
 
 ## 11. Settings in the database
 
-Phase 4b step 3a: the settings live in the state database; the old
-Settings page still writes config.toml, which the app imports when it
-starts and on *Reload config*.
+Phase 4b step 3: the settings live only in the state database; there is
+no config file, no *Reload config* and no `--config`.
 
-1. **The first start after the update.** The app refuses the old state
-   database (the tray, or `wallpaper status`, says to delete it, naming
-   the file). Quit, delete it, start again: every playlist rotates as
-   before, from config.toml (the histories start afresh, once).
-2. `wallpaper status` lists each monitor with its mode, e.g.
-   *AW3225QF (attached, fill)*; the playlist line no longer has one.
-3. **Mirrored monitors keep their own look.** On a playlist with two
+1. **The first start after the update.** Quit the app and start it again
+   (the protocol changed: an app from before the update answers new
+   commands with "restart it after updating"). Every playlist rotates as
+   before, from the settings stored by step 3a; config.toml is no longer
+   read: rename it away and restart, nothing changes. Then delete it.
+2. The tray menu has no *Reload config* or *Open config folder*;
+   `wallpaper reload`, `wallpaper prune` and `wallpaper -c x status` are
+   refused as unknown.
+3. `wallpaper status` lists each monitor with its mode, e.g.
+   *AW3225QF (attached, fill)*.
+4. **Mirrored monitors keep their own look.** On a playlist with two
    monitors (e.g. konachan), both still change together, each rendered for
-   its own size.
-4. **A new folder shows at once.** Hold a playlist (or make it manual),
+   its own size and mode.
+5. **A new folder shows at once.** Hold a playlist (or make it manual),
    then point it at another folder in Settings and Save: its monitors show
-   an image from the new folder within a moment, and it stays held.
-   *Previous* goes back to the image from the old folder.
+   an image from the new folder before the page says it is saved, and it
+   stays held. *Previous* goes back to the image from the old folder.

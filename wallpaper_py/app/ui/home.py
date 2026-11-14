@@ -78,7 +78,7 @@ def format_size(size: int) -> str:
 
 def format_duration(seconds: float) -> str:
     """
-    As the config writes durations: 45s, 5m50s (under 10 minutes), 21m,
+    As the settings write durations: 45s, 5m50s (under 10 minutes), 21m,
     1h, 1h5m, 2d, 2d3h.
     """
     whole = max(round(seconds), 0)
@@ -646,7 +646,7 @@ class HomePage(QWidget):
                 self.rows[view.name] = new
             else:
                 row.show_view(view)
-        # In the overview's (the config's) order.
+        # In the overview's (the settings') order.
         self.rows = {name: self.rows[name] for name in names}
         for index, row in enumerate(self.rows.values()):
             self._rows_box.removeWidget(row)

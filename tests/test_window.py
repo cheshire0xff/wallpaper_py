@@ -8,7 +8,6 @@ again when it changes. Through a fake Client (never a real app).
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-from pathlib import Path
 
 import pytest
 from PySide6.QtGui import QPalette
@@ -18,20 +17,26 @@ from pytestqt.qtbot import QtBot
 from wallpaper_py.app.ui import theme
 from wallpaper_py.app.ui.settings import Choice, SettingsPage
 from wallpaper_py.app.ui.window import MainWindow, status_of
-from wallpaper_py.protocol import Overview
+from wallpaper_py.core.settings import Settings
+from wallpaper_py.protocol import (
+    Overview,
+    SaveSettingsRequest,
+    SaveSettingsResult,
+    SettingsRequest,
+    SettingsResult,
+)
 
 from .fake_client import FakeClient
-from .test_settings import FakeDialogs, editor, reloads
-from .test_settings import fixture_config  # noqa: F401  pylint: disable=unused-import
-from .test_settings import LISTED
+from .test_settings import LISTED, FakeDialogs, answer, editor, requests
+from .test_settings import fixture_saved  # noqa: F401  pylint: disable=unused-import
 from .test_theme import DARK, LIGHT
 from .test_theme import fixture_app_palette  # noqa: F401  pylint: disable=unused-import
 
 
 @pytest.fixture(name="client")
-def fixture_client(config: Path) -> FakeClient:
+def fixture_client() -> FakeClient:
     client = FakeClient()
-    client.publish(Overview(monitors=LISTED, config=config))
+    client.publish(Overview(monitors=LISTED))
     return client
 
 
@@ -42,11 +47,12 @@ def fixture_dialogs() -> FakeDialogs:
 
 @pytest.fixture(name="window")
 def fixture_window(
-    qtbot: QtBot, client: FakeClient, dialogs: FakeDialogs
+    qtbot: QtBot, client: FakeClient, dialogs: FakeDialogs, saved: Settings
 ) -> Iterator[MainWindow]:
     settings = SettingsPage(client, dialogs.dialogs(), version="1")
     window = MainWindow(client, settings=settings)
     qtbot.addWidget(window)
+    answer(client, SettingsRequest, SettingsResult(settings=saved, revision=1))
     yield window
     window.home.shutdown()
 
@@ -126,9 +132,9 @@ def test_the_sidebar_status_follows_the_app(
     client.publish(Overview(paused="idle"))
     assert sidebar.status.text() == "Rotation paused: idle"
     assert dot(window) == "paused"
-    client.publish(Overview(error="No config file"))
-    assert sidebar.status.text() == "Config error"
-    assert sidebar.status.toolTip() == "No config file"
+    client.publish(Overview(error="favourites.txt is not UTF-8 text"))
+    assert sidebar.status.text() == "Error"
+    assert sidebar.status.toolTip() == "favourites.txt is not UTF-8 text"
     assert dot(window) == "error"
     client.failed.emit("could not start wallpaper_py")
     assert sidebar.status.text() == "Not connected"
@@ -140,7 +146,7 @@ def test_status_of() -> None:
     assert status_of(None) == ("Connecting…", "connecting")
     assert status_of(Overview()) == ("Rotation active", "ok")
     assert status_of(Overview(paused="locked")) == ("Rotation paused: locked", "paused")
-    assert status_of(Overview(error="x", paused="idle")) == ("Config error", "error")
+    assert status_of(Overview(error="x", paused="idle")) == ("Error", "error")
 
 
 def test_switching_pages_keeps_unsaved_settings(window: MainWindow) -> None:
@@ -159,28 +165,28 @@ def test_switching_pages_keeps_unsaved_settings(window: MainWindow) -> None:
 # -- closing -----------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("answer", ["cancel", "discard", "save"])
+@pytest.mark.parametrize("choice", ["cancel", "discard", "save"])
 def test_closing_with_unsaved_settings_asks(
     window: MainWindow,
     dialogs: FakeDialogs,
     client: FakeClient,
-    config: Path,
-    answer: Choice,
+    choice: Choice,
 ) -> None:
-    before = config.read_text(encoding="utf-8")
     window.open_page("settings")
     editor(window.settings, "konachan").interval_edit.setText("1h")
     window.show_page("home")  # the question brings Settings back
-    dialogs.unsaved_answer = answer
+    dialogs.unsaved_answer = choice
     closed: list[bool] = []
     window.closed.connect(lambda: closed.append(True))
-    assert window.close() == (answer != "cancel")
+    # Discard closes; Save closes once the app has saved.
+    assert window.close() == (choice == "discard")
     assert dialogs.asked == 1
-    assert closed == ([] if answer == "cancel" else [True])
-    written = config.read_text(encoding="utf-8")
-    assert (written != before) == (answer == "save")
-    assert bool(reloads(client)) == (answer == "save")
-    if answer == "cancel":  # open, on Settings, the edit still there
+    assert bool(requests(client, SaveSettingsRequest)) == (choice == "save")
+    if choice == "save":
+        assert not closed and window.isVisible()
+        answer(client, SaveSettingsRequest, SaveSettingsResult(revision=2))
+    assert closed == ([] if choice == "cancel" else [True])
+    if choice == "cancel":  # open, on Settings, the edit still there
         assert window.isVisible() and window.current_page() == "settings"
         assert editor(window.settings, "konachan").interval_edit.text() == "1h"
 

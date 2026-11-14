@@ -5,11 +5,9 @@ The UI process listens on its own small socket (`UiServer`, next to the
 app's, name from `ipc.server_name(data_dir, "ui")`) for one kind of
 request, "show the window on this page":
 
-    -> {"v": 2, "page": "home", "config": "C:/.../config.toml"}
+    -> {"v": 3, "page": "home"}
     <- {"error": null}
 
-`config` is left out when the user named none: then any config will do.
-Named, it must be the one the windows use (the app's).
 `WindowOpener` asks it from the tray without blocking, and starts
 `wallpaper ui <page>` if nothing answers; `show_in_running_ui` asks it
 from a starting UI process (blocking, before its event loop runs), which
@@ -25,11 +23,11 @@ from pathlib import Path
 from typing import Literal, get_args, override
 
 from pydantic import ValidationError, field_validator
-from PySide6.QtCore import QObject, Signal, Slot
+from PySide6.QtCore import QObject, Signal
 
 from ...backends import allow_foreground
 from ...core.model import WallpaperError
-from ...protocol import PROTOCOL, Message, Overview, Strict, check_protocol
+from ...protocol import PROTOCOL, Message, Strict, check_protocol
 from .. import ipc
 from ..processes import start_detached
 
@@ -43,8 +41,6 @@ SHOW_TIMEOUT_S = 5.0
 class ShowRequest(Strict):
     v: int = PROTOCOL
     page: PageName
-    # The UI process refuses another config than its own; None: any.
-    config: Path | None = None
 
     @field_validator("v")
     @classmethod
@@ -61,25 +57,9 @@ def ui_server_name(data_dir: Path) -> str:
 
 
 class UiServer(ipc.LineServer):
-    """
-    In the UI process: `show_requested(page)` for each valid request.
-    Its config is the one it was started with, if any, else the app's once
-    the first overview says which (`follow`); until then, any is accepted.
-    """
+    """In the UI process: `show_requested(page)` for each valid request."""
 
     show_requested = Signal(str)  # PageName
-
-    def __init__(
-        self, name: str, config_path: Path | None, parent: QObject | None = None
-    ) -> None:
-        super().__init__(name, parent)
-        self._config_path = config_path
-
-    @Slot(object)
-    def follow(self, overview: Overview) -> None:
-        """The app's overview: the windows show (and edit) its config."""
-        if overview.config is not None:
-            self._config_path = overview.config
 
     @override
     def _received(self, connection_id: int, line: bytes) -> None:
@@ -87,17 +67,6 @@ class UiServer(ipc.LineServer):
             request = ShowRequest.model_validate_json(line)
         except ValidationError as err:
             self._answer(connection_id, f"Malformed request: {ipc.brief(err)}")
-            return
-        if (
-            request.config is not None
-            and self._config_path is not None
-            and not ipc.same_file(request.config, self._config_path)
-        ):
-            self._answer(
-                connection_id,
-                f"The open windows use {self._config_path}, not "
-                f"{request.config}; close them to use another config",
-            )
             return
         self.show_requested.emit(request.page)
         self._answer(connection_id, None)
@@ -146,13 +115,11 @@ class WindowOpener(QObject):
     def __init__(
         self,
         name: str,
-        config_path: Path,
         command: Callable[[PageName], Sequence[str]],
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
         self._name = name
-        self._config_path = config_path
         self._command = command
 
     def open(self, page: PageName) -> None:
@@ -172,7 +139,7 @@ class WindowOpener(QObject):
             else:
                 self._report(f"The open windows don't answer: {message}")
 
-        request = ShowRequest(page=page, config=self._config_path)
+        request = ShowRequest(page=page)
         ipc.LineRequest(
             self._name,
             ipc.encode(request),

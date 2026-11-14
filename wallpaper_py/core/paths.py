@@ -2,16 +2,9 @@
 
 from __future__ import annotations
 
-import hashlib
-import os
 from pathlib import Path
 
-from platformdirs import (
-    user_cache_path,
-    user_config_path,
-    user_data_path,
-    user_log_path,
-)
+from platformdirs import user_cache_path, user_data_path, user_log_path
 
 APP_NAME = "wallpaper_py"
 
@@ -20,27 +13,12 @@ def data_dir() -> Path:
     return user_data_path(APP_NAME, appauthor=False)
 
 
-def config_dir() -> Path:
-    return user_config_path(APP_NAME, appauthor=False)
-
-
-def config_file() -> Path:
-    """The human-edited TOML file defining playlists (see core.config)."""
-    return config_dir() / "config.toml"
-
-
-def state_db(config: Path) -> Path:
+def state_db() -> Path:
     """
-    SQLite state: history, shuffle decks, per-playlist and per-monitor
-    state. One per config file: playlist ids (core.config) are only unique
-    within one config, so two configs must not share their state. The
-    default config's is state.sqlite3; another's is named after its path.
+    SQLite: the settings and the state (history, shuffle decks, holds, what
+    each monitor shows). Written only by the app (core.store).
     """
-    resolved = os.path.normcase(config.resolve())
-    if resolved == os.path.normcase(config_file().resolve()):
-        return data_dir() / "state.sqlite3"
-    digest = hashlib.sha256(resolved.encode("utf-8")).hexdigest()[:12]
-    return data_dir() / f"state-{digest}.sqlite3"
+    return data_dir() / "state.sqlite3"
 
 
 def instance_lock() -> Path:

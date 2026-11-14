@@ -18,6 +18,7 @@ from wallpaper_py.app.worker import ServiceHost, ServiceSettings
 from wallpaper_py.core import paths
 from wallpaper_py.core.model import ImageMode, Look
 from wallpaper_py.core.service import Change
+from wallpaper_py.core.settings import Settings
 from wallpaper_py.protocol import (
     ChangedEvent,
     CommandRequest,
@@ -31,10 +32,6 @@ from wallpaper_py.protocol import (
     PickRequest,
     PickResult,
     PrevResult,
-    PruneRequest,
-    PruneResult,
-    ReloadRequest,
-    ReloadResult,
     Reply,
     Request,
     SaveSettingsRequest,
@@ -44,7 +41,14 @@ from wallpaper_py.protocol import (
     Subscribe,
 )
 
-from .fakes import FakeBackend, FakePresence, make_monitor, settled, write_config
+from .fakes import (
+    FakeBackend,
+    FakePresence,
+    make_monitor,
+    save_settings,
+    settled,
+    write_settings,
+)
 from .hosts import connect, make_host, read_lines
 
 
@@ -53,9 +57,9 @@ def fixture_backend() -> FakeBackend:
     return FakeBackend([make_monitor("Main")])
 
 
-@pytest.fixture(name="config")
-def fixture_config(tmp_path: Path) -> Path:
-    return write_config(tmp_path)
+@pytest.fixture(name="settings")
+def fixture_settings(tmp_path: Path) -> Settings:
+    return write_settings(tmp_path)
 
 
 class Hold:
@@ -84,13 +88,15 @@ def fixture_name(tmp_path: Path) -> str:
 
 @pytest.fixture(name="host")
 def fixture_host(
-    config: Path, backend: FakeBackend, hold: Hold, name: str
+    settings: Settings, backend: FakeBackend, hold: Hold, name: str
 ) -> Iterator[ServiceHost]:
+    del settings  # saved before the app starts
+
     def backend_factory() -> FakeBackend:
         hold()
         return backend
 
-    host = make_host(config, backend_factory, name)
+    host = make_host(backend_factory, name)
     yield host
     assert host.shutdown(5_000)
 
@@ -109,11 +115,9 @@ def submit(qtbot: QtBot, host: ServiceHost, request: CommandRequest) -> Reply:
     return replies[0]
 
 
-def ask(
-    qtbot: QtBot, name: str, config: Path, request: CommandRequest | Subscribe
-) -> QLocalSocket:
+def ask(qtbot: QtBot, name: str, request: CommandRequest | Subscribe) -> QLocalSocket:
     """Send a request over the socket without waiting for the reply."""
-    return connect(qtbot, name, ipc.encode(Envelope(request=request, config=config)))
+    return connect(qtbot, name, ipc.encode(Envelope(request=request)))
 
 
 def answer(qtbot: QtBot, socket: QLocalSocket) -> Reply:
@@ -132,8 +136,13 @@ def error(reply: Reply) -> str:
     return reply.error.message
 
 
-def send(qtbot: QtBot, name: str, config: Path, request: CommandRequest) -> Reply:
-    return answer(qtbot, ask(qtbot, name, config, request))
+def send(qtbot: QtBot, name: str, request: CommandRequest) -> Reply:
+    return answer(qtbot, ask(qtbot, name, request))
+
+
+def tick(qtbot: QtBot, host: ServiceHost) -> None:
+    with qtbot.waitSignal(host.ticked):
+        host.request_tick()
 
 
 def test_first_tick_runs_on_the_worker_thread(
@@ -169,69 +178,38 @@ def test_tray_commands_announce_changes(qtbot: QtBot, host: ServiceHost) -> None
 
 
 def test_socket_commands_run_on_the_service_thread(
-    qtbot: QtBot, host: ServiceHost, backend: FakeBackend, name: str, config: Path
+    qtbot: QtBot, host: ServiceHost, backend: FakeBackend, name: str
 ) -> None:
     start(qtbot, host)
     threads: set[int] = set()
     backend.before_monitors = lambda _: threads.add(threading.get_ident())
     with qtbot.waitSignal(host.changed) as blocker:
-        reply = send(qtbot, name, config, Request(command="next"))
+        reply = send(qtbot, name, Request(command="next"))
     assert shown(reply) == "b.jpg"
     assert blocker.args[0].image.name == "b.jpg"  # announced like a tick's
     assert threads and threading.get_ident() not in threads
 
 
-def test_socket_refuses_another_config(
-    qtbot: QtBot, host: ServiceHost, name: str, tmp_path: Path
+def test_socket_answers_once_the_service_is_open(
+    qtbot: QtBot, host: ServiceHost, name: str, hold: Hold
 ) -> None:
-    start(qtbot, host)
-    reply = send(qtbot, name, tmp_path / "other.toml", Request(command="status"))
-    assert "The running app uses" in error(reply)
-
-
-def test_socket_answers_during_and_after_reloads(
-    qtbot: QtBot, host: ServiceHost, name: str, config: Path, hold: Hold
-) -> None:
-    start(qtbot, host)
-    assert not isinstance(
-        send(qtbot, name, config, Request(command="status")), ErrorReply
-    )
-
-    # A request while the reload is still opening the service: answered
-    # once it is done.
+    """A request while the service is still opening: answered once it is."""
     hold.active = True
-    host.reload()
+    host.start()
     qtbot.waitUntil(hold.entered.is_set)
-    pending = ask(qtbot, name, config, Request(command="next"))
+    pending = ask(qtbot, name, Request(command="next"))
     hold.release.set()
     assert shown(answer(qtbot, pending)) == "b.jpg"
-    hold.active = False
-
-    # A broken config: the socket answers with the error.
-    text = config.read_text(encoding="utf-8")
-    config.write_text("[playlists.a\n", encoding="utf-8")
-    with qtbot.waitSignal(host.overview_changed):
-        host.reload()
-    reply = send(qtbot, name, config, Request(command="next"))
-    assert isinstance(reply, ErrorReply) and reply.error.kind == "config_error"
-    assert "Cannot read" in reply.error.message
-
-    config.write_text(text, encoding="utf-8")
-    with qtbot.waitSignal(host.overview_changed):
-        host.reload()
-    assert shown(send(qtbot, name, config, Request(command="next"))) == "c.jpg"
 
 
-def test_subscribers_follow_events(
-    qtbot: QtBot, host: ServiceHost, name: str, config: Path
-) -> None:
+def test_subscribers_follow_events(qtbot: QtBot, host: ServiceHost, name: str) -> None:
     overview = start(qtbot, host)
-    subscriber = ask(qtbot, name, config, Subscribe())
+    subscriber = ask(qtbot, name, Subscribe())
     # First the current overview, then events as they happen.
     [welcome] = read_lines(qtbot, subscriber, 1)
     assert ipc.decode_event(welcome) == OverviewChangedEvent(overview=overview)
 
-    assert shown(send(qtbot, name, config, Request(command="next"))) == "b.jpg"
+    assert shown(send(qtbot, name, Request(command="next"))) == "b.jpg"
     changed, refreshed = (ipc.decode_event(l) for l in read_lines(qtbot, subscriber, 2))
     assert isinstance(changed, ChangedEvent)
     assert (changed.change.image.name, changed.change.reason) == ("b.jpg", "next")
@@ -246,22 +224,27 @@ def test_subscribers_follow_events(
 
 def test_extra_tick_on_request(qtbot: QtBot, host: ServiceHost) -> None:
     start(qtbot, host)
-    with qtbot.waitSignal(host.ticked):
-        host.request_tick()
+    tick(qtbot, host)
 
 
-def test_config_error_then_reload(
-    qtbot: QtBot, host: ServiceHost, config: Path
+def test_a_bad_list_file_at_start_then_fixed(
+    qtbot: QtBot, host: ServiceHost, caplog: pytest.LogCaptureFixture
 ) -> None:
-    text = config.read_text(encoding="utf-8")
-    config.write_text("[playlists.a\n", encoding="utf-8")
+    """The service can't open; each tick tries again, and it runs once fixed."""
+    listed = paths.data_dir() / "favourites.txt"
+    listed.parent.mkdir(parents=True, exist_ok=True)
+    listed.write_text("a.jpg\n", encoding="utf-8-sig")
+    settled(listed)
     overview = start(qtbot, host)
-    assert overview.error is not None and "Cannot read" in overview.error
-    assert "Cannot read" in error(submit(qtbot, host, Request(command="next")))
+    assert overview.error is not None and "byte order mark" in overview.error
+    assert "byte order mark" in error(submit(qtbot, host, Request(command="next")))
+    tick(qtbot, host)  # tries again: the same error, logged once
+    errors = [r for r in caplog.records if r.levelname == "ERROR"]
+    assert len([r for r in errors if "byte order mark" in r.getMessage()]) == 1
 
-    config.write_text(text, encoding="utf-8")
+    listed.write_text("a.jpg\n", encoding="utf-8")
     with qtbot.waitSignal(host.overview_changed) as blocker:
-        host.reload()
+        host.request_tick()
     assert blocker.args[0].error is None
     assert shown(submit(qtbot, host, Request(command="next"))) == "b.jpg"
 
@@ -275,24 +258,23 @@ def test_unexpected_tick_errors_are_survived(
         raise OSError("COM hiccup")
 
     backend.before_monitors = boom
-    with qtbot.waitSignal(host.ticked):
-        host.request_tick()
+    tick(qtbot, host)
     backend.before_monitors = None
     assert shown(submit(qtbot, host, Request(command="next"))) == "b.jpg"
 
 
-def test_shutdown_before_start_is_harmless(config: Path) -> None:
+def test_shutdown_before_start_is_harmless() -> None:
     host = ServiceHost(
-        ServiceSettings(config, lambda: FakeBackend([]), FakePresence, nullcontext)
+        ServiceSettings(lambda: FakeBackend([]), FakePresence, nullcontext)
     )
     assert host.shutdown()
 
 
 def test_hold_reaches_the_tray_and_subscribers(
-    qtbot: QtBot, host: ServiceHost, name: str, config: Path
+    qtbot: QtBot, host: ServiceHost, name: str
 ) -> None:
     start(qtbot, host)
-    subscriber = ask(qtbot, name, config, Subscribe())
+    subscriber = ask(qtbot, name, Subscribe())
     read_lines(qtbot, subscriber, 1)  # the current overview
     with qtbot.waitSignal(host.overview_changed) as blocker:
         reply = submit(qtbot, host, Request(command="hold"))
@@ -304,12 +286,12 @@ def test_hold_reaches_the_tray_and_subscribers(
 
 
 def test_hold_survives_an_app_restart(
-    qtbot: QtBot, host: ServiceHost, backend: FakeBackend, name: str, config: Path
+    qtbot: QtBot, host: ServiceHost, backend: FakeBackend, name: str
 ) -> None:
     start(qtbot, host)
     submit(qtbot, host, Request(command="hold"))
     assert host.shutdown(5_000)
-    again = make_host(config, lambda: backend, name)
+    again = make_host(lambda: backend, name)
     try:
         assert start(qtbot, again).playlists[0].held
     finally:
@@ -317,55 +299,48 @@ def test_hold_survives_an_app_restart(
 
 
 def test_pick_over_the_socket(
-    qtbot: QtBot, host: ServiceHost, name: str, config: Path, tmp_path: Path
+    qtbot: QtBot, host: ServiceHost, name: str, tmp_path: Path
 ) -> None:
     start(qtbot, host)
     image = tmp_path / "elsewhere" / "x.png"
     image.parent.mkdir()
     Image.new("RGB", (8, 8)).save(image)
     with qtbot.waitSignal(host.changed) as blocker:
-        reply = send(qtbot, name, config, PickRequest(image=image))
+        reply = send(qtbot, name, PickRequest(image=image))
     assert isinstance(reply, PickResult) and reply.change.image == image
     assert blocker.args[0].reason == "picked"
-    assert shown(send(qtbot, name, config, Request(command="prev"))) == "a.jpg"
+    assert shown(send(qtbot, name, Request(command="prev"))) == "a.jpg"
 
 
-def test_reload_answers_with_its_result(
-    qtbot: QtBot, host: ServiceHost, name: str, config: Path
+def test_saving_settings_answers_with_warnings_or_why_not(
+    qtbot: QtBot, host: ServiceHost, name: str, settings: Settings
 ) -> None:
-    overview = start(qtbot, host)
-    assert overview.config == config  # the overview says which file the app runs
-    assert send(qtbot, name, config, ReloadRequest()) == ReloadResult()
+    start(qtbot, host)
+    assert send(qtbot, name, SettingsRequest()) == SettingsResult(
+        settings=settings, revision=1
+    )
 
     # Valid but probably a mistake: the reply carries the warning.
-    text = config.read_text(encoding="utf-8")
-    config.write_text(
-        text.replace("pause_when_idle = false", 'pause_when_idle = "20m"'),
-        encoding="utf-8",
-    )
-    reply = send(qtbot, name, config, ReloadRequest())
-    assert isinstance(reply, ReloadResult)
+    idle = settings.model_copy(update={"pause_when_idle": 1200.0})
+    reply = send(qtbot, name, SaveSettingsRequest(settings=idle, revision=1))
+    assert isinstance(reply, SaveSettingsResult) and reply.revision == 2
     assert [w.split(" (")[0] for w in reply.warnings] == ["walls: the interval"]
 
-    # Broken: the error, and the overview says so (with the file still named).
-    config.write_text("[playlists.walls\n", encoding="utf-8")
-    with qtbot.waitSignal(host.overview_changed) as blocker:
-        reply = send(qtbot, name, config, ReloadRequest())
-    assert isinstance(reply, ErrorReply) and reply.error.kind == "config_error"
-    assert blocker.args[0].error == reply.error.message
-    assert blocker.args[0].config == config
-
-    # The tray's Reload config takes the same path.
-    config.write_text(text, encoding="utf-8")
-    assert submit(qtbot, host, ReloadRequest()) == ReloadResult()
-    replies: list[Reply] = []
-    host.reload(replies.append)
-    qtbot.waitUntil(lambda: bool(replies))
-    assert replies == [ReloadResult()]
+    # Edited on an old revision: refused, nothing saved.
+    reply = send(qtbot, name, SaveSettingsRequest(settings=settings, revision=1))
+    assert isinstance(reply, ErrorReply) and reply.error.kind == "stale_settings"
+    # A value that can't be used: refused, nothing saved.
+    walls = settings.playlists[0].model_copy(update={"interval": 1.0})
+    bad = settings.model_copy(update={"playlists": (walls,)})
+    reply = submit(qtbot, host, SaveSettingsRequest(settings=bad, revision=2))
+    assert isinstance(reply, ErrorReply) and reply.error.kind == "invalid_settings"
+    assert send(qtbot, name, SettingsRequest()) == SettingsResult(
+        settings=idle, revision=2
+    )
 
 
 def test_a_list_file_that_is_not_utf8_stops_the_service(
-    qtbot: QtBot, host: ServiceHost, name: str, config: Path, tmp_path: Path
+    qtbot: QtBot, host: ServiceHost, name: str, tmp_path: Path
 ) -> None:
     start(qtbot, host)
     listed = tmp_path / "user" / "data" / "to-remove.txt"
@@ -377,48 +352,40 @@ def test_a_list_file_that_is_not_utf8_stops_the_service(
     with qtbot.waitSignal(host.overview_changed) as blocker:
         host.request_tick()
     assert "not UTF-8" in blocker.args[0].error
-    reply = send(qtbot, name, config, Request(command="next"))
+    reply = send(qtbot, name, Request(command="next"))
     assert isinstance(reply, ErrorReply) and reply.error.kind == "config_error"
 
-    # Still bad at a reload: the same error; fixed: running again.
-    reply = send(qtbot, name, config, ReloadRequest())
+    # Still bad at the next tick: the same error; fixed: running again.
+    tick(qtbot, host)
+    reply = send(qtbot, name, Request(command="next"))
     assert isinstance(reply, ErrorReply) and reply.error.kind == "config_error"
     listed.write_text("", encoding="utf-8")
-    assert send(qtbot, name, config, ReloadRequest()) == ReloadResult()
-
-
-def test_a_request_without_a_config_means_the_apps(
-    qtbot: QtBot, host: ServiceHost, name: str
-) -> None:
-    start(qtbot, host)
-    envelope = Envelope(request=Request(command="next"))
-    assert envelope.config is None
-    socket = connect(qtbot, name, ipc.encode(envelope))
-    assert shown(answer(qtbot, socket)) == "b.jpg"
+    tick(qtbot, host)
+    assert shown(send(qtbot, name, Request(command="next"))) == "b.jpg"
 
 
 def test_a_renamed_playlist_keeps_its_state(
-    qtbot: QtBot, host: ServiceHost, name: str, config: Path
+    qtbot: QtBot, host: ServiceHost, name: str, settings: Settings
 ) -> None:
     """Its state goes by its id, which a rename keeps: nothing to move."""
     start(qtbot, host)
-    assert shown(send(qtbot, name, config, Request(command="next"))) == "b.jpg"
-    text = config.read_text(encoding="utf-8")
-    config.write_text(text.replace("[playlists.walls]", "[playlists.art]"), "utf-8")
+    assert shown(send(qtbot, name, Request(command="next"))) == "b.jpg"
+    art = settings.playlists[0].model_copy(update={"name": "art"})
+    edit = settings.model_copy(update={"playlists": (art,)})
     with qtbot.waitSignal(host.overview_changed) as blocker:
-        reply = send(qtbot, name, config, ReloadRequest())
-    assert reply == ReloadResult()
+        reply = send(qtbot, name, SaveSettingsRequest(settings=edit, revision=1))
+    assert isinstance(reply, SaveSettingsResult)
     [playlist] = blocker.args[0].playlists
     assert playlist.name == "art" and playlist.current.name == "b.jpg"
     # The history too: prev goes back, where a new playlist has none.
-    assert shown(send(qtbot, name, config, Request(command="prev"))) == "a.jpg"
+    assert shown(send(qtbot, name, Request(command="prev"))) == "a.jpg"
 
 
-def test_no_config_file_runs_without_playlists(
-    qtbot: QtBot, host: ServiceHost, config: Path
+def test_no_settings_yet_runs_without_playlists(
+    qtbot: QtBot, host: ServiceHost
 ) -> None:
-    """The first start: the settings window creates the file."""
-    config.unlink()
+    """The first start: playlists are added in the settings window."""
+    save_settings(Settings())
     overview = start(qtbot, host)
     assert overview.error is None and overview.playlists == ()
     assert overview.monitors  # listed, for the settings window to assign
@@ -429,7 +396,6 @@ def test_a_config_error_from_a_command_stops_the_service(
     qtbot: QtBot,
     host: ServiceHost,
     name: str,
-    config: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """The same rule as for a tick: the service stops, the reply says why."""
@@ -440,35 +406,24 @@ def test_a_config_error_from_a_command_stops_the_service(
     settled(listed)
 
     with qtbot.waitSignal(host.overview_changed) as blocker:
-        reply = send(qtbot, name, config, Request(command="next"))  # reads it
+        reply = send(qtbot, name, Request(command="next"))  # reads it
     assert isinstance(reply, ErrorReply) and reply.error.kind == "config_error"
     assert "byte order mark" in reply.error.message
     assert blocker.args[0].error == reply.error.message
-    assert send(qtbot, name, config, Request(command="status")) == reply
+    assert send(qtbot, name, Request(command="status")) == reply
     assert not [r for r in caplog.records if r.exc_info]  # no traceback: expected
 
     listed.write_text("", encoding="utf-8")
-    assert send(qtbot, name, config, ReloadRequest()) == ReloadResult()
-
-
-def test_prune_over_the_socket(
-    qtbot: QtBot, host: ServiceHost, name: str, config: Path
-) -> None:
-    start(qtbot, host)
-    text = config.read_text(encoding="utf-8")
-    config.write_text(text.replace("walls-id", "new-id"), encoding="utf-8")
-    assert send(qtbot, name, config, ReloadRequest()) == ReloadResult()
-    # Importing the file deleted the old id's state already.
-    assert send(qtbot, name, config, PruneRequest()) == PruneResult(dropped=())
-    assert submit(qtbot, host, PruneRequest()) == PruneResult(dropped=())
+    tick(qtbot, host)
+    assert shown(send(qtbot, name, Request(command="next"))) == "b.jpg"
 
 
 def test_saved_settings_show_before_the_reply(
-    qtbot: QtBot, host: ServiceHost, name: str, config: Path, backend: FakeBackend
+    qtbot: QtBot, host: ServiceHost, name: str, backend: FakeBackend
 ) -> None:
     """A monitor whose look changed is rendered again, then the reply goes."""
     start(qtbot, host)
-    current = send(qtbot, name, config, SettingsRequest())
+    current = send(qtbot, name, SettingsRequest())
     assert isinstance(current, SettingsResult)
     [main] = current.settings.monitors
     fit = main.model_copy(update={"look": Look(ImageMode.FIT)})
@@ -476,10 +431,7 @@ def test_saved_settings_show_before_the_reply(
     calls = len(backend.set_calls)
     with qtbot.waitSignal(host.changed) as blocker:
         reply = send(
-            qtbot,
-            name,
-            config,
-            SaveSettingsRequest(settings=edit, revision=current.revision),
+            qtbot, name, SaveSettingsRequest(settings=edit, revision=current.revision)
         )
     assert reply == SaveSettingsResult(revision=current.revision + 1)
     assert len(backend.set_calls) == calls + 1  # before the reply
@@ -490,5 +442,5 @@ def test_saved_settings_show_before_the_reply(
         return overview is not None and overview.monitors[0].look == fit.look
 
     qtbot.waitUntil(fit_in_overview)
-    again = send(qtbot, name, config, SettingsRequest())
+    again = send(qtbot, name, SettingsRequest())
     assert isinstance(again, SettingsResult) and again.settings == edit

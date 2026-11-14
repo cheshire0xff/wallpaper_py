@@ -20,7 +20,7 @@ from PySide6.QtGui import QDesktopServices, QGuiApplication
 from PySide6.QtWidgets import QHBoxLayout, QVBoxLayout, QWidget
 
 from ...core import paths
-from ...core.config import Config
+from ...core.settings import Settings
 from . import theme
 from .settings_form import SettingRow
 
@@ -34,19 +34,17 @@ class Location:
     path: Path
 
 
-def data_locations(config_path: Path | None, config: Config | None) -> list[Location]:
+def data_locations(settings: Settings | None) -> list[Location]:
     """
-    What the app and the windows keep where. The lists come from the config
-    (its defaults when it can't be read); the rest are per-user locations.
+    What the app and the windows keep where. The lists come from the saved
+    settings (the defaults until they are loaded); the rest are per-user
+    locations.
     """
-    favourites = config.favourites_file if config else None
-    to_remove = config.to_remove_file if config else None
-    locations = [Location("Config file", config_path)] if config_path else []
+    favourites, to_remove = (settings or Settings()).list_files(paths.data_dir())
     return [
-        *locations,
-        Location("State database", paths.state_db(config_path or paths.config_file())),
-        Location("Favourites", favourites or paths.data_dir() / "favourites.txt"),
-        Location("To remove", to_remove or paths.data_dir() / "to-remove.txt"),
+        Location("Settings and state", paths.state_db()),
+        Location("Favourites", favourites),
+        Location("To remove", to_remove),
         Location("App log", paths.log_file()),
         Location("Windows log", paths.ui_log_file()),
         Location("Rendered wallpapers", paths.render_dir()),

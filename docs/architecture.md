@@ -25,10 +25,12 @@ app/                          PySide6 (Qt only here); two processes
                  and the pages; asks before closing with unsaved settings
     home.py      Home: the monitors on a panel, then a row per playlist
     library.py   Library: a placeholder until Phase 5
-    settings.py  Settings: edits config.toml (playlists, monitors, general),
-                 then asks the app to reload; About tab in about.py
+    settings.py  Settings, monitor-first: the selected monitor's playlist and
+                 look, then the playlists; General; About tab in about.py
     settings_form.py  its rows: SettingRow, PlaylistEditor (open or a summary
-                 row), field problems, derived texts
+                 row), field problems
+    settings_draft.py  the edit without widgets (Draft): problems per field,
+                 monitor labels, what changed
     arrangement.py  the monitors drawn to scale (arrange(): pure geometry)
     thumbnails.py   ThumbnailLoader: image details and thumbnails, off the UI thread
     theme.py     the shared look: tones derived from the palette, spacing,
@@ -46,12 +48,9 @@ core/                         pure Python, no Qt, no platform APIs
   selection.py   user-typed monitor selector -> Monitor (names/ids, never numbers)
   setter.py      put an image on a monitor safely (renders it, re-checks)
   imaging.py     render(image, screen, output, look): fill / fit / stretch
-  paths.py       per-user config, data and cache locations (per OS, never shared)
+  paths.py       per-user data, log and cache locations (per OS, never shared)
   settings.py    Settings (pydantic): playlists, monitors (playlist, look), pausing,
                  list files; their checks and warnings; durations
-  config.py      config.toml until Phase 4b step 3b (the old Settings page writes
-                 it; the app imports it into the settings: to_settings)
-  config_edit.py editing that file in place (tomlkit), until 3b as well
   library.py     recursive image scan (natural order, cached), path keys
   order.py       next image: sorted walk, or the persisted shuffle deck
   store.py       SQLite: the settings, history, deck, per-playlist and
@@ -126,8 +125,8 @@ Threads: the `PlaylistService` lives on a worker `QThread`, which creates
 everything it uses there (the command socket, COM via
 `backends.thread_scope()`, the backend, the SQLite connection, the 5 s tick
 `QTimer`). A change renders for ~200 ms, which must never happen on the UI
-thread. The UI thread holds only UI (tray, screen watcher) and `ServiceHost`, a thin proxy: tray actions, extra ticks and
-reload reach the worker as queued signals; replies, changes and the
+thread. The UI thread holds only UI (tray, screen watcher) and `ServiceHost`, a thin proxy: tray actions and extra ticks
+reach the worker as queued signals; replies, changes and the
 `Overview` come back the same way. Socket requests need no hop: the socket
 lives on the service thread and calls `ServiceWorker.execute` directly, the
 one entry point for every command. Commands run one at a time between
@@ -137,7 +136,7 @@ wallpaper (`next`, `prev`, `pick`, `remove`) emits `changed` like a tick
 does; after every command the overview is published if it changed (that is
 how `hold` / `resume` reach the tray and subscribers). The
 socket is created once at start and closed at stop, so it keeps answering
-across config reloads. The UI waits on the worker only at shutdown.
+while the service is down. The UI waits on the worker only at shutdown.
 
 Ticks: the 5 s tick is the source of truth (it re-reads the real state).
 Qt screen signals only restart a 2 s single-shot timer that triggers one
@@ -161,26 +160,24 @@ app answers, the CLI takes the app's instance lock and runs the command
 itself (the same `commands.execute()`, no tick first), then exits: it never
 starts the app, so nothing keeps running after a command. The lock keeps
 one writer: two CLIs take turns, and an app starting meanwhile waits up to
-5 s for it. `list` and `set` don't need the app. A request naming a
-different config file than the app's is refused; a request without one
-(the user gave no --config) means whatever config the app runs. The client blocks
+5 s for it. `list` and `set` don't need the app. The client blocks
 without an event loop; PySide keeps the GIL while it waits, so it must run
 in a different process from the server (tests use child processes,
 `tests/clients.py`).
 
-Config errors don't stop the app: it shows the error in the tray and
-answers commands with it until *Reload config* succeeds. A `ConfigError`
-stops the service wherever it comes from (opening it, a tick, a command, the
-overview, e.g. a list file saved with a BOM while running): all go through
-`ServiceWorker._failed`.
+A list file that can't be used doesn't stop the app: a `ConfigError` stops
+the service wherever it comes from (opening it, a tick, a command, the
+overview, e.g. a list file saved with a BOM while running), all through
+`ServiceWorker._failed`. The tray shows the error and commands answer with
+it; every tick tries to open the service again, so it runs once the file
+is fixed. Settings that fail the checks are never stored, so they can't
+break it.
 
 Two kinds of expected error, both `AppError`: a `WallpaperError` fails one
 operation and the rest goes on; a `ConfigError` (not a `WallpaperError`, so
-`except WallpaperError` lets it through) stops whatever runs on the config.
+`except WallpaperError` lets it through) stops the service.
 A list file that won't decode but changed in the last few seconds may be
 half-written by a script: it is busy, not broken, until it settles.
-`--config` must name a file that exists; only the default may be missing
-(first start).
 
 UI process (`wallpaper ui [home|library|settings]`, `app/ui/`): one main
 window with a sidebar (Home, Library, Settings) runs in a process of its
@@ -223,19 +220,20 @@ its own, caches by path and drops results for images no longer shown.
 The settings live in the state database (`core/store.py`), written only
 by the app: `settings` reads them with a revision, `save_settings` replaces
 them as a whole (refused if the revision moved on, or if a value can't be
-used) and uses them at once. Until Phase 4b step 3b the old Settings page
-still edits config.toml, and the app imports that file into the stored
-settings when it opens the service (at start and on `reload`;
-`commands.import_config`), a temporary bridge.
+used) and uses them at once. There is no settings file.
 
-The Settings page edits the config file the app runs (the overview names
-it), as an editor would; the app then imports it. `core/config_edit.py` writes back only what
-changed (tomlkit), so a file with no change stays byte for byte the same
-and hand-written comments survive; the new text must pass the core's own
-parser, and the write (atomic) is refused if the file changed on disk since
-it was read. Then the page sends `reload`, a command like the others:
-the app reopens its service on the file, publishes the new overview (every
-page follows it) and replies with the warnings or the error.
+The Settings page is monitor-first: the drawing (attached monitors only;
+a click selects one, outlined), then the selected monitor's rows (a
+drop-down that also lists switched-off and not-connected monitors, its
+playlist, its mode), then the playlists. It keeps the edit as a `Draft`
+(`settings_draft.py`: texts as typed, monitor rows as chosen) and checks
+it after every change, per field, as the app will (a new or changed folder
+must exist; one already saved may be away). Save sends the whole edit
+with the revision it read; the reply carries the new revision and any
+warnings. A monitor is never named in the settings: the page names it from
+the current listing, numbering monitors that share a name left to right
+(`arrangement.twins`), and one the desktop doesn't list by the model code
+in its id (`settings_draft.short_id`).
 
 ## Playlist service
 
@@ -261,10 +259,10 @@ State lives in two places, by design:
   `pick` fail), and an unknown favourite is `null` in the overview.
 - **A playlist's state goes with it.** Saving settings that delete a
   playlist deletes its history, deck and hold in the same transaction; a
-  renamed one keeps them (they go by its id). `prune` drops whatever is
-  left over (normally nothing). A save that changes a playlist's folder
-  resets its shuffle deck and marks it (`PlaylistState.folder_changed`,
-  stored, so a restart or the config import keeps it): the next tick shows
+  renamed one keeps them (they go by its id). A save that changes a
+  playlist's folder resets its shuffle deck and marks it
+  (`PlaylistState.folder_changed`, stored, so a restart keeps it): the next
+  tick shows
   a new image from that folder, even when held or manual, and the mark
   goes with the next image shown (also by next / prev / pick).
 
@@ -284,16 +282,15 @@ like `next` would, inserted in the history right after the cursor; one
 from the playlist's directory is moved among the drawn cards of the
 shuffle deck (counts as seen), and a sorted walk goes on after the newest
 history entry from the directory (so a pick from elsewhere is a detour).
-A *held* playlist (flag in SQLite) and a *manual* one (`interval =
-"manual"`) never get a new image from a tick, not even a first one, and
+A *held* playlist (flag in SQLite) and a *manual* one (no interval) never get a new image from a tick, not even a first one, and
 their count stands still; ticks still restore the current image on a
 returning monitor and replace one that can't be shown any more (listed for
 removal, deleted). Hold doesn't apply to a manual playlist.
 
 A member that was detached (or vanished from the monitor list) has its
 "applied" record dropped, so on return it is given the group's current
-image. The app drops all of them when it opens the service (at start and
-on a reload), so after a reboot every monitor gets its playlist's current
+image. The app drops all of them when it opens the service (at start, or
+when it comes back after a list file was fixed), so after a reboot every monitor gets its playlist's current
 image back, rendered with its current look; `save_settings` drops those of
 the monitors whose playlist or look changed.
 
@@ -312,15 +309,14 @@ known-but-detached.
 
 Ids are `MonitorId` (`core/model.py`), never plain strings: Windows spells
 one id in different cases in different APIs (IDesktopWallpaper,
-DisplayConfig), and a config written by hand or by an older listing may
-use either. A `MonitorId` keeps the spelling it was made from (`str()`
+DisplayConfig), and settings saved from an older listing may use either. A `MonitorId` keeps the spelling it was made from (`str()`
 gives it back, for the backend and for display) and compares and hashes
 case-insensitively, so plain `==`, `in` and dict keys are right everywhere
-(config, config_edit, the service, the protocol, the backends); no code
-lower-cases an id by hand. In pydantic models (config.toml, the protocol)
+(the settings, the service, the protocol, the backends); no code
+lower-cases an id by hand. In pydantic models (the settings, the protocol)
 it reads and writes a plain string; SQLite stores its `key` (case-folded).
 Where a protocol model shows a playlist's member (`MonitorView.id`), it is
-spelt as the desktop spells it when listed, else as the config does.
+spelt as the desktop spells it when listed, else as the settings do.
 
 Consequences in code:
 
@@ -349,7 +345,7 @@ small output. A look depends on the screen, never on the output.
 A rendered image depends on the look and the monitor's size, so the
 service renders again when either changes: a monitor whose resolution
 changed (noticed by the tick) has its "applied" record dropped, and so
-does every monitor when the service opens (start and reload), and a
+does every monitor when the service opens, and a
 monitor whose look or playlist `save_settings` changed; the app ticks
 before replying, so a changed look shows at once.
 

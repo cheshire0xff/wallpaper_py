@@ -763,9 +763,38 @@ Order, one session each, all checks green after each:
         `MonitorView` and `DesktopMonitor`; `mode` left
         `PlaylistDetails` (the CLI's status shows it per monitor). The app
         ticks after a `save_settings` before replying.
-   2. **3b, the page** (after the mockup is approved): the new Settings page
+   2. (done 2026-11-14) **3b, the page** (after the mockup is approved): the new Settings page
       on the commands; the old page, config.toml, `config_edit`, tomlkit,
       `reload`, `prune`, `--config` and the bridge go.
+      As built:
+      - The page keeps its edit as a `Draft` (`app/ui/settings_draft.py`,
+        no widgets: texts as typed, monitor rows as chosen) and checks it
+        per field after every change, as the app will (`problems`);
+        `Draft.settings` leaves out a monitor row that says only the
+        defaults. Save sends the whole edit with the revision read;
+        `stale_settings` offers *Load the settings again*. Save chosen on
+        closing keeps the window open until the app answered, then closes
+        it.
+      - Monitors: the drawing shows only attached ones (the selected one
+        outlined, `MonitorsView.set_selected`); the *Monitor* drop-down
+        lists them left to right, then switched-off ones, then those only
+        the settings have ("not connected"). Settings hold no names, so a
+        not-connected monitor goes by the model code in its Windows id
+        (`settings_draft.short_id`: "DELA1B2"). Monitors sharing a name
+        are numbered left to right (`arrangement.twins`), in the drop-down
+        and in the drawing's captions (Home's too); the compact captions
+        are gone (Settings draws the two-line captions now).
+      - Not yet (steps 4 and 5): the *Background* row, and images in the
+        Settings drawing (it shows the monitors and playlists only).
+      - The broken-config state went, but a list file can still stop the
+        service; instead of *Reload config*, every tick tries to open the
+        service again (the error is logged once), so it runs again once
+        the file is fixed.
+      - One state database (`paths.state_db()`, no per-config ones);
+        `Envelope.config`, `Overview.config`, `ShowRequest.config` and the
+        error kind `wrong_config` went; `PROTOCOL` is 3. The About tab's
+        first location is "Settings and state". The sidebar's error status
+        reads "Error". docs/config.example.toml is gone.
 4. Previews through the renderer, in Home and Settings.
 5. Backgrounds: a fixed colour, average, edges.
 

@@ -27,11 +27,11 @@ class MonitorId:
     case-insensitively: plain `==`, `in` and dict keys are right. `str()`
     gives the spelling it was made from, for the backend and for display.
 
-    In pydantic models (the config file, the protocol) it is a plain
-    string, read and written.
+    In pydantic models (the settings, the protocol) it is a plain string,
+    read and written.
 
     The one place an id is normalized: surrounding whitespace goes, so every
-    reader of the config (the app, the settings window) gets the same id.
+    reader of the settings (the app, the settings window) gets the same id.
     """
 
     text: str
@@ -66,7 +66,7 @@ class MonitorId:
     def __get_pydantic_core_schema__(
         cls, _source: Any, _handler: GetCoreSchemaHandler
     ) -> CoreSchema:
-        # Strict: a number or `true` in config.toml is not an id.
+        # Strict: a number or `true` is not an id.
         from_text = core_schema.no_info_after_validator_function(
             cls, core_schema.str_schema(strict=True)
         )
@@ -149,14 +149,14 @@ class AppError(Exception):
     catch one of the two kinds:
 
     - WallpaperError: one operation failed; the rest goes on.
-    - ConfigError: the config, or a file it names, can't be used;
-      whatever runs on it stops (the service, until a reload).
+    - ConfigError: a file the settings name can't be used; whatever runs
+      on it stops (the service, until the file can be read again).
     """
 
 
 class ConfigError(AppError):
     """
-    The config file, or a list file the settings name, can't be used. Not a
+    A list file the settings name can't be used. Not a
     WallpaperError: `except WallpaperError` (one operation failed, carry on)
     lets it through, to stop the service.
     """

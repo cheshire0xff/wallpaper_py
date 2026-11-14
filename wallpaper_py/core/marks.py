@@ -14,7 +14,7 @@ list, delete the files properly and clear the list.
   callers hide them where needed. Clearing is always explicit.
 - The files are UTF-8 without a byte order mark, nothing else
   (`decode_text`). One that isn't is a ConfigError: the
-  service stops, as for a broken config, and the file is never rewritten.
+  service stops until it is fixed, and the file is never rewritten.
   Unless it changed in the last few seconds: a script that writes it in
   place (not atomically) may be half-way, cutting a character in two. That
   is MarkFileBusyError (below) until it settles.
@@ -50,18 +50,18 @@ _BOMS = (codecs.BOM_UTF8, codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)
 
 def decode_text(data: bytes, path: Path) -> str:
     """
-    The text of a file this app reads (the list files, the config): UTF-8
+    The text of a list file: UTF-8
     without a byte order mark, and nothing else.
 
     Raises:
         ConfigError: any other encoding, or a BOM.
     """
     # A UTF-8 BOM decodes without error, to an invisible U+FEFF before the
-    # first line: a first path that never matches, or a TOML error on line
-    # 1 that the user can't see. Refused with a message that says what to
-    # do, not stripped, so the app reads what every other tool (scripts, on
-    # both systems) reads. The UTF-16 BOMs would fail to decode anyway;
-    # checked here for the clearer message (Notepad offers "UTF-16 LE").
+    # first line: a first path that never matches. Refused with a message
+    # that says what to do, not stripped, so the app reads what every other
+    # tool (scripts, on both systems) reads. The UTF-16 BOMs would fail to
+    # decode anyway; checked here for the clearer message (Notepad offers
+    # "UTF-16 LE").
     if data.startswith(_BOMS):
         raise ConfigError(
             f"{path} is not UTF-8 text: it starts with a byte order mark (BOM). "
@@ -203,7 +203,7 @@ def _read_lines(file: Path) -> list[str]:
             it won't decode but just changed (SETTLE_NS).
     """
     # Bytes first, decoded after: "can't open it now" (keep the last list)
-    # and "it is not UTF-8" (a config error) must not look alike.
+    # and "it is not UTF-8" (a ConfigError) must not look alike.
     try:
         data = file.read_bytes()
     except FileNotFoundError:

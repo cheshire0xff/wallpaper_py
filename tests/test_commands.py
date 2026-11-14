@@ -22,7 +22,12 @@ from wallpaper_py.core.service import (
     NoImagesError,
     PlaylistService,
 )
-from wallpaper_py.core.settings import MonitorSettings, Order, Settings
+from wallpaper_py.core.settings import (
+    MonitorSettings,
+    Order,
+    PlaylistSettings,
+    Settings,
+)
 from wallpaper_py.protocol import (
     Command,
     DesktopMonitor,
@@ -38,8 +43,6 @@ from wallpaper_py.protocol import (
     PickResult,
     PlaylistView,
     PrevResult,
-    PruneRequest,
-    PruneResult,
     RemoveResult,
     Reply,
     Request,
@@ -58,31 +61,37 @@ from .fakes import (
     make_images,
     make_monitor,
     fake_id,
-    toml_ids,
+    save_settings,
 )
 
-CONFIG = f"""
-pause_when_idle = false
-
-[playlists.walls]
-id = "walls-id"
-directory = 'walls'
-monitors = {toml_ids("Main", "Side")}
-order = "sorted"
-interval = "10m"
-
-[playlists.strip]
-id = "strip-id"
-directory = 'strip'
-monitors = {toml_ids("Strip")}
-interval = "10m"
-mode = "fit"
-"""
 STRIP_ID = MonitorId(fake_id("Strip"))  # not listed
 
 MAIN = make_monitor("Main")
 SIDE = make_monitor("Side", attached=False)
 LEFT = make_monitor("Left", x=-2560, size=(2560, 1440))  # in no playlist
+
+
+def example(tmp_path: Path, interval: float | None = 600.0) -> Settings:
+    """walls (sorted) on Main and Side, strip on Strip (fit), every `interval`."""
+    walls = PlaylistSettings(
+        id="walls-id",
+        name="walls",
+        directory=tmp_path / "walls",
+        order=Order.SORTED,
+        interval=interval,
+    )
+    strip = PlaylistSettings(
+        id="strip-id", name="strip", directory=tmp_path / "strip", interval=interval
+    )
+    return Settings(
+        playlists=(walls, strip),
+        monitors=(
+            MonitorSettings(id=MAIN.id, playlist="walls-id"),
+            MonitorSettings(id=SIDE.id, playlist="walls-id"),
+            MonitorSettings(id=STRIP_ID, playlist="strip-id", look=Look(ImageMode.FIT)),
+        ),
+        pause_when_idle=None,
+    )
 
 
 @pytest.fixture(name="backend")
@@ -94,9 +103,8 @@ def fixture_backend() -> FakeBackend:
 def fixture_service(tmp_path: Path, backend: FakeBackend) -> Iterator[PlaylistService]:
     make_images(tmp_path / "walls", "a.jpg", "b.jpg")
     make_images(tmp_path / "strip", "s.jpg")
-    config = tmp_path / "config.toml"
-    config.write_text(CONFIG, encoding="utf-8")
-    with open_service(config, backend, FakePresence()) as service:
+    save_settings(example(tmp_path))
+    with open_service(backend, FakePresence()) as service:
         yield service
 
 
@@ -240,7 +248,7 @@ def test_pick_request_is_strict(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         Request.model_validate({"command": "pick", "target": "walls"})
     envelope = Envelope.model_validate_json(
-        Envelope(request=PickRequest(image=tmp_path), config=tmp_path).model_dump_json()
+        Envelope(request=PickRequest(image=tmp_path)).model_dump_json()
     )
     assert envelope.request == PickRequest(image=tmp_path)
 
@@ -248,10 +256,8 @@ def test_pick_request_is_strict(tmp_path: Path) -> None:
 def test_manual_playlist(tmp_path: Path, backend: FakeBackend) -> None:
     make_images(tmp_path / "walls", "a.jpg")
     make_images(tmp_path / "strip", "s.jpg")
-    config = tmp_path / "config.toml"
-    manual = CONFIG.replace('interval = "10m"', 'interval = "manual"')
-    config.write_text(manual, encoding="utf-8")
-    with open_service(config, backend, FakePresence()) as service:
+    save_settings(example(tmp_path, interval=None))
+    with open_service(backend, FakePresence()) as service:
         reply = run(service, "hold", "walls")
         assert isinstance(reply, ErrorReply) and reply.error.kind == "failed"
         assert "walls is manual" in reply.error.message
@@ -346,53 +352,6 @@ def test_overview(service: PlaylistService, tmp_path: Path) -> None:
     assert not overview(service).playlists[1].attached
 
 
-WALLS_ONLY, STRIP, STRIP_TABLE = CONFIG.partition("[playlists.strip]")
-
-
-def walls_current(config: Path, backend: FakeBackend) -> Path | None:
-    with open_service(config, backend, FakePresence()) as service:
-        reply = run(service, "status")
-        assert isinstance(reply, StatusResult)
-        return next((p.current for p in reply.playlists if p.name == "walls"), None)
-
-
-def test_the_config_file_is_imported_into_the_settings(
-    service: PlaylistService, backend: FakeBackend, tmp_path: Path
-) -> None:
-    """
-    The bridge of Phase 4b step 3a: the file replaces the stored settings
-    when the service opens; without a file, they stand.
-    """
-    run(service, "next", "walls")
-    run(service, "hold", "strip")  # strip's monitor isn't listed: hold only
-    shown = service.current(service.settings.playlists[0])
-    assert shown is not None
-    config = tmp_path / "config.toml"
-    config.unlink()  # briefly gone (an editor replacing it)
-    assert walls_current(config, backend) == shown
-    config.write_text(WALLS_ONLY, encoding="utf-8")  # strip deleted
-    with open_service(config, backend, FakePresence()) as again:
-        assert [p.name for p in again.settings.playlists] == ["walls"]
-        assert execute(again, PruneRequest()).reply == PruneResult(dropped=())
-        assert again.current(again.settings.playlists[0]) == shown
-    config.write_text(CONFIG, encoding="utf-8")
-    with open_service(config, backend, FakePresence()) as again:
-        assert not again.held(again.settings.playlists[1])  # strip starts afresh
-
-
-def test_a_folder_changed_in_the_file_shows_on_the_next_tick(
-    service: PlaylistService, backend: FakeBackend, tmp_path: Path
-) -> None:
-    """The bridge: a reload imports the file; the new folder shows at once."""
-    run(service, "next", "walls")
-    make_images(tmp_path / "art", "z.jpg")
-    config = tmp_path / "config.toml"
-    config.write_text(CONFIG.replace("'walls'", "'art'", 1), encoding="utf-8")
-    with open_service(config, backend, FakePresence()) as again:
-        [change] = [c for c in again.tick() if c.playlist == "walls"]
-        assert change.image == tmp_path / "art" / "z.jpg"
-
-
 def test_settings_and_save_settings(service: PlaylistService) -> None:
     reply = execute(service, SettingsRequest()).reply
     assert isinstance(reply, SettingsResult)
@@ -447,13 +406,12 @@ def test_a_favourites_list_never_read_is_unknown(
 ) -> None:
     """The toggle can't say "not a favourite" before the list was read."""
     make_images(tmp_path / "walls", "a.jpg", "b.jpg")
-    config = tmp_path / "config.toml"
-    config.write_text(CONFIG, encoding="utf-8")
-    with open_service(config, backend, FakePresence()) as service:
+    save_settings(example(tmp_path))
+    with open_service(backend, FakePresence()) as service:
         run(service, "next", "walls")
         run(service, "fav", "walls")
     busy = BusyFile(paths.data_dir() / "favourites.txt", monkeypatch)
-    with open_service(config, backend, FakePresence()) as service:
+    with open_service(backend, FakePresence()) as service:
         assert overview(service).playlists[0].favourite is None
         reply = run(service, "unfav", "walls")
         assert isinstance(reply, ErrorReply) and "Cannot read" in reply.error.message

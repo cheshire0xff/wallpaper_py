@@ -19,15 +19,15 @@ if sys.platform == "win32":
 else:
     NO_WINDOW = 0
 
-# argv: server name, command, config, timeout. Prints the reply as JSON,
+# argv: server name, command, timeout. Prints the reply as JSON,
 # NONE (no app running) or ERROR <message>.
 SEND = """
 import sys
 from pathlib import Path
 from wallpaper_py.app import ipc
 from wallpaper_py.protocol import Envelope, Request
-name, command, config, timeout = sys.argv[1:5]
-envelope = Envelope(request=Request(command=command), config=Path(config))
+name, command, timeout = sys.argv[1:4]
+envelope = Envelope(request=Request(command=command))
 try:
     reply = ipc.send(name, envelope, timeout=float(timeout))
 except ipc.WallpaperError as err:
@@ -76,7 +76,7 @@ from wallpaper_py import cli
 from wallpaper_py.core import paths
 from tests.fakes import FakeBackend, FakePresence, make_monitor
 data_dir = Path(sys.argv[1])
-for name in ("data_dir", "config_dir", "cache_dir"):
+for name in ("data_dir", "cache_dir"):
     setattr(paths, name, lambda: data_dir)
 paths.log_file = lambda: data_dir / "wallpaper.log"
 backend = FakeBackend([make_monitor("Main")])

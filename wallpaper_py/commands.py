@@ -1,7 +1,6 @@
 """
 Playlist commands run on the service: a `Request` in, a result (or an
-error) out, as the data models of `protocol.py`; no text. (`reload` is not
-one: it replaces the service, so the app runs it; see app/worker.py.) The CLI formats
+error) out, as the data models of `protocol.py`; no text. The CLI formats
 its output from them, the tray and the windows show them.
 
 `execute()` runs a command on the app's service thread, whether it came over
@@ -9,9 +8,7 @@ the socket (CLI, UI process) or from the tray. Besides the reply it returns
 the wallpaper change the command made, if any, so the app announces it like
 a tick's. Qt-free, like the core.
 
-`open_service()` runs the service on the settings in the state database.
-Until Phase 4b step 3b it first imports config.toml into them (a temporary
-bridge for the old Settings page, not a migration; see `import_config`).
+`open_service()` runs the service on the settings in the state database;
 `settings` and `save_settings` read and write them.
 
 `overview()` is the small snapshot the tray and the windows draw from.
@@ -19,7 +16,6 @@ bridge for the old Settings page, not a migration; see `import_config`).
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -27,7 +23,6 @@ from typing import Literal, NamedTuple
 
 from .core import paths
 from .core.backend import Backend
-from .core.config import load_config
 from .core.marks import MarkFileBusyError
 from .core.model import (
     AppError,
@@ -47,12 +42,7 @@ from .core.service import (
     PlaylistStatus,
     UnknownTargetError,
 )
-from .core.settings import (
-    PlaylistSettings,
-    SettingsError,
-    StaleSettingsError,
-    check_settings,
-)
+from .core.settings import PlaylistSettings, SettingsError, StaleSettingsError
 from .core.store import Store
 from .protocol import (
     TARGET_COMMANDS,
@@ -71,20 +61,16 @@ from .protocol import (
     PlaylistDetails,
     PlaylistView,
     PrevResult,
-    PruneRequest,
-    PruneResult,
     RemoveResult,
     Reply,
     ResumeResult,
     SaveSettingsRequest,
     SaveSettingsResult,
-    ServiceRequest,
+    CommandRequest,
     SettingsRequest,
     SettingsResult,
     StatusResult,
 )
-
-log = logging.getLogger(__name__)
 
 
 class Outcome(NamedTuple):
@@ -101,17 +87,15 @@ class Outcome(NamedTuple):
 
 @contextmanager
 def open_service(
-    config_path: Path, backend: Backend, presence: Presence, tick_period: float = 5.0
+    backend: Backend, presence: Presence, tick_period: float = 5.0
 ) -> Iterator[PlaylistService]:
     """
-    A service on the settings in the config's state database, after
-    importing the config file into them; closes the database after.
+    A service on the settings in the state database; closes it after.
 
     Raises:
-        ConfigError: the file, or a list file.
+        ConfigError: a list file can't be used.
     """
-    with Store(paths.state_db(config_path)) as store:
-        import_config(config_path, store)
+    with Store(paths.state_db()) as store:
         service = PlaylistService(
             backend,
             presence,
@@ -123,40 +107,17 @@ def open_service(
         yield service
 
 
-def import_config(config_path: Path, store: Store) -> None:
+def execute(service: PlaylistService, request: CommandRequest) -> Outcome:
     """
-    The bridge of Phase 4b step 3a, gone in 3b: the old Settings page still
-    writes config.toml, so the file (if there is one) replaces the stored
-    settings, at start and on `reload`. Each playlist's mode becomes its
-    monitors' look. A playlist the file no longer has loses its state, as
-    when the settings window deletes one.
+    An expected failure is an error reply, except a broken list file.
 
     Raises:
-        ConfigError: the file can't be used; nothing was imported.
-    """
-    config = load_config(config_path, default_dir=paths.data_dir())
-    if config is None:
-        return
-    settings = config.to_settings()
-    try:
-        check_settings(settings)
-    except SettingsError as err:
-        raise ConfigError(f"{config_path}: {err}") from err
-    if settings != store.settings():
-        store.save_settings(settings, revision=None)
-
-
-def execute(service: PlaylistService, request: ServiceRequest) -> Outcome:
-    """
-    An expected failure is an error reply, except a broken config.
-
-    Raises:
-        ConfigError: the config or a list file went bad (e.g. saved with a
-            byte order mark). The service can't go on: the caller stops it,
-            and answers with the error until a reload (see app/worker.py).
+        ConfigError: a list file went bad (e.g. saved with a byte order
+            mark). The service can't go on: the caller stops it, and answers
+            with the error until the file can be read (see app/worker.py).
     """
     try:
-        if isinstance(request, PruneRequest | SettingsRequest | SaveSettingsRequest):
+        if isinstance(request, SettingsRequest | SaveSettingsRequest):
             return _settings_command(service, request)
         if request.command == "status":
             return Outcome(_status(service))
@@ -194,27 +155,16 @@ def error_reply(err: Exception) -> ErrorReply:
 
 def _settings_command(
     service: PlaylistService,
-    request: PruneRequest | SettingsRequest | SaveSettingsRequest,
+    request: SettingsRequest | SaveSettingsRequest,
 ) -> Outcome:
-    """The commands on the settings and the state they keep."""
+    """The commands on the settings."""
     match request:
-        case PruneRequest():
-            return Outcome(_prune(service))
         case SettingsRequest():
             return Outcome(
                 SettingsResult(settings=service.settings, revision=service.revision())
             )
         case SaveSettingsRequest():
             return Outcome(_save_settings(service, request), render=True)
-
-
-def _prune(service: PlaylistService) -> PruneResult:
-    dropped = service.prune_state()
-    for playlist_id in dropped:
-        log.info(
-            "Dropped the state of playlist id %s: not in the settings", playlist_id
-        )
-    return PruneResult(dropped=tuple(dropped))
 
 
 def _save_settings(

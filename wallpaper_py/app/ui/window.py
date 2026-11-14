@@ -59,7 +59,7 @@ def status_of(overview: Overview | None) -> tuple[str, StatusKind]:
     if overview is None:
         return "Connecting…", "connecting"
     if overview.error:
-        return "Config error", "error"
+        return "Error", "error"
     if overview.paused:
         return f"Rotation paused: {overview.paused}", "paused"
     return "Rotation active", "ok"

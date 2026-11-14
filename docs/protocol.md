@@ -31,17 +31,12 @@ release it may still change in place.)
 ## Requests
 
 ```json
-{"v": 2, "request": {"command": "next", "target": "konachan"}}
+{"v": 3, "request": {"command": "next", "target": "konachan"}}
 ```
 
 - `v`: the protocol version; another one is refused (`protocol`).
-- `config` (optional): the config file the client means, if the user named
-  one (`--config`). The app runs one config and refuses another
-  (`wrong_config`). Left out, the client means whatever config the app
-  runs; the overview names it (`config`, below).
 - `request.command`: `status`, `next`, `prev`, `fav`, `unfav`, `remove`,
-  `hold`, `resume`, `pick`, `prune`, `settings`, `save_settings`,
-  `reload`, or `subscribe`.
+  `hold`, `resume`, `pick`, `settings`, `save_settings`, or `subscribe`.
 - `request.target` (the playlist commands: `next` to `resume`, and
   `pick`): a playlist name, or a monitor the playlist drives (a name, a
   unique part of one, or the full id). It may be left out when there is
@@ -51,7 +46,7 @@ release it may still change in place.)
   any directory.
 
 ```json
-{"v": 2, "request": {"command": "pick", "target": "fantasy", "image": "D:\\pictures\\other\\7.png"}, "config": "C:\\Users\\me\\AppData\\Local\\wallpaper_py\\config.toml"}
+{"v": 3, "request": {"command": "pick", "target": "fantasy", "image": "D:\\pictures\\other\\7.png"}}
 ```
 
 - `request.settings` and `request.revision` (`save_settings` only, and
@@ -77,10 +72,8 @@ get the image when they come back).
 | `fav` / `unfav` | `playlist`, `image`, `list_file` (favourites.txt), `changed` (false: it already was / wasn't a favourite) |
 | `remove` | `playlist`, `image` (listed for removal, never deleted), `list_file` (to-remove.txt), `change` (null: no monitor attached; it moves on later) |
 | `hold` / `resume` | `playlist`, `held` (now), `changed` (false: it already was / wasn't held) |
-| `prune` | `dropped`: the playlist ids whose state (history, shuffle deck, hold) was left over although the settings no longer have them (empty: none) |
 | `settings` | `settings` (below), `revision` (an integer; send it back with the edit) |
 | `save_settings` | `revision` (of the saved settings: the next edit goes on this one), `warnings` (settings that are valid but probably a mistake) |
-| `reload` | `warnings` (settings that are valid but probably a mistake); a config file the app can't use is the error `config_error` instead |
 
 `pick` shows the image now, as if `next` had chosen it: it goes into the
 history right after the current entry, so `prev` goes back to what was
@@ -124,18 +117,11 @@ one.
   never), `favourites_file` and `to_remove_file` (absolute; null: in the
   app's data directory).
 
-Until Phase 4b step 3b (docs/plan.md) the old Settings page still writes
-config.toml: the app imports it into the stored settings when it starts and
-on `reload` (each playlist's `mode` becomes its monitors' look), so a save
-in that window wins over a `save_settings` made since. `reload` then
-restarts the playlists. The new overview goes to subscribers before the
-reply. While the config file is broken, the other commands answer
-`config_error` until a `reload` succeeds. A list file (favourites,
-to-remove) that goes bad while the app runs (e.g. saved with a byte order
-mark) breaks it the same way, whether a tick or a command reads it.
-
-`prune` drops any state left of playlist ids the settings don't have
-(saving settings deletes it already, so normally there is none).
+A list file (favourites, to-remove) that can't be used (e.g. saved with a
+byte order mark) stops the service, whether at start, on a tick or in a
+command: every command then answers `config_error`, and the overview's
+`error` says why, until the file is fixed (the app tries again on every
+tick).
 
 While to-remove.txt has never been read (another program holds it open
 since the app started), no image is chosen: ticks wait, and `next`,
@@ -161,8 +147,7 @@ whether it is attached (`null`: not listed right now), and its look.
 | Kind | Meaning |
 |---|---|
 | `protocol` | malformed request, or another protocol version |
-| `wrong_config` | the app runs another config file |
-| `config_error` | the config file or a list file is invalid; the app waits for a fix (*Reload config*) |
+| `config_error` | a list file can't be used; the app waits for a fix |
 | `unknown_target` | no such playlist or monitor, the monitor is in no playlist, or several playlists and none named |
 | `not_attached` | none of the playlist's monitors is attached |
 | `no_images` | nothing to show in the playlist's directory |
@@ -179,7 +164,7 @@ The message is meant for people; programs decide by `kind`.
 ## Subscribing
 
 ```json
-{"v": 2, "request": {"command": "subscribe"}}
+{"v": 3, "request": {"command": "subscribe"}}
 ```
 
 The connection stays open and the app writes one event per line, tagged on
@@ -189,11 +174,11 @@ error line instead, then the connection closes.
 
 | Event | Fields | When |
 |---|---|---|
-| `overview_changed` | `overview`: `playlists` (each: `name`, `monitors`, `current`, `favourite` (null: favourites.txt can't be read yet, so it isn't known), `held`, `manual`), `monitors` (every monitor the desktop lists, also those in no playlist: `id`, `name`, `geometry`, `look`), `paused`, `error` (the app is up but its service isn't: e.g. a broken config), `config` (the config file the app runs) | on subscribing, then whenever it changes (also after `hold` / `resume`, `save_settings` and `reload`, and when a monitor is switched off or moves) |
+| `overview_changed` | `overview`: `playlists` (each: `name`, `monitors`, `current`, `favourite` (null: favourites.txt can't be read yet, so it isn't known), `held`, `manual`), `monitors` (every monitor the desktop lists, also those in no playlist: `id`, `name`, `geometry`, `look`), `paused`, `error` (the app is up but its service isn't: e.g. a list file it can't use) | on subscribing, then whenever it changes (also after `hold` / `resume` and `save_settings`, and when a monitor is switched off or moves) |
 | `changed` | `change` | a wallpaper changed, by a tick or a command |
 
 ```json
-{"event": "overview_changed", "overview": {"playlists": [{"name": "fantasy", "monitors": [{"id": "\\\\?\\DISPLAY#AUS27B1#...", "name": "ZeroMOD", "attached": false}], "current": "D:\\pictures\\Fantasy\\7.png", "favourite": false, "held": false, "manual": true}], "monitors": [{"id": "\\\\?\\DISPLAY#DELA246#...", "name": "AW3225QF", "geometry": {"x": 0, "y": 0, "width": 3840, "height": 2160}}, {"id": "\\\\?\\DISPLAY#AUS27B1#...", "name": "ZeroMOD", "geometry": null}], "paused": null, "error": null, "config": "C:\\Users\\me\\AppData\\Local\\wallpaper_py\\config.toml"}}
+{"event": "overview_changed", "overview": {"playlists": [{"name": "fantasy", "monitors": [{"id": "\\\\?\\DISPLAY#AUS27B1#...", "name": "ZeroMOD", "attached": false}], "current": "D:\\pictures\\Fantasy\\7.png", "favourite": false, "held": false, "manual": true}], "monitors": [{"id": "\\\\?\\DISPLAY#DELA246#...", "name": "AW3225QF", "geometry": {"x": 0, "y": 0, "width": 3840, "height": 2160}}, {"id": "\\\\?\\DISPLAY#AUS27B1#...", "name": "ZeroMOD", "geometry": null}], "paused": null, "error": null}}
 {"event": "changed", "change": {"playlist": "konachan", "image": "D:\\pictures\\KONACHAN\\123.jpg", "reason": "next", "shown_on": ["AW3225QF", "PLX2783H"], "missed": []}}
 ```
 

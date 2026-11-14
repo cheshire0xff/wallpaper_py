@@ -6,11 +6,8 @@ shares with the UI process's own small socket (app/ui/launcher.py).
 readable only by the current user. One line of JSON each way per
 connection (protocol.py, docs/protocol.md):
 
-    -> {"v": 2, "request": {"command": "next", "target": "konachan"}}
+    -> {"v": 3, "request": {"command": "next", "target": "konachan"}}
     <- {"command": "next", "playlist": "konachan", "change": {...}}
-
-(plus `"config": "/home/me/.config/wallpaper_py/config.toml"` when the
-user named a config: the app refuses another one than its own)
 
 except `subscribe`, which keeps the connection open: the app then writes
 one event per line until it quits.
@@ -120,10 +117,6 @@ def brief(err: ValidationError) -> str:
     first = err.errors()[0]
     where = ".".join(str(part) for part in first["loc"])
     return f"{where}: {first['msg']}" if where else str(first["msg"])
-
-
-def same_file(a: Path, b: Path) -> bool:
-    return os.path.normcase(a.resolve()) == os.path.normcase(b.resolve())
 
 
 # -- blocking client -------------------------------------------------------------
@@ -411,18 +404,15 @@ class CommandServer(LineServer):
     The app's socket. Emits `received(connection_id, CommandRequest)`; the owner
     answers with `reply(connection_id, Reply)`. A `subscribe` request is
     announced with `subscribed(connection_id)` and the connection stays
-    open for `send_event()` / `broadcast()`. Malformed requests, other
-    versions and requests for a different config file are answered here.
+    open for `send_event()` / `broadcast()`. Malformed requests and other
+    versions are answered here.
     """
 
     received = Signal(int, object)  # connection id, protocol.CommandRequest
     subscribed = Signal(int)  # connection id
 
-    def __init__(
-        self, name: str, config_path: Path, parent: QObject | None = None
-    ) -> None:
+    def __init__(self, name: str, parent: QObject | None = None) -> None:
         super().__init__(name, parent)
-        self._config_path = config_path
         self._subscribers: set[int] = set()
 
     def reply(self, connection_id: int, reply: Reply) -> None:
@@ -451,16 +441,6 @@ class CommandServer(LineServer):
         except ProtocolError as err:
             log.warning("Command socket: %s", err)
             self.reply(connection_id, ErrorReply.make("protocol", err))
-            return
-        # No config named: the sender means whatever this app runs.
-        if envelope.config is not None and not same_file(
-            envelope.config, self._config_path
-        ):
-            message = (
-                f"The running app uses {self._config_path}, not "
-                f"{envelope.config}; quit it to use another config"
-            )
-            self.reply(connection_id, ErrorReply.make("wrong_config", message))
             return
         request: CommandRequest | Subscribe = envelope.request
         if isinstance(request, Subscribe):

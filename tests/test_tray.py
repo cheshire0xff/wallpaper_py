@@ -23,13 +23,10 @@ from wallpaper_py.app.ui.launcher import PageName
 from wallpaper_py.app.worker import ServiceHost, ServiceSettings
 from wallpaper_py.core.model import MonitorId
 from wallpaper_py.protocol import (
-    CommandRequest,
     ErrorReply,
     MonitorView,
     Overview,
     PlaylistView,
-    ReloadRequest,
-    ReloadResult,
     Reply,
     Request,
 )
@@ -75,12 +72,6 @@ class Actions:
 
     def open_window(self, page: PageName) -> None:
         self.calls.append(("page", page))
-
-    def reload(self) -> None:
-        self.calls.append("reload")
-
-    def open_config_folder(self) -> None:
-        self.calls.append("folder")
 
     def triggered(self, action: QAction) -> None:
         """Connected to QMenu.triggered, as in Tray."""
@@ -136,8 +127,6 @@ def test_flat_sections(menu: QMenu) -> None:
         ("Open wallpaper_py", True),
         ("Library", True),
         ("Settings…", True),
-        ("Reload config", True),
-        ("Open config folder", True),
         ("Start at login", True),
         ("Quit", True),
     ]
@@ -209,8 +198,6 @@ def test_app_items(menu: QMenu) -> None:
         "Open wallpaper_py",
         "Library",
         "Settings…",
-        "Reload config",
-        "Open config folder",
         "Start at login",
         "Quit",
     ):
@@ -219,8 +206,6 @@ def test_app_items(menu: QMenu) -> None:
         ("page", "home"),
         ("page", "library"),
         ("page", "settings"),
-        "reload",
-        "folder",
         ("autostart", False),
         "quit",
     ]
@@ -229,8 +214,8 @@ def test_app_items(menu: QMenu) -> None:
 def test_starting_and_error_states(menu: QMenu) -> None:
     fill(menu, None, Actions())
     assert items(menu)[0].text() == "Starting..."
-    fill(menu, Overview(error="No config file at C:/x/config.toml"), Actions())
-    assert items(menu)[0].text() == "Error: No config file at C:/x/config.toml"
+    fill(menu, Overview(error="C:/x/favourites.txt is not UTF-8 text"), Actions())
+    assert items(menu)[0].text() == "Error: C:/x/favourites.txt is not UTF-8 text"
     assert not items(menu)[0].isEnabled()
 
 
@@ -241,7 +226,10 @@ def test_no_playlists_item_opens_settings(menu: QMenu) -> None:
     assert first.text() == "No playlists yet: add one…"
     first.trigger()
     assert actions.calls == [("page", "settings")]
-    for overview in (Overview(error="bad config"), Overview(playlists=(WALLS,))):
+    for overview in (
+        Overview(error="favourites.txt is not UTF-8 text"),
+        Overview(playlists=(WALLS,)),
+    ):
         fill_menu(menu, overview, False)
         assert "No playlists yet: add one…" not in [a.text() for a in items(menu)]
 
@@ -298,9 +286,9 @@ def test_app_icon_keeps_transparency_and_tray_states() -> None:
     assert error.pixelColor(54, 48).name() == "#e03c31"
 
 
-def test_tray_follows_the_overview(tmp_path: Path) -> None:
+def test_tray_follows_the_overview() -> None:
     host = ServiceHost(  # never started: requests just queue up
-        ServiceSettings(tmp_path, lambda: FakeBackend([]), FakePresence, nullcontext)
+        ServiceSettings(lambda: FakeBackend([]), FakePresence, nullcontext)
     )
     autostart = FakeAutostart()
     quits: list[bool] = []
@@ -309,7 +297,6 @@ def test_tray_follows_the_overview(tmp_path: Path) -> None:
         host,
         autostart,
         ["py", "tray"],
-        tmp_path,
         lambda: quits.append(True),
         open_window=pages.append,
     )
@@ -330,14 +317,12 @@ def test_tray_follows_the_overview(tmp_path: Path) -> None:
     assert quits == [True]
 
 
-def test_left_click_opens_home_window(tmp_path: Path) -> None:
+def test_left_click_opens_home_window() -> None:
     host = ServiceHost(
-        ServiceSettings(tmp_path, lambda: FakeBackend([]), FakePresence, nullcontext)
+        ServiceSettings(lambda: FakeBackend([]), FakePresence, nullcontext)
     )
     pages: list[PageName] = []
-    tray = Tray(
-        host, FakeAutostart(), [], tmp_path, lambda: None, open_window=pages.append
-    )
+    tray = Tray(host, FakeAutostart(), [], lambda: None, open_window=pages.append)
 
     tray._activated(  # pylint: disable=protected-access
         QSystemTrayIcon.ActivationReason.Trigger
@@ -347,10 +332,10 @@ def test_left_click_opens_home_window(tmp_path: Path) -> None:
 
 
 def test_tray_notifies_failed_commands(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     host = ServiceHost(
-        ServiceSettings(tmp_path, lambda: FakeBackend([]), FakePresence, nullcontext)
+        ServiceSettings(lambda: FakeBackend([]), FakePresence, nullcontext)
     )
     error = ErrorReply.make("not_attached", "None attached")
 
@@ -358,7 +343,7 @@ def test_tray_notifies_failed_commands(
         callback(error)  # as the service thread would answer
 
     monkeypatch.setattr(host, "submit", submit)
-    tray = Tray(host, FakeAutostart(), [], tmp_path, lambda: None, open_window=print)
+    tray = Tray(host, FakeAutostart(), [], lambda: None, open_window=print)
     notes: list[str] = []
     monkeypatch.setattr(tray, "notify", notes.append)
     tray.run(queued("next", "walls"))
@@ -366,33 +351,31 @@ def test_tray_notifies_failed_commands(
 
 
 def test_starting_without_playlists_notifies_once_and_opens_settings(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     host = ServiceHost(
-        ServiceSettings(tmp_path, lambda: FakeBackend([]), FakePresence, nullcontext)
+        ServiceSettings(lambda: FakeBackend([]), FakePresence, nullcontext)
     )
     pages: list[PageName] = []
-    tray = Tray(
-        host, FakeAutostart(), [], tmp_path, lambda: None, open_window=pages.append
-    )
+    tray = Tray(host, FakeAutostart(), [], lambda: None, open_window=pages.append)
     shown: list[str] = []
     monkeypatch.setattr(tray, "_show_message", lambda m, _: shown.append(m))
-    host.overview_changed.emit(Overview(error="bad config"))  # not started yet
+    host.overview_changed.emit(
+        Overview(error="favourites.txt is not UTF-8 text")
+    )  # not started yet
     host.overview_changed.emit(Overview())
     host.overview_changed.emit(Overview())
-    assert shown == ["bad config", NO_PLAYLISTS_NOTE]  # once
+    assert shown == ["favourites.txt is not UTF-8 text", NO_PLAYLISTS_NOTE]  # once
     tray._message_clicked()  # pylint: disable=protected-access
     assert pages == ["settings"]
 
 
-def test_other_notifications_open_nothing_when_clicked(tmp_path: Path) -> None:
+def test_other_notifications_open_nothing_when_clicked() -> None:
     host = ServiceHost(
-        ServiceSettings(tmp_path, lambda: FakeBackend([]), FakePresence, nullcontext)
+        ServiceSettings(lambda: FakeBackend([]), FakePresence, nullcontext)
     )
     pages: list[PageName] = []
-    tray = Tray(
-        host, FakeAutostart(), [], tmp_path, lambda: None, open_window=pages.append
-    )
+    tray = Tray(host, FakeAutostart(), [], lambda: None, open_window=pages.append)
     host.overview_changed.emit(Overview())  # the no-playlists note
     tray.notify("None attached")  # shown over it
     tray._message_clicked()  # pylint: disable=protected-access
@@ -400,47 +383,14 @@ def test_other_notifications_open_nothing_when_clicked(tmp_path: Path) -> None:
 
 
 def test_starting_with_playlists_does_not_notify(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     host = ServiceHost(
-        ServiceSettings(tmp_path, lambda: FakeBackend([]), FakePresence, nullcontext)
+        ServiceSettings(lambda: FakeBackend([]), FakePresence, nullcontext)
     )
-    tray = Tray(host, FakeAutostart(), [], tmp_path, lambda: None, open_window=print)
+    tray = Tray(host, FakeAutostart(), [], lambda: None, open_window=print)
     shown: list[str] = []
     monkeypatch.setattr(tray, "_show_message", lambda m, _: shown.append(m))
     host.overview_changed.emit(Overview(playlists=(WALLS,)))
     host.overview_changed.emit(Overview())  # the playlists deleted later
     assert not shown
-
-
-def test_reload_config_notifies_once(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    host = ServiceHost(
-        ServiceSettings(tmp_path, lambda: FakeBackend([]), FakePresence, nullcontext)
-    )
-    pending: list[tuple[CommandRequest, Callable[[Reply], None]]] = []
-    monkeypatch.setattr(host, "submit", lambda r, c: pending.append((r, c)))
-    tray = Tray(host, FakeAutostart(), [], tmp_path, lambda: None, open_window=print)
-    notes: list[str] = []
-    monkeypatch.setattr(tray, "notify", notes.append)
-
-    find(tray.menu, "Reload config").trigger()
-    assert len(pending) == 1
-    request, reply = pending[0]
-    assert request == ReloadRequest()  # the `reload` command, as from the CLI
-    # The new overview comes first (the reload publishes it), then the reply:
-    # one notification, from the reply, even for an error seen before.
-    host.overview_changed.emit(Overview(error="bad config"))
-    reply(ErrorReply.make("config_error", "bad config"))
-    assert notes == ["bad config"]
-
-    find(tray.menu, "Reload config").trigger()
-    pending[-1][1](ReloadResult(warnings=("w1", "w2")))
-    assert notes == ["bad config", "w1\nw2"]
-    find(tray.menu, "Reload config").trigger()
-    pending[-1][1](ReloadResult())
-    assert len(notes) == 2  # fine: nothing to say
-
-    host.overview_changed.emit(Overview(error="another"))  # not from a reload
-    assert notes[-1] == "another"

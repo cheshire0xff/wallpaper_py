@@ -3,10 +3,9 @@ The app's socket protocol as pydantic models: what goes over the wire, and
 nothing else (no logic, no Qt). See docs/protocol.md.
 
 - In: an `Envelope` holding a `Request` (a playlist command), a
-  `PickRequest` (`pick`, which also carries an image), a `PruneRequest`
-  (drop state left of playlists the settings don't have), a
-  `SettingsRequest` / `SaveSettingsRequest` (read / write the settings), a
-  `ReloadRequest` (import the config file again) or `Subscribe`.
+  `PickRequest` (`pick`, which also carries an image), a
+  `SettingsRequest` / `SaveSettingsRequest` (read / write the settings) or
+  `Subscribe`.
 - Out: a `Reply`, which is data only: one result model per command, tagged
   on `command`, or an `ErrorReply`. The CLI formats its text from these;
   the tray and the UI process show them.
@@ -32,14 +31,14 @@ from .core.model import Look, MonitorId
 from .core.service import Change
 from .core.settings import Order, Settings
 
-PROTOCOL = 2
+PROTOCOL = 3
 
 # The commands a plain `Request` carries.
 Command = Literal["status", "next", "prev", "fav", "unfav", "remove", "hold", "resume"]
 # Of those, the ones that act on a target (playlist or monitor): all but status.
 TARGET_COMMANDS: tuple[Command, ...] = get_args(Command)[1:]
 # Every command: also these, which have request models of their own.
-AnyCommand = Literal[Command, "pick", "prune", "settings", "save_settings", "reload"]
+AnyCommand = Literal[Command, "pick", "settings", "save_settings"]
 COMMANDS: tuple[AnyCommand, ...] = get_args(AnyCommand)
 
 
@@ -80,12 +79,6 @@ class PickRequest(Strict):
         return image
 
 
-class PruneRequest(Strict):
-    """Drop any state left of playlist ids the settings don't have."""
-
-    command: Literal["prune"] = "prune"
-
-
 class SettingsRequest(Strict):
     """The stored settings, and their revision (for `save_settings`)."""
 
@@ -104,20 +97,10 @@ class SaveSettingsRequest(Strict):
     revision: int
 
 
-class ReloadRequest(Strict):
-    """Import the config file again (after it was edited; until Phase 4b 3b)."""
-
-    command: Literal["reload"] = "reload"
-
-
-# The requests the playlist service runs (what `commands.execute` takes).
-ServiceRequest = (
-    Request | PickRequest | PruneRequest | SettingsRequest | SaveSettingsRequest
-)
+# Every request answered with one reply (what `commands.execute` takes).
+CommandRequest = Request | PickRequest | SettingsRequest | SaveSettingsRequest
 # Of those, the ones that name a target (playlist or monitor).
 TargetRequest = Request | PickRequest
-# Every request answered with one reply; the app runs `reload` itself.
-CommandRequest = ServiceRequest | ReloadRequest
 
 
 class Subscribe(Strict):
@@ -131,18 +114,9 @@ class Envelope(Strict):
 
     v: int = PROTOCOL
     request: Annotated[
-        Request
-        | PickRequest
-        | PruneRequest
-        | SettingsRequest
-        | SaveSettingsRequest
-        | ReloadRequest
-        | Subscribe,
+        Request | PickRequest | SettingsRequest | SaveSettingsRequest | Subscribe,
         Field(discriminator="command"),
     ]
-    # The config file the sender means: the app refuses another one. None:
-    # whatever config the app runs (the user didn't name one).
-    config: Path | None = None
 
     @field_validator("v")
     @classmethod
@@ -220,8 +194,7 @@ class Overview(Message):
     playlists: tuple[PlaylistView, ...] = ()
     monitors: tuple[DesktopMonitor, ...] = ()  # every listed monitor
     paused: str | None = None  # why rotation is paused, if it is
-    error: str | None = None  # the service could not start (e.g. bad config)
-    config: Path | None = None  # the config file the app runs
+    error: str | None = None  # the service isn't running (e.g. a bad list file)
 
 
 class PlaylistDetails(PlaylistView):
@@ -277,13 +250,6 @@ class PickResult(Message):
     change: Change
 
 
-class PruneResult(Message):
-    """State left of playlist ids the settings don't have was dropped."""
-
-    command: Literal["prune"] = "prune"
-    dropped: tuple[str, ...]  # their ids; empty: there were none
-
-
 class SettingsResult(Message):
     command: Literal["settings"] = "settings"
     settings: Settings
@@ -295,13 +261,6 @@ class SaveSettingsResult(Message):
 
     command: Literal["save_settings"] = "save_settings"
     revision: int  # of the saved settings: the next edit goes on this one
-    warnings: tuple[str, ...] = ()  # valid settings that are probably a mistake
-
-
-class ReloadResult(Message):
-    """The config file was imported again and the playlists restarted."""
-
-    command: Literal["reload"] = "reload"
     warnings: tuple[str, ...] = ()  # valid settings that are probably a mistake
 
 
@@ -328,17 +287,14 @@ Result = Annotated[
     | PickResult
     | HoldResult
     | ResumeResult
-    | PruneResult
     | SettingsResult
-    | SaveSettingsResult
-    | ReloadResult,
+    | SaveSettingsResult,
     Field(discriminator="command"),
 ]
 
 ErrorKind = Literal[
     "protocol",  # malformed request, or another protocol version
-    "wrong_config",  # the app runs another config file
-    "config_error",  # the config is missing or invalid; the app waits for a fix
+    "config_error",  # a list file can't be used; the app waits for a fix
     "unknown_target",  # no such playlist or monitor, or several and none named
     "not_attached",  # none of the playlist's monitors is attached
     "no_images",  # nothing to show in the playlist's directory

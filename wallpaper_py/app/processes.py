@@ -26,37 +26,32 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ..core import paths
-
 if TYPE_CHECKING:
     from PySide6.QtCore import QCoreApplication
 
 log = logging.getLogger(__name__)
 
 
-def _python_command(config_path: Path) -> list[str]:
-    """This interpreter (windowless on Windows), with the config if not the default."""
+def _python_command() -> list[str]:
+    """This interpreter (windowless on Windows), running the package."""
     python = Path(sys.executable)
     if sys.platform == "win32" and python.name.lower() == "python.exe":
         windowless = python.with_name("pythonw.exe")
         if windowless.is_file():
             python = windowless
-    command = [str(python), "-m", "wallpaper_py"]
-    if config_path != paths.config_file():
-        command += ["--config", str(config_path.resolve())]
-    return command
+    return [str(python), "-m", "wallpaper_py"]
 
 
-def autostart_command(config_path: Path) -> list[str]:
+def autostart_command() -> list[str]:
     """
     How login (and the UI process, if no app runs) starts the tray app.
     """
-    return [*_python_command(config_path), "tray"]
+    return [*_python_command(), "tray"]
 
 
-def ui_command(config_path: Path, page: str) -> list[str]:
+def ui_command(page: str) -> list[str]:
     """How the tray starts the UI process, its window on `page`."""
-    return [*_python_command(config_path), "ui", page]
+    return [*_python_command(), "ui", page]
 
 
 def start_detached(command: Sequence[str]) -> None:

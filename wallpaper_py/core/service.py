@@ -64,6 +64,7 @@ from .settings import (
     Settings,
     SettingsError,
     check_folders,
+    check_list_files,
     check_settings,
 )
 from .setter import apply_wallpaper
@@ -210,14 +211,6 @@ class PlaylistService:
         """
         self._store.forget_applied()
 
-    def prune_state(self) -> list[str]:
-        """
-        Drop any state (history, deck, hold) left of playlists the settings
-        don't have; returns their ids. (Saving settings already deletes the
-        state of a playlist it deletes.)
-        """
-        return self._store.prune_playlists(p.id for p in self.settings.playlists)
-
     def revision(self) -> int:
         """The stored settings' revision (see `save_settings`)."""
         return self._store.revision()
@@ -229,8 +222,7 @@ class PlaylistService:
         state. A monitor whose playlist or look changed is rendered again
         on the next tick (the caller ticks before replying).
 
-        `revision`: the one the edit was made on; None for any (the import
-        from config.toml, Phase 4b step 3a only).
+        `revision`: the one the edit was made on; None for any (tests).
 
         Raises:
             SettingsError: a value that can't be used; nothing was saved.
@@ -239,6 +231,7 @@ class PlaylistService:
         """
         check_settings(settings)
         check_folders(settings, self.settings)
+        check_list_files(settings, self._data_dir)
         old = self.settings
         lists = (self.favourites, self.to_remove)
         if settings.list_files(self._data_dir) != old.list_files(self._data_dir):

@@ -1,16 +1,19 @@
 ## High priority
 
-1. Hide detached / stale monitor entries from the Home overview, so only
-   currently connected displays appear there.
-   Possible approaches:
-   - Add a UI action to forget a detached monitor and persist the exclusion
-     in `config.toml`, so it stays hidden.
-   - Investigate whether Windows exposes a last-attached time; if so, consider
-     hiding entries that have been detached for more than a week.
-   - somehow it is fixed now already?
-
 1. Make mode act straight away after change.
+1. Home preview does not reflect the playlist selected mode.
+- Maybe create some virtual monitors on which our algs act so we can reuse the calculations?
+1. Mode should be settable per monitor not per playlist. Try to think of a way to make settings user friendly.
+Setting up multiple monitors in a playlists is awkward anyway, with some multi checkboxes and minitors adding up with '+' in description.
+Really consider the best way to handle it in backend and ui.
+1. Selctable background color for fitted images. Maybe also per monitor?
+1. Auto color selection with selectable heurestic alg(average, edges etc).
+1. Try to make any future settings per monitor instead of playlist. Don't see a reason not to.
 
+## Normal prio
+1. Delete playlist needs a confirmation box? Maybe not since you can revert it, think it through.
+1. 'Saved; the app is using it.' I don't even know what it is, for sure normal user wouldn't as well.
+1. Cache rotation?
 
 ## Library window
 
@@ -48,6 +51,7 @@ the wallpapers.
      the current shuffle cycle, history length; favourites and to-remove
      counted as "listed" vs "still exist" (a listed file may be gone).
    - Totals across playlists, and the time the directory was last scanned.
+1. Start at login not in ui settings.
 
 ## Nice to have
 
@@ -63,3 +67,13 @@ the wallpapers.
    they sell the app better than any description. Light and dark mode; keep them current when the UI changes.
 1. Virtual backend (made-up monitors, nothing set on the real desktop) for end-to-end
    tests and a demo mode, and page renders uploaded by CI (docs/plan.md, Phase 7).
+
+1. Hide detached / stale monitor entries from the Home overview, so only
+   currently connected displays appear there.
+   Possible approaches:
+   - Add a UI action to forget a detached monitor and persist the exclusion
+     in `config.toml`, so it stays hidden.
+   - Investigate whether Windows exposes a last-attached time; if so, consider
+     hiding entries that have been detached for more than a week.
+   - somehow it is fixed now already?
+1. Auto updates?

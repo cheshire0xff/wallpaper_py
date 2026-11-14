@@ -6,8 +6,8 @@ They live in the state database (core.store), written only by the app: the
 settings window reads them with the `settings` command and writes them with
 `save_settings` (docs/plan.md, Phase 4b). `Settings` is that whole edit, as
 stored and as sent; its fields are typed by pydantic, and what the values
-mean (unique names, durations, folders) is checked by `check_settings` and
-`check_folders`.
+mean (unique names, durations, folders, list files) is checked by
+`check_settings`, `check_folders` and `check_list_files`.
 
 Per monitor or per playlist: how an image looks on a screen (`Look`) is per
 monitor; which image and when (folder, order, interval) is per playlist.
@@ -18,6 +18,7 @@ share a name).
 
 from __future__ import annotations
 
+import os
 import re
 import uuid
 from enum import Enum
@@ -225,6 +226,29 @@ def check_folders(settings: Settings, old: Settings) -> None:
             raise SettingsError(
                 f"{playlist.name}: the folder {directory} doesn't exist"
             )
+
+
+SAME_LISTS = "The favourites and to-remove lists can't be the same file"
+
+
+def check_list_files(settings: Settings, data_dir: Path) -> None:
+    """
+    The favourites and to-remove lists are two files (the defaults are in
+    `data_dir`): with one, every favourite would be listed for removal.
+
+    Raises:
+        SettingsError: they are one file.
+    """
+    favourites, to_remove = settings.list_files(data_dir)
+    if same_path(favourites, to_remove):
+        raise SettingsError(SAME_LISTS)
+
+
+def same_path(a: Path, b: Path) -> bool:
+    """One path written two ways (case, on Windows; `..`; slashes)."""
+    return os.path.normcase(os.path.normpath(a)) == os.path.normcase(
+        os.path.normpath(b)
+    )
 
 
 def new_playlist_id() -> str:

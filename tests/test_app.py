@@ -35,7 +35,7 @@ from .fakes import (
     FakeBackend,
     FakePresence,
     make_monitor,
-    write_config,
+    write_settings,
 )
 
 
@@ -81,17 +81,18 @@ def test_tray_and_ui_set_the_application_icon(
 def test_runs_and_quits_after_ticks(
     tmp_path: Path, platform: Platform, backend: FakeBackend, tray: bool
 ) -> None:
-    options = AppOptions(write_config(tmp_path), tray=tray, quit_after_ticks=1)
+    write_settings(tmp_path)
+    options = AppOptions(tray=tray, quit_after_ticks=1)
     assert run_app(options, platform) == 0
     assert [c.source and c.source.name for c in backend.set_calls] == ["a.jpg"]
     assert InstanceLock(paths.instance_lock()).acquire()  # released
 
 
-def test_second_instance_is_refused(tmp_path: Path, platform: Platform) -> None:
+def test_second_instance_is_refused(platform: Platform) -> None:
     lock = InstanceLock(paths.instance_lock())
     assert lock.acquire()
     try:
-        options = AppOptions(write_config(tmp_path), tray=False, lock_wait_s=0.2)
+        options = AppOptions(tray=False, lock_wait_s=0.2)
         with pytest.raises(WallpaperError, match="already running"):
             run_app(options, platform)
     finally:
@@ -101,8 +102,8 @@ def test_second_instance_is_refused(tmp_path: Path, platform: Platform) -> None:
 def test_cli_commands_go_through_the_running_app(
     qtbot: QtBot, tmp_path: Path, platform: Platform, backend: FakeBackend
 ) -> None:
-    config = write_config(tmp_path)
-    cli = [str(paths.data_dir()), "--config", str(config)]
+    write_settings(tmp_path)
+    cli = [str(paths.data_dir())]
     results: dict[str, subprocess.CompletedProcess[str]] = {}
 
     def terminal() -> None:
@@ -112,7 +113,7 @@ def test_cli_commands_go_through_the_running_app(
         QCoreApplication.quit()
 
     QTimer.singleShot(0, terminal)  # runs once exec() started: the socket is up
-    assert run_app(AppOptions(config, tray=False), platform) == 0
+    assert run_app(AppOptions(tray=False), platform) == 0
 
     assert results["next"].returncode == 0, results["next"].stderr
     assert results["next"].stdout.strip() == "walls: b.jpg on Main"
@@ -123,33 +124,6 @@ def test_cli_commands_go_through_the_running_app(
         "b.jpg",
         "a.jpg",
     ]
-
-
-def test_cli_without_config_reaches_an_app_on_another_config(
-    qtbot: QtBot, tmp_path: Path, platform: Platform
-) -> None:
-    config = write_config(tmp_path)  # not the default config file
-    assert config != paths.config_file()
-    data = str(paths.data_dir())
-    results: dict[str, subprocess.CompletedProcess[str]] = {}
-
-    def terminal() -> None:
-        results["plain"] = run_python(qtbot, CLI, data, "next")
-        other = str(tmp_path / "other.toml")
-        Path(other).write_text("", encoding="utf-8")
-        results["other"] = run_python(qtbot, CLI, data, "--config", other, "next")
-        results["reload"] = run_python(qtbot, CLI, data, "reload")
-        QCoreApplication.quit()
-
-    QTimer.singleShot(0, terminal)
-    assert run_app(AppOptions(config, tray=False), platform) == 0
-    # No --config: whatever the app runs.
-    assert results["plain"].returncode == 0, results["plain"].stderr
-    assert results["plain"].stdout.strip() == "walls: b.jpg on Main"
-    # A config named explicitly must be the app's.
-    assert results["other"].returncode == 1
-    assert "The running app uses" in results["other"].stderr
-    assert results["reload"].stdout.strip() == "Config reloaded"
 
 
 def app_running() -> bool:
@@ -174,8 +148,8 @@ def lock_held(seconds: float) -> Iterator[subprocess.Popen[str]]:
 
 
 def test_cli_runs_here_when_no_app_runs(qtbot: QtBot, tmp_path: Path) -> None:
-    config = write_config(tmp_path)
-    cli = [str(paths.data_dir()), "--config", str(config)]
+    write_settings(tmp_path)
+    cli = [str(paths.data_dir())]
     first = run_python(qtbot, CLI_HERE, *cli, "next")
     assert first.returncode == 0, first.stderr
     assert first.stdout.strip() == "walls: a.jpg on Main"  # no tick first
@@ -189,9 +163,8 @@ def test_cli_runs_here_when_no_app_runs(qtbot: QtBot, tmp_path: Path) -> None:
 
 
 def test_two_clis_without_an_app_take_turns(tmp_path: Path) -> None:
-    config = write_config(tmp_path)
-    argv = [sys.executable, "-c", CLI_HERE, str(paths.data_dir())]
-    argv += ["--config", str(config), "next"]
+    write_settings(tmp_path)
+    argv = [sys.executable, "-c", CLI_HERE, str(paths.data_dir()), "next"]
     with ExitStack() as stack:
         clis = [
             stack.enter_context(
@@ -216,12 +189,10 @@ def test_two_clis_without_an_app_take_turns(tmp_path: Path) -> None:
 
 def test_cli_waits_while_the_lock_is_held(qtbot: QtBot, tmp_path: Path) -> None:
     """An app starting (lock taken, socket not up yet), or a command here."""
-    config = write_config(tmp_path)
+    write_settings(tmp_path)
     with lock_held(1.0):
         started = time.monotonic()
-        result = run_python(
-            qtbot, CLI_HERE, str(paths.data_dir()), "--config", str(config), "next"
-        )
+        result = run_python(qtbot, CLI_HERE, str(paths.data_dir()), "next")
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "walls: a.jpg on Main"
     assert time.monotonic() - started > 0.5
@@ -231,7 +202,8 @@ def test_app_waits_for_a_command_run_here(
     tmp_path: Path, platform: Platform, backend: FakeBackend
 ) -> None:
     """Login starting the app while a CLI command holds the lock."""
-    options = AppOptions(write_config(tmp_path), tray=False, quit_after_ticks=1)
+    write_settings(tmp_path)
+    options = AppOptions(tray=False, quit_after_ticks=1)
     with lock_held(1.0):
         assert run_app(options, platform) == 0
     assert [c.source and c.source.name for c in backend.set_calls] == ["a.jpg"]
@@ -244,28 +216,28 @@ def test_socket_failure_stops_the_app(
         raise WallpaperError(f"Cannot open the command socket {self.name}: busy")
 
     monkeypatch.setattr(CommandServer, "listen", cannot_listen)
+    write_settings(tmp_path)
     with pytest.raises(WallpaperError, match="Cannot open the command socket"):
-        run_app(AppOptions(write_config(tmp_path), tray=False), platform)
+        run_app(AppOptions(tray=False), platform)
     assert not app_running()
 
 
-def test_autostart_command_starts_the_tray_without_a_console(tmp_path: Path) -> None:
-    command = autostart_command(paths.config_file())
+def test_autostart_command_starts_the_tray_without_a_console() -> None:
+    command = autostart_command()
     assert command[1:] == ["-m", "wallpaper_py", "tray"]
     python = Path(sys.executable)
     if sys.platform == "win32":
         python = python.with_name("pythonw.exe")  # no console window
     assert Path(command[0]) == python
-    other = autostart_command(tmp_path / "other.toml")
-    assert other[-3:] == ["--config", str((tmp_path / "other.toml").resolve()), "tray"]
 
 
 def test_ctrl_c_stops_cleanly(
     tmp_path: Path, platform: Platform, caplog: pytest.LogCaptureFixture
 ) -> None:
     caplog.set_level(logging.INFO)
+    write_settings(tmp_path)
     QTimer.singleShot(200, lambda: signal.raise_signal(signal.SIGINT))
-    assert run_app(AppOptions(write_config(tmp_path), tray=False), platform) == 0
+    assert run_app(AppOptions(tray=False), platform) == 0
     messages = [r.getMessage() for r in caplog.records]
     assert "Ctrl+C: stopping (press it again to exit at once)" in messages
     assert messages[-1] == "Stopped"

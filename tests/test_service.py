@@ -712,6 +712,17 @@ def test_save_settings_refuses_a_stale_or_invalid_edit(env: Env) -> None:
             env.settings.model_copy(update={"playlists": (renamed, gone)}),
             revision + 1,
         )
+    with pytest.raises(SettingsError, match="can't be the same file"):
+        env.service.save_settings(
+            env.settings.model_copy(
+                update={
+                    "to_remove_file": env.favourites_file.parent
+                    / "."
+                    / "favourites.txt"
+                }
+            ),
+            revision + 1,
+        )
     assert env.service.revision() == revision + 1  # nothing saved
     assert env.service.settings.playlists == (renamed, env.fantasy)
 
@@ -727,7 +738,6 @@ def test_deleting_a_playlist_deletes_its_state(env: Env) -> None:
     assert not env.store.history_before("2")
     assert not env.store.playlist_state("2").held
     assert env.store.history_before("1")  # the other one keeps its own
-    assert not env.service.prune_state()  # nothing left over
 
 
 def test_a_new_folder_shows_at_once_even_when_held(env: Env) -> None:
@@ -796,7 +806,6 @@ def test_a_renamed_playlist_keeps_its_state(env: Env) -> None:
     env.reconfigure(playlists=(renamed, env.fantasy))
     assert env.service.current(renamed) == current
     assert env.service.held(renamed)
-    assert not env.service.prune_state()
 
 
 def test_a_to_remove_list_never_read_stops_choosing(

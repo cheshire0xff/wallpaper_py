@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "wallpaper_py socket protocol",
-  "description": "Protocol version 2. One JSON object per line: a Request in; a Reply out, or Events while subscribed. See docs/protocol.md.",
+  "description": "Protocol version 3. One JSON object per line: a Request in; a Reply out, or Events while subscribed. See docs/protocol.md.",
   "anyOf": [
     {
       "$ref": "#/$defs/Request"
@@ -121,7 +121,7 @@
       "description": "A request on the wire.",
       "properties": {
         "v": {
-          "default": 2,
+          "default": 3,
           "title": "V",
           "type": "integer"
         },
@@ -133,8 +133,6 @@
               "next": "#/$defs/Request",
               "pick": "#/$defs/PickRequest",
               "prev": "#/$defs/Request",
-              "prune": "#/$defs/PruneRequest",
-              "reload": "#/$defs/ReloadRequest",
               "remove": "#/$defs/Request",
               "resume": "#/$defs/Request",
               "save_settings": "#/$defs/SaveSettingsRequest",
@@ -153,35 +151,16 @@
               "$ref": "#/$defs/PickRequest"
             },
             {
-              "$ref": "#/$defs/PruneRequest"
-            },
-            {
               "$ref": "#/$defs/SettingsRequest"
             },
             {
               "$ref": "#/$defs/SaveSettingsRequest"
             },
             {
-              "$ref": "#/$defs/ReloadRequest"
-            },
-            {
               "$ref": "#/$defs/Subscribe"
             }
           ],
           "title": "Request"
-        },
-        "config": {
-          "anyOf": [
-            {
-              "format": "path",
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Config"
         }
       },
       "required": [
@@ -195,7 +174,6 @@
         "kind": {
           "enum": [
             "protocol",
-            "wrong_config",
             "config_error",
             "unknown_target",
             "not_attached",
@@ -513,19 +491,6 @@
           ],
           "default": null,
           "title": "Error"
-        },
-        "config": {
-          "anyOf": [
-            {
-              "format": "path",
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Config"
         }
       },
       "title": "Overview",
@@ -834,78 +799,6 @@
       "title": "PrevResult",
       "type": "object"
     },
-    "PruneRequest": {
-      "additionalProperties": false,
-      "description": "Drop any state left of playlist ids the settings don't have.",
-      "properties": {
-        "command": {
-          "const": "prune",
-          "default": "prune",
-          "title": "Command",
-          "type": "string"
-        }
-      },
-      "title": "PruneRequest",
-      "type": "object"
-    },
-    "PruneResult": {
-      "description": "State left of playlist ids the settings don't have was dropped.",
-      "properties": {
-        "command": {
-          "const": "prune",
-          "default": "prune",
-          "title": "Command",
-          "type": "string"
-        },
-        "dropped": {
-          "items": {
-            "type": "string"
-          },
-          "title": "Dropped",
-          "type": "array"
-        }
-      },
-      "required": [
-        "dropped"
-      ],
-      "title": "PruneResult",
-      "type": "object"
-    },
-    "ReloadRequest": {
-      "additionalProperties": false,
-      "description": "Import the config file again (after it was edited; until Phase 4b 3b).",
-      "properties": {
-        "command": {
-          "const": "reload",
-          "default": "reload",
-          "title": "Command",
-          "type": "string"
-        }
-      },
-      "title": "ReloadRequest",
-      "type": "object"
-    },
-    "ReloadResult": {
-      "description": "The config file was imported again and the playlists restarted.",
-      "properties": {
-        "command": {
-          "const": "reload",
-          "default": "reload",
-          "title": "Command",
-          "type": "string"
-        },
-        "warnings": {
-          "default": [],
-          "items": {
-            "type": "string"
-          },
-          "title": "Warnings",
-          "type": "array"
-        }
-      },
-      "title": "ReloadResult",
-      "type": "object"
-    },
     "RemoveResult": {
       "properties": {
         "command": {
@@ -977,16 +870,10 @@
               "$ref": "#/$defs/ResumeResult"
             },
             {
-              "$ref": "#/$defs/PruneResult"
-            },
-            {
               "$ref": "#/$defs/SettingsResult"
             },
             {
               "$ref": "#/$defs/SaveSettingsResult"
-            },
-            {
-              "$ref": "#/$defs/ReloadResult"
             }
           ],
           "discriminator": {
@@ -1001,10 +888,8 @@
               "pick": "#/$defs/PickResult",
               "hold": "#/$defs/HoldResult",
               "resume": "#/$defs/ResumeResult",
-              "prune": "#/$defs/PruneResult",
               "settings": "#/$defs/SettingsResult",
-              "save_settings": "#/$defs/SaveSettingsResult",
-              "reload": "#/$defs/ReloadResult"
+              "save_settings": "#/$defs/SaveSettingsResult"
             }
           }
         },

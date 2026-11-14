@@ -8,9 +8,8 @@ remove all of it. Nothing here needs admin rights: everything is per user.
 | What | Windows | Linux |
 |---|---|---|
 | Start at login | a value in the registry's per-user Run key | a `.desktop` file in `~/.config/autostart` |
-| Your config | `%LOCALAPPDATA%\wallpaper_py\config.toml` | `~/.config/wallpaper_py/config.toml` |
-| State (history, shuffle order) | `%LOCALAPPDATA%\wallpaper_py\state.sqlite3` (another config file: `state-<hash of its path>.sqlite3`) | `~/.local/share/wallpaper_py/state.sqlite3` (likewise) |
-| Favourites, to-remove lists | `favourites.txt`, `to-remove.txt` next to the state (or where the config says) | same |
+| Settings and state (playlists, history, shuffle order) | `%LOCALAPPDATA%\wallpaper_py\state.sqlite3` | `~/.local/share/wallpaper_py/state.sqlite3` |
+| Favourites, to-remove lists | `favourites.txt`, `to-remove.txt` next to the state (or where Settings says) | same |
 | Logs | `%LOCALAPPDATA%\wallpaper_py\Logs\` | `~/.local/state/wallpaper_py/log/` |
 | Rendered wallpapers (cache) | `%LOCALAPPDATA%\wallpaper_py\Cache\rendered\` | `~/.cache/wallpaper_py/rendered/` |
 | How its processes talk | named pipes `\\.\pipe\wallpaper_py-…` | socket files `wallpaper_py-…` in the temp folder (usually `/tmp`) |
@@ -32,8 +31,7 @@ now, without a console window:
 C:\path\to\wallpaper_py\.venv\Scripts\pythonw.exe -m wallpaper_py tray
 ```
 
-plus `--config <path>` if you started the app with a config file other
-than the default. Only the tray app starts at login; the window (Home,
+Only the tray app starts at login; the window (Home,
 Library, Settings) starts when you open it.
 
 **Windows**: the entry is the value `wallpaper_py` under
@@ -101,10 +99,9 @@ last keyboard or mouse input (to pause while you're away).
 1. In the tray menu, untick **Start at login**, then **Quit**.
 2. Delete the folders from the table above: on Windows
    `%LOCALAPPDATA%\wallpaper_py` holds all of them; on Linux
-   `~/.config/wallpaper_py`, `~/.local/share/wallpaper_py`,
-   `~/.local/state/wallpaper_py` and `~/.cache/wallpaper_py`. Keep
-   `config.toml`, `favourites.txt` and `to-remove.txt` if you want them
-   later.
+   `~/.local/share/wallpaper_py`, `~/.local/state/wallpaper_py` and
+   `~/.cache/wallpaper_py`. Keep `favourites.txt` and `to-remove.txt` if
+   you want them later.
 3. Delete the wallpaper_py folder itself (with its `.venv`).
 
 Your wallpapers stay as they were last set (the last rendered images are

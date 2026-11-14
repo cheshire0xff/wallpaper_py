@@ -69,14 +69,13 @@ flowchart LR
     opener ==>|"show page / ok"| uiserver
     uiserver -->|"show_requested"| windows
     client -->|"overview_changed, changed"| windows
-    windows -->|"run (also reload)"| client
-    windows -->|"settings: edit config.toml"| file[("config.toml")]
+    windows -->|"run (also settings, save_settings)"| client
     windows -->|"want"| thumbs
     thumbs -.->|"loaded"| windows
     server -->|"received, subscribed"| worker
     worker -->|"reply, broadcast"| server
     tray -->|"open_window"| opener
-    tray -->|"run, reload: submit"| host
+    tray -->|"run: submit"| host
     screens -->|"settled: request_tick"| host
     host -.->|"_submit, _tick, _stop"| worker
     timer -->|"timeout"| worker
@@ -95,7 +94,7 @@ UI thread -> service thread (all queued; `ServiceHost` is the UI's only door in)
 | Signal | Slot | Carries |
 |---|---|---|
 | `QThread.started` | `ServiceWorker.start` | - |
-| `ServiceHost._submit` | `ServiceWorker.submit` (calls `ServiceWorker.execute`) | request id, `Request` (or `ReloadRequest`: `ServiceHost.reload` submits one) |
+| `ServiceHost._submit` | `ServiceWorker.submit` (calls `ServiceWorker.execute`) | request id, a `CommandRequest` |
 | `ServiceHost._tick` | `ServiceWorker.tick` | - (an extra tick) |
 | `ServiceHost._stop` | `ServiceWorker.stop` | - |
 
@@ -118,7 +117,7 @@ Inside the service thread (direct):
 | `CommandServer.subscribed` | `ServiceWorker._welcome` -> `CommandServer.send_event` (the current `Overview`) |
 | a change (tick or command) | `ServiceWorker._announce`: `ServiceWorker.changed` and `CommandServer.broadcast` |
 | a new overview | `ServiceWorker._publish`: `ServiceWorker.overview_changed` and `CommandServer.broadcast` |
-| an error from the service (a command, a tick, the overview) | `ServiceWorker._failed`: a `ConfigError` stops the service (`ServiceWorker._fail`; commands answer with it until a reload), any other is logged |
+| an error from the service (a command, a tick, the overview) | `ServiceWorker._failed`: a `ConfigError` (a list file went bad) stops the service (`ServiceWorker._fail`; commands answer with it, and each tick tries to open it again), any other is logged |
 
 Inside the UI thread (direct):
 
@@ -127,22 +126,18 @@ Inside the UI thread (direct):
 | `ScreenWatcher.settled` | `ServiceHost.request_tick` |
 | `ServiceHost.overview_changed` | `Tray.show_overview` (redraws the menu) |
 | tray menu items (playlist commands, including the *Hold* toggle) | `Tray.run` -> `ServiceHost.submit` (reply callback: `Tray._replied`) |
-| *Reload config* | `Tray.reload` -> `ServiceHost.reload`, the `reload` command (reply callback: `Tray._reloaded`: the error or the warnings, one notification) |
 | *Open wallpaper_py* / *Library* / *Settings…* (the page: home, library, settings) | `Tray.open_window` -> `WindowOpener.open` |
 | `WindowOpener.failed` | `Tray.notify` |
 | `QSystemTrayIcon.messageClicked` | `Tray._message_clicked` (after the "No playlists yet" notification at start: `Tray.open_window` on Settings; other notifications open nothing) |
 | *No playlists yet: add one…* (only without playlists) | `Tray.open_window` on Settings |
 
-`ServiceWorker.start` creates the `CommandServer` once, before opening the
-service. `reload` is a command like the others (from the socket, the
-tray's *Reload config* or the Settings page), run by
-`ServiceWorker.execute` itself rather than by `commands.execute`: it only
-closes and reopens the service (which imports config.toml into the stored
-settings until Phase 4b step 3b: `commands.import_config`), then ticks
-(which publishes the new overview) and replies with the warnings or the
-config error. The socket keeps answering across reloads (with the config
-error while the config is broken). `ServiceWorker.stop` closes the socket
-before the service, which also ends every subscription.
+`ServiceWorker.start` creates the `CommandServer` once, then ticks; the
+first tick opens the service (`ServiceWorker._open`). While the service is
+down (it could not open, or a list file went bad), every
+`ServiceWorker.tick` tries to open it again, logging the same error only
+once; the socket keeps answering meanwhile, with the error.
+`ServiceWorker.stop` closes the socket before the service, which also ends
+every subscription.
 
 `settings` and `save_settings` run in `commands.execute` like the playlist
 commands. When a command's `Outcome.render` is set (a `save_settings`
@@ -156,10 +151,9 @@ the new overview is published, both before the reply.
 | Signal | Slot |
 |---|---|
 | `UiServer.show_requested` (a page) | `MainWindow.open_page` (shows that page and brings the window to the front) |
-| `SocketClient.overview_changed` | `UiServer.follow` (without --config, the window uses the app's config, which the overview names) |
 | `SocketClient.overview_changed`, `SocketClient.failed` | `MainWindow._show_status`, `MainWindow._show_failure` (the `Sidebar`'s status line) |
 | `SocketClient.overview_changed`, `SocketClient.failed` | `HomePage.show_overview`, `HomePage.show_error` |
-| `SocketClient.overview_changed`, `SocketClient.failed` | `SettingsPage.show_overview` (the first one names the file to edit; the monitors for the drawing), `SettingsPage.show_error` |
+| `SocketClient.overview_changed`, `SocketClient.failed` | `SettingsPage.show_overview` (the monitors; the first one without an error loads the settings: `SettingsPage.load`), `SettingsPage.show_error` |
 | `Sidebar.page_chosen` (a page's item clicked) | `MainWindow.show_page` |
 | `HomePage.page_wanted` (*Add one in Settings*, shown without playlists) | `MainWindow.show_page` |
 | `SettingsPage.modified` (unsaved edits come or go) | `MainWindow._modified` (the "*" in the title) |
@@ -168,13 +162,13 @@ the new overview is published, both before the reply.
 | Home's countdown `QTimer` (every second, only while a playlist counts down) | `HomePage.refresh_schedule` |
 | `ThumbnailLoader.loaded` (an image is ready) | `HomePage._thumbnail_loaded` (the rows and `MonitorsView` that still show it) |
 | `Tabs.current_changed` (Settings' sub-tabs) | `QStackedWidget.setCurrentIndex` |
-| `PlaylistEditor.edited`, and the *General* tab's fields | `SettingsPage._edited` -> `SettingsPage._refresh` (problems, summaries, Save / Revert, the status line, the drawing) |
-| `PlaylistEditor.open_requested` (a closed playlist's summary row clicked) | `SettingsPage.open_playlist` (the others close) |
-| `MonitorsView.clicked` (a monitor's id; the Settings drawing is clickable) | `SettingsPage._monitor_clicked` -> `SettingsPage.monitor_menu` (pops up) |
-| a playlist's *Monitors* menu `QMenu.aboutToShow` | `SettingsPage._fill_monitors_menu` |
-| `QMenu.triggered` (either menu; the item's data says what) | `SettingsPage._menu_triggered` -> `SettingsPage.choose` |
+| `PlaylistEditor.edited`, and the *General* tab's fields | `SettingsPage._edited` -> `SettingsPage._refresh` (problems, summaries, the monitor rows, Save / Revert, the status line, the drawing) |
+| `PlaylistEditor.toggle_requested` (a playlist's header row clicked) | `SettingsPage._toggle_playlist` -> `SettingsPage.open_playlist` (the others close) |
+| `MonitorsView.clicked` (a monitor's id; the Settings drawing is clickable) | `SettingsPage.select_monitor` (outlined; its rows below) |
+| the *Monitor* drop-down's `currentIndexChanged` | `SettingsPage._monitor_chosen` -> `SettingsPage.select_monitor` |
+| the *Playlist* and *Mode* drop-downs' `currentIndexChanged`, *Forget monitor* | `SettingsPage._playlist_chosen`, `SettingsPage._mode_chosen`, `SettingsPage._forget` (the selected monitor's row in the draft) |
 | `PlaylistEditor.delete_requested`, `PlaylistEditor.browse_requested` | `SettingsPage._delete_playlist`, `SettingsPage._browse_folder` |
-| *Save* / *Revert* / *Load the file again* | `SettingsPage.save` (via `SettingsPage._save_clicked`), `SettingsPage.revert`, `SettingsPage.load_file` |
+| *Save* / *Revert* / *Load the settings again* | `SettingsPage.save` (via `SettingsPage._save_clicked`), `SettingsPage.revert`, `SettingsPage.load` |
 | `MainWindow.closed` (the window closed) | `process._Closer.window_closed`: `UiServer` closes; `QApplication.quit` now, or on `SocketClient.idle` if a command still waits for its reply (`SocketClient.busy`) |
 | `SocketClient.ended` (the app quit) | `QApplication.quit` |
 
@@ -204,7 +198,7 @@ sequenceDiagram
     participant H as ServiceHost<br/>UI thread
 
     CLI->>S: connect, write one JSON line, then block
-    S->>S: CommandServer._received: validate, check the config file
+    S->>S: CommandServer._received: validate
     S->>W: CommandServer.received(connection_id, request)
     W->>W: ServiceWorker.execute: commands.execute(service, request)
     W--)H: ServiceWorker.changed(change), if the command changed a wallpaper
@@ -352,39 +346,36 @@ sequenceDiagram
   holds the page weakly); closing the window waits for running jobs
   (`HomePage.shutdown` -> `ThumbnailLoader.close`).
 
-Saving on the Settings page (the UI process edits config.toml like an
-editor would; the app imports it into its settings again, until Phase 4b
-step 3b replaces the page with one on `settings` / `save_settings`):
+The Settings page (the app keeps the settings; the page reads and writes
+them only through its commands):
 
 ```mermaid
 sequenceDiagram
     participant C as SocketClient
     participant S as SettingsPage
-    participant F as config.toml
     participant W as ServiceWorker<br/>app, service thread
 
-    C->>S: overview_changed: SettingsPage.show_overview (names the app's file)
-    S->>F: SettingsPage.load_file: read it, as text
-    Note over S: edits: SettingsPage._refresh validates every change,<br/>renders the new text and checks it with the core's parser
-    S->>F: SettingsPage.save: still what was read? then write (temp + replace)
-    S->>C: Client.run(reload), reply to SettingsPage.reloaded
-    C->>W: reload: ServiceWorker.execute closes and reopens the service,<br/>which imports the file into the stored settings
-    W->>C: overview_changed (every page redraws), then the ReloadResult
-    C->>S: the reply: "Saved; the app is using it", or the config error
+    C->>S: overview_changed: SettingsPage.show_overview (the monitors)
+    S->>C: SettingsPage.load: Client.run(settings), reply to SettingsPage.loaded
+    C->>S: SettingsResult: the settings and their revision
+    Note over S: edits: a settings_draft.Draft; SettingsPage._refresh<br/>checks it (settings_draft.problems) after every change
+    S->>C: SettingsPage.save: Client.run(save_settings: the whole edit, the revision)
+    C->>W: save_settings: commands.execute stores and uses them,<br/>then ServiceWorker.tick renders what changed
+    W->>C: overview_changed (every page redraws), then the SaveSettingsResult
+    C->>S: SettingsPage.saved: the new revision, and the warnings if any
 ```
 
-- Only what changed is written (`core.config_edit.render`, tomlkit): no
-  change gives the identical file, an edit touches only its own lines, and
-  comments stay.
-- The file changed on disk since the page read it (a hand edit): nothing
-  is written; the window says so and offers *Load the file again*
-  (`SettingsPage.load_file`).
-- Home follows the reload through its overview like after any other
-  change; the Settings page doesn't talk to it.
+- Saved since they were read (`stale_settings`): nothing is saved; the page
+  says so and offers *Load the settings again* (`SettingsPage.load`). A
+  value the app refuses (`invalid_settings`): the message shows, the edits
+  stay.
+- Home follows a save through its overview like after any other change;
+  the Settings page doesn't talk to it.
 - Closing the window with unsaved settings shows the Settings page and asks
   Save / Discard / Cancel (`MainWindow.closeEvent` ->
-  `SettingsPage.confirm_close`, before `MainWindow.closed`); Cancel, or a
-  Save that can't happen, keeps the window open.
+  `SettingsPage.confirm_close`, before `MainWindow.closed`). Cancel, or a
+  Save that can't happen, keeps the window open; Save sends the edit and
+  keeps it open until the reply, then `SettingsPage.saved` closes it.
 
 Shutdown of the app (tray *Quit* or Ctrl+C): `app.quit()` ends the UI event
 loop -> `ServiceHost.shutdown` emits `_stop` (queued) and waits for the
@@ -395,8 +386,8 @@ emits `SocketClient.ended`, which quits it too.
 
 Shutdown of the UI process: its window closes -> `MainWindow.closed`
 -> `UiServer` closes (no new show requests) -> `QApplication.quit`, at
-once or, if a command is still in flight (the `reload` of a Save chosen
-on closing: it is written on later turns of the event loop), on
+once or, if a command is still in flight (its request is written on
+later turns of the event loop), on
 `SocketClient.idle` once its reply came -> the subscription closes; the lock is released and the process exits, which
 gives its memory back. The app runs on.
 

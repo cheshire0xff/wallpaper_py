@@ -19,7 +19,6 @@ import logging
 import time
 import weakref
 from collections.abc import Callable
-from pathlib import Path
 from typing import override
 
 from PySide6.QtCore import QObject, QTimer, Signal, Slot
@@ -83,7 +82,6 @@ class SocketClient(Client):
     def __init__(
         self,
         name: str,
-        config_path: Path | None,  # None: whatever config the app runs
         start_app: Callable[[], None] | None,
         *,
         start_timeout_s: float = START_TIMEOUT_S,
@@ -91,7 +89,6 @@ class SocketClient(Client):
     ) -> None:
         super().__init__(parent)
         self._name = name
-        self._config_path = config_path
         self._start_app = start_app
         self._start_timeout_s = start_timeout_s
         self._deadline: float | None = None  # set once the app was started
@@ -142,7 +139,7 @@ class SocketClient(Client):
 
         self._in_flight += 1
 
-        envelope = Envelope(request=request, config=self._config_path)
+        envelope = Envelope(request=request)
         ipc.LineRequest(self._name, ipc.encode(envelope), answered, failed, parent=self)
 
     def reply_done(self, reply: Reply, on_reply: ReplyCallback) -> None:
@@ -181,7 +178,7 @@ class SocketClient(Client):
     @Slot()
     def _subscribe(self) -> None:
         if (socket := self._current()) is not None:
-            envelope = Envelope(request=Subscribe(), config=self._config_path)
+            envelope = Envelope(request=Subscribe())
             socket.write(ipc.encode(envelope))
 
     @Slot()

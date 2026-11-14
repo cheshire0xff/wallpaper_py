@@ -1,79 +1,47 @@
 """
 The Settings page's form (settings.py), as rows without boxes
-(docs/design/settings.png): each `SettingRow` has its name and a muted
-one-line description on the left and its control on the right, all
-controls in one column; fields are borderless and filled.
+(docs/design/settings-monitors.dc.html): each `SettingRow` has its name
+and a muted one-line description on the left and its control on the
+right, all controls in one column; fields are borderless and filled.
 
-One `PlaylistEditor` per playlist: open, it shows its heading (*Delete
-playlist*) and its rows; closed, a clickable summary ("ZeroMOD · sorted ·
-every 10m · fill") that asks to open it. Also the `Problem` shown under a
-field, and the texts the page derives from the settings as edited
-(monitors, the summary, the drawing, what changed, why Save is off).
-Widgets only report edits; the page owns the settings.
+One `PlaylistEditor` per playlist: a header row (its name, a muted summary
+while closed, a chevron) that opens or closes it, and when open its rows:
+Name, Folder, Order, Changes, the read-only *Shown on*, and *Delete
+playlist*. Also the `Problem` shown under a field. Widgets only report
+edits; the page owns the draft (settings_draft.py).
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from typing import override
 
-from PySide6.QtCore import QEvent, QPoint, QRectF, Qt, Signal, Slot
+from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, Signal, Slot
 from PySide6.QtGui import QPainter, QPaintEvent, QPalette
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QMenu,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
 
 from ...core.settings import MANUAL, Order
-from ...core.config_edit import (
-    DIRECTORY,
-    FAVOURITES,
-    IDLE,
-    INTERVAL,
-    MONITORS,
-    NAME,
-    NEW_INTERVAL,
-    TO_REMOVE,
-    Field,
-    PlaylistSettings,
-    Settings,
-    find_listed,
-)
-from ...core.model import ImageMode, MonitorId
-from ...protocol import DesktopMonitor, MonitorView, Overview, PlaylistView
 from . import theme
+from .settings_draft import DIRECTORY, INTERVAL, NAME, NEW_INTERVAL, PlaylistDraft
 
-UID = "uid"  # Qt property: the playlist a menu is about
 EVERY, MANUALLY = "every", MANUAL  # the Changes row's choices
 
 ORDERS: tuple[tuple[str, Order, str], ...] = (  # label, value, description
     ("Shuffle", Order.SHUFFLE, "Shuffle shows every image once before any repeats"),
     ("Sorted", Order.SORTED, "Sorted goes in natural order: 2 before 10"),
 )
-MODES: tuple[tuple[str, ImageMode, str], ...] = (  # label, value, tooltip
-    ("Fill", ImageMode.FILL, "Cover the screen, cropping"),
-    ("Fit", ImageMode.FIT, "The whole image, letterboxed"),
-    ("Stretch", ImageMode.STRETCH, "To the screen's shape"),
-)
 CHANGES = (("Every", EVERY), ("Manually", MANUALLY))
 CHANGES_HELP = {
     EVERY: "Active time: pauses while locked, idle or asleep",
     MANUALLY: "Only next, previous or pick change it",
-}
-FIELD_NAMES = {
-    NAME: "name",
-    DIRECTORY: "folder",
-    INTERVAL: "interval",
-    MONITORS: "monitors",
-    IDLE: "idle pause",
-    FAVOURITES: "favourites file",
-    TO_REMOVE: "to-remove file",
 }
 
 
@@ -148,8 +116,12 @@ def hint(text: str, parent: QWidget) -> QLabel:
 
 
 def select(box: QComboBox, value: object) -> None:
-    index = box.findData(value)
-    box.setCurrentIndex(max(index, 0))
+    """Choose the item with this data, without reporting it as an edit."""
+    index = max(box.findData(value), 0)
+    if index != box.currentIndex():
+        box.blockSignals(True)
+        box.setCurrentIndex(index)
+        box.blockSignals(False)
 
 
 class SettingRow(QWidget):
@@ -171,7 +143,8 @@ class SettingRow(QWidget):
     ) -> None:
         super().__init__(parent)
         self.label = QLabel(name, self)
-        self.description = theme.muted(description, self)
+        # Wraps rather than widening the row (a long "Mirrors …" text).
+        self.description = theme.muted(description, self, wrap=True)
         self.description.setVisible(bool(description))
         labels = QVBoxLayout()
         labels.setSpacing(2)
@@ -214,21 +187,30 @@ def control_row(*widgets: QWidget) -> QHBoxLayout:
 
 
 class PlaylistSummary(theme.PaintedButton):
-    """A closed playlist: its name, a muted summary, a chevron; a click opens it."""
+    """
+    A playlist's header row: its name, a muted summary (while closed), a
+    chevron (up while open); a click opens or closes it.
+    """
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__("", parent)
         self.summary = ""
         self.problem = False
+        self.expanded = False
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setFixedHeight(theme.space(7))
 
-    def set_summary(self, name: str, summary: str, problem: bool) -> None:
+    def set_summary(
+        self, name: str, summary: str, problem: bool, expanded: bool
+    ) -> None:
         self.setText(name)
         self.summary = summary
         self.problem = problem
+        self.expanded = expanded
         note = " (has a problem)" if problem else ""
-        self.setAccessibleName(f"{name}: {summary}{note}. Open")
+        action = "Close" if expanded else "Open"
+        text = f"{name}: {summary}{note}" if summary else f"{name}{note}"
+        self.setAccessibleName(f"{text}. {action}")
         self.update()
 
     @override
@@ -266,11 +248,16 @@ class PlaylistSummary(theme.PaintedButton):
         middle = round((self.height() - size) / 2)
         x = round(self.width() - size - theme.space(0.5))
         chevron = theme.tinted_pixmap("chevron-down", tones.text, size, ratio)
-        painter.drawPixmap(QPoint(x, middle), chevron)
+        painter.save()
+        painter.translate(QPointF(x + size / 2, middle + size / 2))
+        if self.expanded:
+            painter.rotate(180)
+        painter.drawPixmap(QPointF(-size / 2, -size / 2), chevron)
+        painter.restore()
         if self.problem:
             x -= size + theme.space()
             alert = theme.tinted_pixmap("circle-alert", tones.error, size, ratio)
-            painter.drawPixmap(QPoint(x, middle), alert)
+            painter.drawPixmap(QPointF(x, middle), alert)
         return x - theme.space()
 
 
@@ -280,33 +267,29 @@ class PlaylistSummary(theme.PaintedButton):
 class PlaylistEditor(QWidget):
     """
     One playlist's fields, under a thin divider. `edited` on every change;
-    the page collects the values (`settings`) and shows problems
-    (`show_problems`) and the summary (`set_summary`). Monitors are set by
-    the page (`set_monitors`): they change through menus. Closed, only the
-    summary shows; `open_requested` asks the page to open it.
+    the page collects the values (`draft`) and shows problems
+    (`show_problems`), the summary (`set_summary`) and where it is shown
+    (`set_shown_on`). The header row asks the page to open or close it
+    (`toggle_requested`).
     """
 
     # pylint: disable=too-many-instance-attributes
 
     edited = Signal()
-    delete_requested = Signal(int)  # uid
-    browse_requested = Signal(int)  # uid
-    open_requested = Signal(int)  # uid
+    delete_requested = Signal(str)  # playlist id
+    browse_requested = Signal(str)  # playlist id
+    toggle_requested = Signal(str)  # playlist id
 
-    def __init__(self, playlist: PlaylistSettings, parent: QWidget | None = None):
+    def __init__(self, playlist: PlaylistDraft, parent: QWidget | None = None):
         super().__init__(parent)
-        self.uid = playlist.uid
-        self.origin = playlist.origin
         self.playlist_id = playlist.id
-        self._monitors = playlist.monitors
         self._expanded = True
 
         self.summary = PlaylistSummary(self)
-        self.heading = theme.heading(playlist.name, self)
         self.delete_button = theme.TextButton("Delete playlist", self)
         self.name_edit = line_edit(playlist.name, "Playlist name", self)
         self.directory_edit = line_edit(playlist.directory, "Folder", self)
-        self.directory_edit.setPlaceholderText("The folder with its images")
+        self.directory_edit.setPlaceholderText("Choose a folder")
         self.directory_edit.setCursorPosition(0)  # the start of the path shows
         self.browse_button = theme.TextButton("Browse…", self)
         self.order_combo = combo(self, "Order")
@@ -328,33 +311,19 @@ class PlaylistEditor(QWidget):
         self.interval_edit.setPlaceholderText("e.g. 30m")
         self.interval_edit.setFixedWidth(theme.space(14))
         self.interval_edit.setVisible(not playlist.manual)
-        self.mode_combo = combo(self, "Mode")
-        for text, mode, description in MODES:
-            self.mode_combo.addItem(text, mode)
-            self.mode_combo.setItemData(
-                self.mode_combo.count() - 1, description, Qt.ItemDataRole.ToolTipRole
-            )
-        select(self.mode_combo, playlist.mode)
-        self.monitors_label = theme.ValueLabel(parent=self)
-        self.monitors_label.setWordWrap(True)
-        self.monitors_button = theme.TextButton("Choose…", self)
-        self.monitors_menu = QMenu(self)
-        self.monitors_menu.setProperty(UID, self.uid)
-        self.problems = {
-            key: Problem(self) for key in (NAME, DIRECTORY, INTERVAL, MONITORS)
-        }
+        self.shown_label = theme.ValueLabel(parent=self)
+        self.shown_label.setWordWrap(True)
+        self.problems = {key: Problem(self) for key in (NAME, DIRECTORY, INTERVAL)}
         self._build()
 
-        self.name_edit.textChanged.connect(self._name_changed)
+        self.name_edit.textChanged.connect(self._changed)
         self.directory_edit.textChanged.connect(self._changed)
         self.interval_edit.textChanged.connect(self._changed)
         self.order_combo.currentIndexChanged.connect(self._order_changed)
-        self.mode_combo.currentIndexChanged.connect(self._changed)
         self.changes_combo.currentIndexChanged.connect(self._changes_changed)
         self.delete_button.clicked.connect(self._delete)
         self.browse_button.clicked.connect(self._browse)
-        self.monitors_button.clicked.connect(self._show_monitors_menu)
-        self.summary.clicked.connect(self._open)
+        self.summary.clicked.connect(self._toggle)
 
     def _build(self) -> None:
         indent = theme.space(3)
@@ -366,6 +335,13 @@ class PlaylistEditor(QWidget):
             "",
             control_row(self.changes_combo, self.interval_edit),
             self.problems[INTERVAL],
+            parent=self,
+            indent=indent,
+        )
+        self.shown_row = SettingRow(
+            "Shown on",
+            "Set on each monitor, above",
+            self.shown_label,
             parent=self,
             indent=indent,
         )
@@ -388,35 +364,21 @@ class PlaylistEditor(QWidget):
             ),
             self.order_row,
             self.changes_row,
-            SettingRow(
-                "Mode",
-                "How an image fits its monitor",
-                self.mode_combo,
-                parent=self,
-                indent=indent,
-            ),
-            SettingRow(
-                "Monitors",
-                "Two or more show the same image (mirrored)",
-                control_row(self.monitors_label, self.monitors_button),
-                self.problems[MONITORS],
-                parent=self,
-                indent=indent,
-            ),
+            self.shown_row,
         ]
         self._describe()
 
-        top = QHBoxLayout()
-        top.setContentsMargins(0, theme.space(2), 0, theme.space(0.5))
-        top.addWidget(self.heading, 1)
-        top.addWidget(self.delete_button)
         self.details = QWidget(self)
         details = QVBoxLayout(self.details)
         details.setContentsMargins(0, 0, 0, theme.space())
         details.setSpacing(0)
-        details.addLayout(top)
         for row in rows:
             details.addWidget(row)
+        delete = QHBoxLayout()
+        delete.setContentsMargins(theme.space(3), theme.space(0.5), 0, 0)
+        delete.addWidget(self.delete_button)
+        delete.addStretch(1)
+        details.addLayout(delete)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -424,41 +386,38 @@ class PlaylistEditor(QWidget):
         layout.addWidget(theme.Divider(self))
         layout.addWidget(self.summary)
         layout.addWidget(self.details)
-        self.summary.setVisible(False)
 
     # -- values ------------------------------------------------------------------
 
-    def settings(self) -> PlaylistSettings:
-        manual = self.changes_combo.currentData() == MANUALLY
-        return PlaylistSettings(
-            uid=self.uid,
-            origin=self.origin,
+    def draft(self) -> PlaylistDraft:
+        return PlaylistDraft(
             id=self.playlist_id,
             name=self.name_edit.text(),
             directory=self.directory_edit.text().strip(),
-            monitors=self._monitors,
-            interval=MANUAL if manual else self.interval_edit.text().strip(),
             order=self.order_combo.currentData(),
-            mode=self.mode_combo.currentData(),
+            interval=MANUAL if self.manual() else self.interval_edit.text().strip(),
         )
-
-    def set_monitors(self, monitor_ids: tuple[MonitorId, ...], text: str) -> None:
-        self._monitors = monitor_ids
-        self.monitors_label.setText(text)
-        self.monitors_button.setAccessibleName(f"Choose the monitors: {text}")
 
     def show_problems(self, problems: Mapping[str, str]) -> None:
         for key, problem in self.problems.items():
             problem.set_problem(problems.get(key))
 
     def set_summary(self, summary: str, problem: bool) -> None:
-        self.summary.set_summary(self.name_edit.text() or "(no name)", summary, problem)
+        """The header row; the summary shows only while closed."""
+        self.summary.set_summary(
+            self.name_edit.text().strip() or "(no name)",
+            "" if self._expanded else summary,
+            problem,
+            self._expanded,
+        )
+
+    def set_shown_on(self, text: str, muted: bool) -> None:
+        self.shown_label.setText(text)
+        self.shown_label.setEnabled(not muted)
 
     def set_expanded(self, expanded: bool) -> None:
-        """Open (the heading and the rows) or closed (the summary row)."""
         self._expanded = expanded
         self.details.setVisible(expanded)
-        self.summary.setVisible(not expanded)
 
     def expanded(self) -> bool:
         return self._expanded
@@ -479,11 +438,6 @@ class PlaylistEditor(QWidget):
     def _changed(self) -> None:
         self.edited.emit()
 
-    @Slot(str)
-    def _name_changed(self, name: str) -> None:
-        self.heading.setText(name or "(no name)")
-        self.edited.emit()
-
     @Slot(int)
     def _order_changed(self, index: int) -> None:
         del index
@@ -499,150 +453,12 @@ class PlaylistEditor(QWidget):
 
     @Slot()
     def _delete(self) -> None:
-        self.delete_requested.emit(self.uid)
+        self.delete_requested.emit(self.playlist_id)
 
     @Slot()
     def _browse(self) -> None:
-        self.browse_requested.emit(self.uid)
+        self.browse_requested.emit(self.playlist_id)
 
     @Slot()
-    def _open(self) -> None:
-        self.open_requested.emit(self.uid)
-
-    @Slot()
-    def _show_monitors_menu(self) -> None:
-        button = self.monitors_button
-        self.monitors_menu.popup(button.mapToGlobal(QPoint(0, button.height())))
-
-
-# -- texts ---------------------------------------------------------------------------
-
-
-def monitors_text(
-    monitor_ids: Sequence[MonitorId], listed: Sequence[DesktopMonitor]
-) -> str:
-    """ "AW3225QF + ZeroMOD (off) + <id> (not connected)", or "None"."""
-    parts = []
-    for monitor_id in monitor_ids:
-        monitor = find_listed(monitor_id, listed)
-        if monitor is None:
-            parts.append(f"{monitor_id} (not connected)")
-        elif monitor.geometry is None:
-            parts.append(f"{monitor.name} (off)")
-        else:
-            parts.append(monitor.name)
-    return " + ".join(parts) or "None"
-
-
-def summary_text(playlist: PlaylistSettings, listed: Sequence[DesktopMonitor]) -> str:
-    """A closed playlist's row: "ZeroMOD · sorted · every 10m · fill"."""
-    monitors = monitors_text(playlist.monitors, listed)
-    if not playlist.monitors:
-        monitors = "no monitor"
-    if playlist.manual:
-        changes = "manually"
-    else:
-        changes = f"every {playlist.interval}" if playlist.interval else "no interval"
-    mode = next(label for label, value, _ in MODES if value == playlist.mode)
-    return " · ".join((monitors, playlist.order.value, changes, mode.lower()))
-
-
-_PLAYLIST_FIELDS = (
-    ("name", "name"),
-    ("folder", "directory"),
-    ("monitors", "monitors"),
-    ("order", "order"),
-    ("interval", "interval"),
-    ("mode", "mode"),
-)
-_GENERAL_FIELDS = (
-    ("pausing while locked", "pause_when_locked"),
-    ("the idle pause", "pause_when_idle"),
-    ("the favourites file", "favourites_file"),
-    ("the to-remove file", "to_remove_file"),
-)
-MAX_CHANGES = 3  # named in the status line; the rest are counted
-
-
-def change_summary(base: Settings, edited: Settings) -> str:
-    """What differs, for the status line: "interval of konachan, new playlist strip"."""
-    parts: list[str] = []
-    before = {p.uid: p for p in base.playlists}
-    for playlist in edited.playlists:
-        old = before.pop(playlist.uid, None)
-        if old is None:
-            parts.append(f"new playlist {playlist.name or '(no name)'}")
-            continue
-        fields = [
-            label
-            for label, key in _PLAYLIST_FIELDS
-            if getattr(old, key) != getattr(playlist, key)
-        ]
-        if fields:
-            parts.append(f"{', '.join(fields)} of {old.name}")
-    parts += [f"deleted {p.name}" for p in before.values()]
-    parts += [
-        label
-        for label, key in _GENERAL_FIELDS
-        if getattr(base, key) != getattr(edited, key)
-    ]
-    if len(parts) > MAX_CHANGES:
-        more = len(parts) - MAX_CHANGES
-        parts = [*parts[:MAX_CHANGES], f"{more} more"]
-    return ", ".join(parts)
-
-
-def drawing(settings: Settings, listed: Sequence[DesktopMonitor]) -> Overview:
-    """What MonitorsView draws: the monitors with the playlists as edited."""
-    playlists = []
-    for playlist in settings.playlists:
-        members = []
-        for monitor_id in playlist.monitors:
-            monitor = find_listed(monitor_id, listed)
-            members.append(
-                MonitorView(
-                    id=monitor.id if monitor else monitor_id,
-                    name=monitor.name if monitor else str(monitor_id),
-                    attached=monitor.attached if monitor else None,
-                )
-            )
-        playlists.append(
-            PlaylistView(
-                name=playlist.name or "(no name)",
-                monitors=tuple(members),
-                current=None,
-                favourite=False,
-            )
-        )
-    return Overview(playlists=tuple(playlists), monitors=tuple(listed))
-
-
-def unlisted_text(settings: Settings, listed: Sequence[DesktopMonitor]) -> str:
-    """The monitors in the config that the desktop doesn't list now."""
-    missing = [
-        f"{monitor_id} ({playlist.name})"
-        for playlist in settings.playlists
-        for monitor_id in playlist.monitors
-        if find_listed(monitor_id, listed) is None
-    ]
-    if not missing:
-        return ""
-    return (
-        f"In the config but not connected now: {', '.join(missing)}. They stay "
-        f"until you remove them (a playlist's Monitors menu)."
-    )
-
-
-def problem_summary(problems: Mapping[Field, str], settings: Settings) -> str:
-    """The first problem, for the line beside Save: "konachan, folder: …"."""
-    (uid, key), message = next(iter(problems.items()))
-    playlist = settings.playlist(uid) if uid is not None else None
-    if playlist is not None:
-        where = f"{playlist.name or 'a playlist'}, {FIELD_NAMES.get(key, key)}: "
-    elif key in FIELD_NAMES:
-        where = f"{FIELD_NAMES[key].capitalize()}: "
-    else:
-        where = ""
-    more = len(problems) - 1
-    tail = f" (and {more} more)" if more else ""
-    return f"Can't save yet. {where}{message}{tail}"
+    def _toggle(self) -> None:
+        self.toggle_requested.emit(self.playlist_id)

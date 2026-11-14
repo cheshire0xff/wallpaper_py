@@ -210,19 +210,3 @@ def test_hold_is_kept(tmp_path: Path) -> None:
         assert store.set_held("1", False)
         assert not store.set_held("1", False)
         assert not store.playlist_state("1").held
-
-
-def test_pruning_drops_the_state_of_other_playlists(store: Store) -> None:
-    add_playlists(store, "1", "2", "3", "4")
-    store.append_history("1", Path("a.jpg"), 1.0)
-    store.set_cursor("3", store.append_history("3", Path("c.jpg"), 1.0))
-    store.new_deck("3", [Path("c.jpg")])
-    store.set_held("4", True)
-    store.set_applied(MonitorId("mon"), "5", Path("d.jpg"), 1.0)
-    assert store.prune_playlists(["1", "2"]) == ["3", "4", "5"]
-    assert store.history_before("1")
-    assert store.playlist_state("3").cursor is None
-    assert not store.history_before("3") and not store.deck_paths("3")
-    assert not store.playlist_state("4").held
-    assert store.applied(MonitorId("mon")) is None
-    assert not store.prune_playlists(["1", "2"])

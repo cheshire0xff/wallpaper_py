@@ -18,8 +18,6 @@ import sys
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
-from functools import partial
-from pathlib import Path
 
 from PySide6.QtCore import QCoreApplication
 from PySide6.QtGui import QGuiApplication
@@ -50,7 +48,6 @@ LOCK_WAIT_S = 5.0
 
 @dataclass(frozen=True)
 class AppOptions:
-    config_path: Path
     tray: bool
     tick_period: float = 5.0
     quit_after_ticks: int | None = None  # for tests
@@ -85,7 +82,6 @@ def _run_locked(app: QCoreApplication, options: AppOptions, platform: Platform) 
     socket_name = server_name(paths.data_dir())
     host = ServiceHost(
         ServiceSettings(
-            config_path=options.config_path,
             backend_factory=platform.backend_factory,
             presence_factory=platform.presence_factory,
             thread_scope=platform.thread_scope,
@@ -103,16 +99,11 @@ def _run_locked(app: QCoreApplication, options: AppOptions, platform: Platform) 
 
     tray: Tray | None = None
     if options.tray:
-        opener = WindowOpener(
-            ui_server_name(paths.data_dir()),
-            options.config_path,
-            partial(ui_command, options.config_path),
-        )
+        opener = WindowOpener(ui_server_name(paths.data_dir()), ui_command)
         tray = Tray(
             host,
             platform.autostart_factory(),
-            autostart_command(options.config_path),
-            options.config_path.parent,
+            autostart_command(),
             app.quit,
             open_window=opener.open,
         )
@@ -123,7 +114,7 @@ def _run_locked(app: QCoreApplication, options: AppOptions, platform: Platform) 
     if options.quit_after_ticks is not None:
         host.ticked.connect(_countdown(options.quit_after_ticks, app.quit))
 
-    log.info("Started (config: %s, socket: %s)", options.config_path, socket_name)
+    log.info("Started (data: %s, socket: %s)", paths.data_dir(), socket_name)
     with quit_on_interrupt(app):
         host.start()
         if tray is not None:

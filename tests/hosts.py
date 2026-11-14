@@ -2,7 +2,6 @@
 
 from collections.abc import Callable
 from contextlib import nullcontext
-from pathlib import Path
 
 from PySide6.QtNetwork import QLocalSocket
 from pytestqt.qtbot import QtBot
@@ -13,13 +12,10 @@ from wallpaper_py.core.backend import Backend
 from .fakes import FakePresence
 
 
-def make_host(
-    config: Path, backend_factory: Callable[[], Backend], server_name: str
-) -> ServiceHost:
+def make_host(backend_factory: Callable[[], Backend], server_name: str) -> ServiceHost:
     """Not started; ticks only at start and on request. Shut it down after."""
     return ServiceHost(
         ServiceSettings(
-            config_path=config,
             backend_factory=backend_factory,
             presence_factory=FakePresence,
             thread_scope=nullcontext,

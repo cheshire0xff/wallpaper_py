@@ -27,10 +27,16 @@ from wallpaper_py.core import paths
 
 from .clients import NO_WINDOW, run_python
 from .hosts import make_host
-from .fakes import FakeAutostart, FakeBackend, FakePresence, make_monitor, write_config
+from .fakes import (
+    FakeAutostart,
+    FakeBackend,
+    FakePresence,
+    make_monitor,
+    write_settings,
+)
 from .test_ui_launcher import SHOW
 
-# argv: data dir, config, page. A UI process as `wallpaper ui` runs it,
+# argv: data dir, page. A UI process as `wallpaper ui` runs it,
 # logging to stderr; if no app runs it "starts" a harmless command (never
 # the real app).
 UI = """
@@ -39,13 +45,13 @@ from pathlib import Path
 from wallpaper_py.app.processes import setup_logging
 from wallpaper_py.app.ui.process import UiOptions, run_ui
 from wallpaper_py.core import paths
-data_dir, config, page = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+data_dir, page = Path(sys.argv[1]), sys.argv[2]
 paths.data_dir = lambda: data_dir
 paths.log_file = lambda: data_dir / "wallpaper.log"
 setup_logging(None)
-def harmless(config):
+def harmless():
     return [sys.executable, "-c", "pass"]
-sys.exit(run_ui(UiOptions(config, page, app_command=harmless)))
+sys.exit(run_ui(UiOptions(page, app_command=harmless)))
 """
 
 
@@ -54,7 +60,8 @@ def fixture_host(tmp_path: Path) -> Iterator[ServiceHost]:
     """The app's service and socket, in this process."""
     backend = FakeBackend([make_monitor("Main")])
     name = ipc.server_name(paths.data_dir())
-    host = make_host(write_config(tmp_path), lambda: backend, name)
+    write_settings(tmp_path)
+    host = make_host(lambda: backend, name)
     yield host
     assert host.shutdown(5_000)
 
@@ -90,7 +97,7 @@ def run_ui_while(options: UiOptions, step: Callable[[], bool]) -> int:
 
 
 def test_ui_shows_the_live_overview_until_its_window_closes(
-    qtbot: QtBot, host: ServiceHost, tmp_path: Path
+    qtbot: QtBot, host: ServiceHost
 ) -> None:
     del qtbot
     with_host_started(host)
@@ -108,7 +115,7 @@ def test_ui_shows_the_live_overview_until_its_window_closes(
         window.close()  # the UI process ends with its window
         return True
 
-    assert run_ui_while(UiOptions(tmp_path / "config.toml"), close_when_live) == 0
+    assert run_ui_while(UiOptions(), close_when_live) == 0
     assert len(seen) == 2
     assert seen[0].startswith("a.jpg | 8×6 · ")
     assert seen[0].endswith(" · sorted, every 10m · next in 10m")
@@ -129,7 +136,7 @@ def with_host_started(host: ServiceHost) -> None:
 
 @pytest.mark.parametrize("page", ["home", "library", "settings"])
 def test_the_window_opens_on_the_page_asked_for(
-    host: ServiceHost, tmp_path: Path, page: PageName
+    host: ServiceHost, page: PageName
 ) -> None:
     """`wallpaper ui <page>` (the CLI and the tray start it so)."""
     with_host_started(host)
@@ -144,13 +151,13 @@ def test_the_window_opens_on_the_page_asked_for(
         window.close()
         return True
 
-    options = UiOptions(tmp_path / "config.toml", page)
+    options = UiOptions(page)
     assert run_ui_while(options, close_when_shown) == 0
     assert shown == [page, True]
 
 
 def test_a_second_request_brings_the_window_to_its_page(
-    host: ServiceHost, tmp_path: Path
+    host: ServiceHost,
 ) -> None:
     """A second `wallpaper ui settings` (or a tray entry) while one runs."""
     with_host_started(host)
@@ -165,7 +172,7 @@ def test_a_second_request_brings_the_window_to_its_page(
         if not answers and not pages:
             pages.append(window.current_page())
             window.showMinimized()
-            request = ShowRequest(page="settings", config=tmp_path / "config.toml")
+            request = ShowRequest(page="settings")
             ipc.LineRequest(  # as the tray asks: never blocking
                 ui_server_name(paths.data_dir()),
                 ipc.encode(request),
@@ -180,13 +187,13 @@ def test_a_second_request_brings_the_window_to_its_page(
         window.close()
         return True
 
-    assert run_ui_while(UiOptions(tmp_path / "config.toml"), ask_then_close) == 0
+    assert run_ui_while(UiOptions(), ask_then_close) == 0
     assert pages == ["home", "settings"]
     assert answers == [b'{"error":null}']
 
 
 def test_one_ui_process_that_ends_with_the_app(qtbot: QtBot, tmp_path: Path) -> None:
-    config = write_config(tmp_path)
+    write_settings(tmp_path)
     data = str(paths.data_dir())
     backend = FakeBackend([make_monitor("Main")])
     platform = Platform(
@@ -200,7 +207,7 @@ def test_one_ui_process_that_ends_with_the_app(qtbot: QtBot, tmp_path: Path) -> 
         try:
             processes.append(
                 subprocess.Popen(  # pylint: disable=consider-using-with
-                    [sys.executable, "-c", UI, data, str(config), "home"],
+                    [sys.executable, "-c", UI, data, "home"],
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
                     text=True,
@@ -210,18 +217,16 @@ def test_one_ui_process_that_ends_with_the_app(qtbot: QtBot, tmp_path: Path) -> 
             name = ipc.server_name(Path(data), "ui")
             deadline = time.monotonic() + 30
             while time.monotonic() < deadline:  # until it listens
-                result = run_python(qtbot, SHOW, name, "library", str(config))
+                result = run_python(qtbot, SHOW, name, "library")
                 shows["library"] = result.stdout.strip()
                 if shows["library"] != "NONE":
                     break
                 qtbot.wait(200)
-            result = run_python(qtbot, SHOW, name, "home", str(tmp_path / "x.toml"))
-            shows["other config"] = result.stdout.strip()
         finally:
             QCoreApplication.quit()  # the app quits: so must the UI
 
     QTimer.singleShot(0, scenario)
-    assert run_app(AppOptions(config, tray=False), platform) == 0
+    assert run_app(AppOptions(tray=False), platform) == 0
     assert len(processes) == 1
     ui = processes[0]
     try:
@@ -230,7 +235,6 @@ def test_one_ui_process_that_ends_with_the_app(qtbot: QtBot, tmp_path: Path) -> 
         if ui.poll() is None:
             ui.kill()
     assert shows["library"] == "SHOWN"  # one UI process; it took the request
-    assert shows["other config"].startswith("ERROR The open windows use")
     assert ui.returncode == 0, err
     assert "Connected to the app" in err  # it followed the app's events
     assert "The app closed the connection" in err

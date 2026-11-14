@@ -16,14 +16,20 @@ from wallpaper_py.core.model import (
     MonitorNotAttachedError,
     Rectangle,
 )
-from wallpaper_py.core.settings import PlaylistSettings, Settings
+from wallpaper_py.core.paths import state_db
+from wallpaper_py.core.settings import (
+    MonitorSettings,
+    Order,
+    PlaylistSettings,
+    Settings,
+)
 from wallpaper_py.core.store import Store
 
 GUID = "{e6f07b5f-ee97-4a90-b076-33f57bf4eaa7}"
 
 
 def fake_id(name: str, pnp: str | None = None) -> str:
-    """The id `make_monitor` gives a monitor (what a config holds)."""
+    """The id `make_monitor` gives a monitor (what the settings hold)."""
     return f"\\\\?\\DISPLAY#{pnp or name.upper()}#5&48925cd&0&UID1#{GUID}"
 
 
@@ -142,26 +148,39 @@ def add_playlists(store: Store, *ids: str) -> Store:
     return store
 
 
-def toml_ids(*names: str) -> str:
-    """The `monitors` of a config: the ids of fake monitors, as a TOML array."""
-    return "[" + ", ".join(f"'{fake_id(name)}'" for name in names) + "]"
+def save_settings(settings: Settings) -> Settings:
+    """`settings` in the state database (paths.state_db), as the app keeps them."""
+    with Store(state_db()) as store:
+        store.save_settings(settings, revision=None)
+    return settings
 
 
-def write_config(directory: Path) -> Path:
-    """A config with one sorted playlist "walls" of a.jpg, b.jpg, c.jpg on Main."""
+def walls_settings(directory: Path, *monitors: str) -> Settings:
+    """
+    One sorted playlist "walls" (id walls-id) of a.jpg, b.jpg, c.jpg in
+    `directory`/walls, every 10m, on `monitors` (default: Main); no idle pause.
+    """
     make_images(directory / "walls", "a.jpg", "b.jpg", "c.jpg")
-    config = directory / "config.toml"
-    config.write_text(
-        "pause_when_idle = false\n"
-        "[playlists.walls]\n"
-        "id = 'walls-id'\n"
-        "directory = 'walls'\n"
-        f"monitors = {toml_ids('Main')}\n"
-        'order = "sorted"\n'
-        'interval = "10m"\n',
-        encoding="utf-8",
+    walls = PlaylistSettings(
+        id="walls-id",
+        name="walls",
+        directory=directory / "walls",
+        order=Order.SORTED,
+        interval=600.0,
     )
-    return config
+    return Settings(
+        playlists=(walls,),
+        monitors=tuple(
+            MonitorSettings(id=MonitorId(fake_id(name)), playlist="walls-id")
+            for name in monitors or ("Main",)
+        ),
+        pause_when_idle=None,
+    )
+
+
+def write_settings(directory: Path, *monitors: str) -> Settings:
+    """`walls_settings`, saved in the state database."""
+    return save_settings(walls_settings(directory, *monitors))
 
 
 # Every image make_images writes has a colour of its own, so the image a

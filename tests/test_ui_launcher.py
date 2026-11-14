@@ -18,19 +18,16 @@ from wallpaper_py.app.ui.launcher import (
     ui_server_name,
 )
 
-from wallpaper_py.protocol import Overview
-
 from .clients import run_python
 
-# argv: server name, page, config. Prints SHOWN, NONE or ERROR <message>.
+# argv: server name, page. Prints SHOWN, NONE or ERROR <message>.
 SHOW = """
 import sys
-from pathlib import Path
 from wallpaper_py.app.ui.launcher import ShowRequest, show_in_running_ui
 from wallpaper_py.core.model import WallpaperError
-name, page, config = sys.argv[1:4]
+name, page = sys.argv[1:3]
 try:
-    shown = show_in_running_ui(name, ShowRequest(page=page, config=Path(config)))
+    shown = show_in_running_ui(name, ShowRequest(page=page))
 except WallpaperError as err:
     print("ERROR", err)
 else:
@@ -43,14 +40,9 @@ def fixture_name(tmp_path: Path) -> str:
     return ui_server_name(tmp_path)
 
 
-@pytest.fixture(name="config")
-def fixture_config(tmp_path: Path) -> Path:
-    return tmp_path / "config.toml"
-
-
 @pytest.fixture(name="server")
-def fixture_server(name: str, config: Path) -> Iterator[UiServer]:
-    server = UiServer(name, config)
+def fixture_server(name: str) -> Iterator[UiServer]:
+    server = UiServer(name)
     server.listen()
     yield server
     server.close()
@@ -79,12 +71,11 @@ def test_opener_asks_the_running_ui(
     qtbot: QtBot,
     server: UiServer,
     name: str,
-    config: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     started = Started(monkeypatch)
     owner = QObject()
-    opener = WindowOpener(name, config, ui_command, parent=owner)
+    opener = WindowOpener(name, ui_command, parent=owner)
     with qtbot.waitSignal(server.show_requested) as shown:
         opener.open("library")
     assert shown.args == ["library"]
@@ -93,30 +84,13 @@ def test_opener_asks_the_running_ui(
 
 
 def test_opener_starts_a_ui_if_none_answers(
-    qtbot: QtBot, name: str, config: Path, monkeypatch: pytest.MonkeyPatch
+    qtbot: QtBot, name: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     started = Started(monkeypatch)
     owner = QObject()
-    WindowOpener(name, config, ui_command, parent=owner).open("home")
+    WindowOpener(name, ui_command, parent=owner).open("home")
     qtbot.waitUntil(lambda: bool(started.commands))
     assert started.commands == [["wallpaper", "ui", "home"]]
-
-
-def test_ui_refuses_another_config(
-    qtbot: QtBot,
-    server: UiServer,
-    name: str,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # pylint: disable=unused-argument
-    started = Started(monkeypatch)
-    owner = QObject()
-    opener = WindowOpener(name, tmp_path / "other.toml", ui_command, parent=owner)
-    with qtbot.waitSignal(opener.failed) as failed:
-        opener.open("home")
-    assert "The open windows use" in failed.args[0]
-    assert not started.commands
 
 
 def test_malformed_requests_get_an_error(
@@ -125,7 +99,7 @@ def test_malformed_requests_get_an_error(
     # pylint: disable=unused-argument
     answers: list[bytes] = []
     owner = QObject()
-    line = b'{"v": 2, "page": "kitchen", "config": "c"}\n'
+    line = b'{"v": 3, "page": "kitchen"}\n'
     ipc.LineRequest(
         name, line, answers.append, lambda *_: pytest.fail("failed"), parent=owner
     )
@@ -140,7 +114,7 @@ def test_another_protocol_version_is_refused(
     # pylint: disable=unused-argument
     answers: list[bytes] = []
     owner = QObject()
-    line = b'{"v": 1, "page": "home", "config": "c"}\n'
+    line = b'{"v": 1, "page": "home"}\n'
     ipc.LineRequest(
         name, line, answers.append, lambda *_: pytest.fail("failed"), parent=owner
     )
@@ -150,49 +124,20 @@ def test_another_protocol_version_is_refused(
 
 
 def test_blocking_show_from_a_starting_ui(
-    qtbot: QtBot, server: UiServer, name: str, config: Path, tmp_path: Path
+    qtbot: QtBot, server: UiServer, name: str
 ) -> None:
-    def show(page: str, config_path: Path) -> str:
-        result = run_python(qtbot, SHOW, name, page, str(config_path))
+    def show(page: str) -> str:
+        result = run_python(qtbot, SHOW, name, page)
         assert result.returncode == 0, result.stderr
         return result.stdout.strip()
 
     with qtbot.waitSignal(server.show_requested) as shown:
-        assert show("settings", config) == "SHOWN"
+        assert show("settings") == "SHOWN"
     assert shown.args == ["settings"]
-    assert show("home", tmp_path / "other.toml").startswith(
-        "ERROR The open windows use"
-    )
     server.close()
-    assert show("home", config) == "NONE"
+    assert show("home") == "NONE"
 
 
-def test_show_request_round_trip(config: Path) -> None:
-    request = ShowRequest(page="library", config=config)
+def test_show_request_round_trip() -> None:
+    request = ShowRequest(page="library")
     assert ShowRequest.model_validate_json(ipc.encode(request)) == request
-
-
-def test_without_a_config_any_will_do_until_the_app_says(
-    qtbot: QtBot, name: str, tmp_path: Path
-) -> None:
-    server = UiServer(name, None)  # `wallpaper ui` without --config
-    server.listen()
-    owner = QObject()
-
-    def ask(config: Path | None) -> str | None:
-        answers: list[bytes] = []
-        line = ipc.encode(ShowRequest(page="settings", config=config))
-        ipc.LineRequest(
-            name, line, answers.append, lambda *_: pytest.fail("failed"), parent=owner
-        )
-        qtbot.waitUntil(lambda: bool(answers))
-        return ShowReply.model_validate_json(answers[0]).error
-
-    try:
-        assert ask(None) is None and ask(tmp_path / "a.toml") is None
-        server.follow(Overview(config=tmp_path / "app.toml"))  # the app's config
-        assert ask(None) is None and ask(tmp_path / "app.toml") is None
-        error = ask(tmp_path / "a.toml")
-        assert error is not None and error.startswith("The open windows use")
-    finally:
-        server.close()

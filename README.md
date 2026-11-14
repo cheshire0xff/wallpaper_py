@@ -45,22 +45,18 @@ wallpaper set IMAGE --monitor NAME [--mode fill|fit|stretch]
 ### Playlists
 
 ```
-wallpaper [-c CONFIG] tray                   # the app, in the tray (what starts at login)
-wallpaper [-c CONFIG] run [--poll SECONDS]   # the app, headless in this terminal (Ctrl+C stops)
+wallpaper tray                               # the app, in the tray (what starts at login)
+wallpaper run [--poll SECONDS]               # the app, headless in this terminal (Ctrl+C stops)
 wallpaper status                             # playlists, monitors, current, upcoming
 wallpaper next|prev|fav|unfav|remove [TARGET]  # TARGET: playlist or monitor name
 wallpaper pick IMAGE [TARGET]                # show IMAGE now (any directory)
 wallpaper hold|resume [TARGET]               # stop / restart rotating
-wallpaper reload                             # read the config file again
 wallpaper ui [home|library|settings]         # open the window on a page (see below)
 ```
 
-Playlists are defined in a TOML file; start from
-[docs/config.example.toml](docs/config.example.toml) and save it where
-`wallpaper --help` says (or pass `--config`), or edit it in the settings
-page. `--config` picks the file the app starts with; commands to a
-running app don't need it (they go to whatever config it runs), and one
-given anyway must be the app's.
+Playlists are set up in the window's Settings page (`wallpaper ui
+settings`); the app keeps them with its state, so there is no settings file
+to edit.
 
 - A playlist rotates a directory (recursively), *sorted* (natural order) or
   *shuffled* (every image once before any repeats; the order is kept across
@@ -75,7 +71,7 @@ given anyway must be the app's.
   Pillow can open.
 - `hold` stops a playlist rotating until `resume` (the tray has a *Hold*
   toggle too); `next`, `prev` and `pick` still work, and the held state
-  survives restarts. `interval = "manual"` in the config makes a playlist
+  survives restarts. *Changes: Manually* in Settings makes a playlist
   that never changes by itself, only by `next` / `prev` / `pick` (it shows
   nothing until you pick or step it once). `status` and the tray show which
   playlists are held or manual.
@@ -102,12 +98,11 @@ The tray menu has a section per playlist (its monitors by name, the current
 image, which opens on click, *Next*, *Previous*, a *Favourite* toggle,
 *Remove*, and a *Hold* toggle unless it is manual; the header says *held* or
 *manual*), then *Open wallpaper_py* (the window on Home), *Library*,
-*Settings…*, *Reload config*
-(after editing it by hand; like `wallpaper reload`, it notifies the error or
-any warnings), *Open config folder*, *Start at login* and *Quit*. Left-click
+*Settings…*, *Start at login* and *Quit*. Left-click
 opens the window on Home. The icon turns
-grey while rotation is paused and shows a red badge if the config can't be
-loaded. Start at login uses the per-user Run key on Windows and
+grey while rotation is paused and shows a red badge if the app has
+stopped (a favourites or to-remove file it can't read; it starts again
+once the file is fixed). Start at login uses the per-user Run key on Windows and
 `~/.config/autostart` on Linux; it starts `pythonw -m wallpaper_py tray`
 from the current environment, so no console window opens. The tray app logs
 to `wallpaper.log` in the per-user log directory (on Windows
@@ -127,21 +122,20 @@ and accent. It logs to `ui.log` next to `wallpaper.log`.
   scale with their current wallpapers, and a row per playlist with
   previous / next, favourite, remove and hold. Pointing at a row outlines
   its monitors.
-- **Settings** (`wallpaper ui settings`, tray *Settings…*): the config file
-  as a form. *Playlists*: click a monitor in the drawing to choose its
-  playlist (or *No playlist*, or *New playlist…*); one playlist open at a
-  time (the others show a summary), with its name, folder, order, changes
-  (every *duration* of active time, or manually), mode and monitors.
-  *General*:
-  pausing while locked or idle, and where favourites.txt / to-remove.txt
-  are. *About*: the version and every data location, with *Open folder* and
-  *Copy path*. It edits the file the running app uses, in place: only what
-  you changed is written, so your comments and layout stay, and hand
-  editing keeps working. Save asks the app to reload. Problems show next to
-  their field and keep *Save* off; if the file was edited by hand since the
-  page read it, nothing is overwritten and the page offers to load it
-  again. Unsaved changes stay while you visit other pages; closing the
-  window with them asks first.
+- **Settings** (`wallpaper ui settings`, tray *Settings…*). *Playlists*:
+  click a monitor in the drawing (or pick it from the *Monitor* list, which
+  also has monitors that are switched off or not connected) to choose its
+  playlist (*None*, a playlist, or *New playlist…*; monitors on one
+  playlist mirror it) and its mode (fill, fit, stretch). Below, the
+  playlists, one open at a time (the others show a summary): name,
+  folder, order, changes (every *duration* of active time, or manually)
+  and the monitors it is shown on. *General*: pausing while locked or
+  idle, and where favourites.txt / to-remove.txt are. *About*: the version
+  and every data location, with *Open folder* and *Copy path*. *Save*
+  sends everything to the app, which uses it at once (a changed mode or
+  folder shows before the page says it is saved). Problems show next to
+  their field and keep *Save* off. Unsaved changes stay while you visit
+  other pages; closing the window with them asks first.
 - **Library** (`wallpaper ui library`, tray *Library*): a placeholder for
   now.
 

@@ -9,19 +9,22 @@ this thread touches it.
 
 Everything reaches the service through `ServiceWorker.execute`, one at a
 time, between ticks: socket requests directly (the socket lives on this
-thread), the tray through `ServiceHost`. That includes `reload`, which
-closes the service and opens it again, importing the config file as it is
-now (until Phase 4b step 3b), and `save_settings`, after which it ticks so
-that the monitors show the new settings before the reply.
+thread), the tray through `ServiceHost`. After `save_settings` it ticks,
+so that the monitors show the new settings before the reply.
 Nothing on this thread may block waiting for a client or spin a nested
-event loop. Events (a change, a new
-overview) go to the UI thread as signals and to socket subscribers (the UI
-process) as lines, both from here.
+event loop. Events (a change, a new overview) go to the UI thread as
+signals and to socket subscribers (the UI process) as lines, both from
+here.
+
+The service stops when it can't go on (a list file went bad, see
+`_failed`); each tick then tries to open it again, so it is back once the
+file is fixed. Meanwhile commands answer with the error, and the overview
+shows it.
 
 `ServiceHost` is the UI thread's handle. It reaches the worker only through
-queued signals (requests, reload included; extra ticks; stop) and gets results back
-the same way (replies, the overview, changes); it never waits on the
-worker, except once at shutdown.
+queued signals (requests, extra ticks, stop) and gets results back the
+same way (replies, the overview, changes); it never waits on the worker,
+except once at shutdown.
 """
 
 from __future__ import annotations
@@ -31,7 +34,6 @@ import time
 from collections.abc import Callable
 from contextlib import AbstractContextManager, ExitStack
 from dataclasses import dataclass
-from pathlib import Path
 
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, Slot
 
@@ -52,8 +54,6 @@ from ..protocol import (
     Event,
     Overview,
     OverviewChangedEvent,
-    ReloadRequest,
-    ReloadResult,
     Reply,
     TargetRequest,
 )
@@ -66,7 +66,6 @@ ReplyCallback = Callable[[Reply], None]
 
 @dataclass(frozen=True)
 class ServiceSettings:
-    config_path: Path
     backend_factory: Callable[[], Backend]
     presence_factory: Callable[[], Presence]
     # Per-thread platform setup around the backend's life (backends.thread_scope).
@@ -101,11 +100,9 @@ class ServiceWorker(QObject):
     def start(self) -> None:
         self._thread_scope.enter_context(self._settings.thread_scope())
         if self._settings.server_name is not None:
-            # Once for the app's life: it keeps answering across reloads
-            # (with the error while the config is broken).
-            self._server = CommandServer(
-                self._settings.server_name, self._settings.config_path, self
-            )
+            # Once for the app's life: it keeps answering while the service
+            # is down (with the error).
+            self._server = CommandServer(self._settings.server_name, self)
             self._server.received.connect(self._answer)
             self._server.subscribed.connect(self._welcome)
             try:
@@ -117,9 +114,8 @@ class ServiceWorker(QObject):
         self._timer = QTimer(self)
         self._timer.setInterval(round(self._settings.tick_period * 1000))
         self._timer.timeout.connect(self.tick)
-        self._open()
         self._timer.start()
-        self.tick()
+        self.tick()  # opens the service
 
     @Slot()
     def stop(self) -> None:
@@ -131,21 +127,10 @@ class ServiceWorker(QObject):
         self._thread_scope.close()
         self.thread().quit()
 
-    def _reload(self) -> Reply:
-        """
-        The `reload` command: the service again, after importing the config
-        file as it is now (commands.import_config).
-        """
-        log.info("Reloading the config")
-        self._close()
-        self._open()
-        self.tick()  # publishes the new overview before the reply goes out
-        if self._service is None:
-            return self._error or ErrorReply.make("failed", "The service did not start")
-        return ReloadResult(warnings=tuple(self._service.settings.warnings()))
-
     @Slot()
     def tick(self) -> None:
+        if self._service is None:
+            self._open()  # down: try again (a list file may be fixed now)
         if self._service is not None:
             try:
                 for change in self._service.tick():
@@ -160,10 +145,6 @@ class ServiceWorker(QObject):
         """Run one command: the only way in for socket, tray and windows."""
         reply: Reply
         render = False  # monitors to render again: tick before the reply
-        if isinstance(request, ReloadRequest):
-            reply = self._reload()
-            log.info("reload: %r", reply)
-            return reply
         if self._service is None:
             reply = self._error or ErrorReply.make(
                 "failed", "The service is not running"
@@ -191,10 +172,10 @@ class ServiceWorker(QObject):
         The one handler for an error from the running service (a command, a
         tick, the overview); returns what a command answers.
 
-        - ConfigError: the config or a list file went bad while running
-          (e.g. saved with a byte order mark). The service stops, as for a
-          broken config at start; commands answer with the error and the
-          overview shows it until a reload succeeds.
+        - ConfigError: a list file went bad while running (e.g. saved
+          with a byte order mark). The service stops, as when it can't
+          start; commands answer with the error and the overview shows it
+          until a tick opens it again.
         - Any other WallpaperError: expected (a command already answered
           it); logged, the next tick retries.
         - Anything else: a bug, logged in full. The loop must outlive
@@ -241,7 +222,6 @@ class ServiceWorker(QObject):
             backend = settings.backend_factory()
             self._service = self._session.enter_context(
                 open_service(
-                    settings.config_path,
                     backend,
                     settings.presence_factory(),
                     settings.tick_period,
@@ -259,13 +239,15 @@ class ServiceWorker(QObject):
             log.warning("%s", warning)
         names = ", ".join(p.name for p in self._service.settings.playlists)
         log.info("Running playlists: %s", names)
-        # Put every current image back, rendered again: after a reboot, and
-        # after a reload that may have changed a mode.
+        # Put every current image back, rendered again: after a reboot, or
+        # after the service was down.
         self._service.restore()
 
     def _fail(self, error: Exception) -> None:
-        self._error = error_reply(error)
-        log.error("%s", self._error.error.message)
+        reply = error_reply(error)
+        if reply != self._error:  # each tick tries again: logged once
+            log.error("%s", reply.error.message)
+        self._error = reply
         self._close()
 
     def _close(self) -> None:
@@ -278,26 +260,16 @@ class ServiceWorker(QObject):
         if self._service is not None:
             try:
                 current = overview(self._service)
-                current = current.model_copy(
-                    update={"config": self._settings.config_path}
-                )
             except Exception as err:  # pylint: disable=broad-exception-caught
                 self._failed("Reading the overview", err)
                 if self._service is not None:  # still running: keep the last
                     return
         if current is None:  # no service, or overview() just stopped it
-            current = Overview(
-                error=self._error.error.message if self._error else None,
-                config=self._settings.config_path,
-            )
+            current = Overview(error=self._error.error.message if self._error else None)
         if current != self._overview:
             self._overview = current
             self.overview_changed.emit(current)
             self._broadcast(OverviewChangedEvent(overview=current))
-
-
-def _ignore(reply: Reply) -> None:
-    del reply
 
 
 class ServiceHost(QObject):
@@ -349,10 +321,6 @@ class ServiceHost(QObject):
     def request_tick(self) -> None:
         """An extra tick soon (e.g. a monitor came back)."""
         self._tick.emit()
-
-    def reload(self, callback: ReplyCallback | None = None) -> None:
-        """Read the config again: the `reload` command, like the socket's."""
-        self.submit(ReloadRequest(), callback or _ignore)
 
     def shutdown(self, timeout_ms: int = 10_000) -> bool:
         """

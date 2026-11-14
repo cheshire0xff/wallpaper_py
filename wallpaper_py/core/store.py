@@ -12,7 +12,7 @@ writes them through the app's commands.
 The database is the single source of truth, so a one-shot CLI command
 (`wallpaper next`) and a running `wallpaper run` in another process see the
 same state. WAL mode lets them read while the other writes. State is per OS
-and per config file (see core.paths.state_db) and holds full native paths.
+(see core.paths.state_db) and holds full native paths.
 
 Playlists are keyed by their `id`, not their name: a renamed playlist keeps
 its state with nothing to move.
@@ -359,20 +359,6 @@ class Store:
         self._db.execute(
             "UPDATE playlist SET deck_pos = ? WHERE id = ?", (position, playlist)
         )
-
-    def prune_playlists(self, keep: Iterable[str]) -> list[str]:
-        """Drop the state of every playlist not in `keep`; returns their ids."""
-        kept = set(keep)
-        with self.transaction():
-            # A playlist may have rows in some tables only.
-            known = " UNION ".join(
-                f"SELECT {column} FROM {table}" for table, column in _PLAYLIST_COLUMNS
-            )
-            rows = self._db.execute(known).fetchall()
-            stale = sorted(playlist for (playlist,) in rows if playlist not in kept)
-            for playlist in stale:
-                self._delete_playlist(playlist)
-        return stale
 
     # -- history -----------------------------------------------------------
 
