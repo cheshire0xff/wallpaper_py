@@ -1,7 +1,7 @@
 """
 The main window: a sidebar (Home, Library, Settings, and the app-wide
-status at its bottom) and the selected page (docs/plan.md, Phase 4, "One
-window"; docs/design/).
+status at its bottom) and the selected page (docs/design/README.md,
+"The look").
 
 `open_page` shows the window on a page and brings it to the front: the
 UI process calls it at start and for each "show" request on its socket

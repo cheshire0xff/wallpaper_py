@@ -1,7 +1,7 @@
 """
 Home, the main window's first page: the monitors to scale on a panel, then
-one row per playlist with its current wallpaper (docs/plan.md, Phase 4,
-"Look" and "One window"; docs/design/home.png).
+one row per playlist with its current wallpaper (docs/design/README.md,
+"The look"; docs/design/home.png).
 
 Everything it shows comes from the app through `Client`: it redraws from
 `overview_changed` (never polls), and after each new overview asks once

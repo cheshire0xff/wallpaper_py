@@ -1,5 +1,5 @@
 """
-The look every page shares (docs/plan.md, "Look" and "One window"; the
+The look every page shares (docs/design/README.md, "The look"; the
 mockups in docs/design/): Qt's native style and the system's palette, plus
 a few tones derived from it, constants and small painted widgets. Not a
 framework.

@@ -3,8 +3,8 @@
 Per-monitor wallpaper playlists for Windows and KDE Plasma: a PySide6 tray
 app, a CLI, and an on-demand UI process. Read these first:
 
-- [docs/plan.md](docs/plan.md): phases, decisions, what is next (the source
-  of truth for scope)
+- [docs/plan.md](docs/plan.md): phases, what is next, what is decided
+  against (the source of truth for scope)
 - [docs/architecture.md](docs/architecture.md): layers and their rules
 - [docs/app-wiring.md](docs/app-wiring.md): processes, threads, every
   signal connection

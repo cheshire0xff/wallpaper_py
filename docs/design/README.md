@@ -1,8 +1,44 @@
 # Design mockups
 
-The look the windows are built from (approved by the user; see "Look" and
-"One window" in [plan.md](../plan.md)). Dark mode is the one that matters;
-light mode only has to stay usable.
+The look the windows are built from (approved by the user; the rules
+below, the details in `app/ui/theme.py`). Dark mode is the one that
+matters; light mode only has to stay usable.
+
+## The look
+
+- **Follow the system**: Qt's native style on each OS (Windows 11 style,
+  Breeze on KDE), the system's light / dark mode and accent, read from the
+  `QPalette`. No stylesheets and no hard-coded colours, except the panel
+  behind images in light mode (wallpapers look washed out on white) and
+  the status dot's green / red (the palette has no such roles).
+- **One window with a sidebar**: *Home*, *Library*, *Settings*, each a
+  Lucide icon and a label; the selected page has an accent bar on its left
+  edge, a faint accent fill and a bold label; the app's status ("Rotation
+  active" / paused / error) at the bottom. The title bar is the OS's own.
+- **Dark tones**: the sidebar is the page's colour, set apart only by a
+  thin lighter line; the page is a shade darker than Qt's default dark
+  window; panels behind images are a little lighter than the page, not a
+  dark well.
+- **Icons**: a small bundled set of Lucide SVGs (ISC licence, kept with
+  them), tinted from the palette. Not `QIcon.fromTheme`: Windows has no
+  theme icons, and mixing sources looks inconsistent.
+- **Text**: at least 10.5 pt (Windows 11's body text is 14 px; Qt's
+  default there is 9 pt), so a larger system font is kept.
+- **The accent means "what you point at"**: hovering a playlist row
+  outlines its monitors; a toggle that is on is the accent icon on a faint
+  accent fill. Tooltips and accessible names say what a click does
+  ("Remove from favourites", "Resume").
+- **Settings as rows, no boxes**: each setting is a row, its name and a
+  muted one-line description on the left, its control on the right, all
+  controls in one column; fields are filled, without a border; sections
+  have a heading and a thin divider. Secondary actions are accent text
+  buttons; Save / Revert and the status line sit in a footer bar; sub-tabs
+  have an accent underline.
+- **Library** (Phase 5) follows the same page pattern: tabs, a toolbar
+  (filter, sort, *Hide removed*), the grid on the panel tone, a slim
+  fast-scroll bar.
+
+## Files
 
 - `home.png`: the Home page (monitors panel, playlists as rows).
 - `settings.png`: the Settings page (settings as rows, no boxes).

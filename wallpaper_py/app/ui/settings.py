@@ -1,5 +1,5 @@
 """
-The Settings page, monitor-first (docs/plan.md, Phase 4b;
+The Settings page, monitor-first (docs/architecture.md, "App shell";
 docs/design/settings-monitors.dc.html): settings as rows, sub-tabs, and
 Save / Revert with the status line in a footer bar.
 

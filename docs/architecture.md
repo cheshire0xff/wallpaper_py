@@ -235,7 +235,9 @@ No small preview shows sharpness (a small image enlarged on a 4K screen
 looks crisp in it) or pixel-level effects. The small copies are decoded
 for the screen with the highest scale when the window opens; a sharper
 screen attached later shows softer previews until the window is opened
-again (a known limitation, see plan.md, Phase 4b step 4).
+again. A known limitation, on purpose: decoding again while the window is
+open (new sizes, the cache dropped, late results refused) would add
+concurrency for a cosmetic issue that reopening fixes.
 
 The settings live in the state database (`core/store.py`), written only
 by the app: `settings` reads them with a revision, `save_settings` replaces
