@@ -9,8 +9,9 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QPoint, QSize
-from PySide6.QtGui import QImage
+from PIL import Image
+from PySide6.QtCore import QPoint
+from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtTest import QTest
 from pytestqt.qtbot import QtBot
 
@@ -35,10 +36,11 @@ from wallpaper_py.app.ui.home import (
 from wallpaper_py.app.ui.thumbnails import (
     Decoded,
     ImageInfo,
+    Sizes,
     Thumbnail,
     ThumbnailLoader,
 )
-from wallpaper_py.core.model import MonitorId
+from wallpaper_py.core.model import ImageMode, Look, MonitorId
 from wallpaper_py.core.service import Change
 from wallpaper_py.core.settings import Order
 from wallpaper_py.protocol import (
@@ -307,11 +309,14 @@ class FakeClient(BaseFakeClient):
             )
 
 
-def fake_decode(path: Path, box: QSize) -> Decoded:
+def fake_decode(path: Path, sizes: Sizes) -> Decoded:
     del path
-    image = QImage(box.width() // 4, box.height() // 4, QImage.Format.Format_RGB32)
-    image.fill(0x336699)
-    return Decoded(INFO, image)
+    thumbnail = QImage(
+        sizes.thumbnail[0], sizes.thumbnail[1], QImage.Format.Format_RGB32
+    )
+    thumbnail.fill(0x336699)
+    # Square: on a 16:9 screen, Fit leaves bars where Fill doesn't.
+    return Decoded(INFO, Image.new("RGB", (90, 90), (0x33, 0x66, 0x99)), thumbnail)
 
 
 class Clock:
@@ -334,7 +339,7 @@ def fixture_clock() -> Clock:
 
 @pytest.fixture(name="page")
 def fixture_page(qtbot: QtBot, client: FakeClient, clock: Clock) -> Iterator[HomePage]:
-    loader = ThumbnailLoader(QSize(480, 270), fake_decode)
+    loader = ThumbnailLoader(Sizes(480, (176, 99)), fake_decode)
     page = HomePage(client, loader, clock)
     qtbot.addWidget(page)
     page.resize(1000, 800)
@@ -378,6 +383,40 @@ def test_window_draws_the_overview(
     client.answer_status(OVERVIEW)
     assert konachan.details.text().endswith("shuffle, every 30m · next in 13m")
     assert fantasy.details.text().endswith("shuffle · manual")
+
+
+def colour_at(pixmap: QPixmap | None, x: float, y: float) -> tuple[int, int, int]:
+    """The colour at (x, y), as fractions of the pixmap's size."""
+    assert pixmap is not None
+    image = pixmap.toImage()
+    colour = image.pixelColor(
+        round(x * (image.width() - 1)), round(y * (image.height() - 1))
+    )
+    return colour.red(), colour.green(), colour.blue()
+
+
+def test_each_monitor_shows_its_look(
+    qtbot: QtBot, page: HomePage, client: FakeClient
+) -> None:
+    """
+    A monitor's preview is the renderer's: its screen's shape and its
+    look (two monitors of one playlist may differ), the whole of it drawn.
+    """
+    fit = AW.model_copy(update={"look": Look(ImageMode.FIT)})
+    client.publish(OVERVIEW.model_copy(update={"monitors": (fit, PLX, ZERO, TV)}))
+    view = page.monitors_view
+    qtbot.waitUntil(lambda: view.preview(AW.id) is not None)
+    fitted, filled = view.preview(AW.id), view.preview(PLX.id)
+    assert fitted is not None and filled is not None
+    ratio = view.devicePixelRatioF()
+    assert fitted.size().toTuple() == (round(480 * ratio), round(270 * ratio))
+    blue = (0x33, 0x66, 0x99)
+    assert colour_at(fitted, 0.5, 0.5) == blue
+    assert colour_at(fitted, 0.02, 0.5) == (0, 0, 0)  # a bar
+    assert colour_at(filled, 0.02, 0.5) == blue
+    assert view.preview(TV.id) is None  # no playlist
+    assert view.preview(ZERO.id) is None  # switched off
+    view.grab()  # paints them
 
 
 def test_the_countdown_runs_only_while_counting(

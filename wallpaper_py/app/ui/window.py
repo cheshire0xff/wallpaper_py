@@ -42,6 +42,7 @@ from .home import HomePage
 from .launcher import PageName
 from .library import LibraryPage
 from .settings import SettingsPage
+from .thumbnails import Sizes, ThumbnailLoader
 
 NAVIGATION: tuple[tuple[PageName, str, str], ...] = (  # page, label, icon
     ("home", "Home", "house"),
@@ -219,9 +220,15 @@ class MainWindow(QWidget):
         self.resize(1200, 800)
         self.setMinimumSize(880, 560)
         self._applied: theme.Tones | None = None
-        self.home = home if home is not None else HomePage(client)
+        # One loader for both pages: they show the same images.
+        self.loader = ThumbnailLoader(Sizes.sharpest(), parent=self)
+        self.home = home if home is not None else HomePage(client, self.loader)
         self.library = library if library is not None else LibraryPage()
-        self.settings = settings if settings is not None else SettingsPage(client)
+        self.settings = (
+            settings
+            if settings is not None
+            else SettingsPage(client, loader=self.loader)
+        )
         self.pages: dict[PageName, QWidget] = {
             "home": self.home,
             "library": self.library,
@@ -323,4 +330,5 @@ class MainWindow(QWidget):
         super().closeEvent(event)
         if event.isAccepted():
             self.home.shutdown()
+            self.loader.close()
             self.closed.emit()

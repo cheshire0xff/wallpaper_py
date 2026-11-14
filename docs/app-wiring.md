@@ -19,8 +19,8 @@ the receiving thread's event loop, so the sender never waits.
 |---|---|
 | **app**, UI thread (main thread, Qt event loop) | `QApplication`, `Tray`, `WindowOpener`, `ScreenWatcher`, and `ServiceHost`, the thin proxy to the service thread |
 | **app**, service thread (`QThread` "playlist-service") | `ServiceWorker` and everything it creates on that thread: the `CommandServer` (socket), the tick `QTimer`, COM (`backends.thread_scope`), the backend, the SQLite `Store`, the `PlaylistService` |
-| **UI process** (`wallpaper ui`, on demand), UI thread | `QApplication`, `UiServer` (its own socket), `SocketClient` (the app's socket), and the one `MainWindow`: its `Sidebar` and its pages, `HomePage` (with its `PlaylistRow`s, `MonitorsView` and `ThumbnailLoader`), `LibraryPage` (a placeholder until Phase 5), `SettingsPage` (with its `PlaylistEditor`s, a `MonitorsView` and the `AboutPage`) |
-| **UI process**, thumbnail threads (the `ThumbnailLoader`'s own `QThreadPool`, 2 threads) | nothing that lives there: each job reads one image file into a `QImage` and emits it back |
+| **UI process** (`wallpaper ui`, on demand), UI thread | `QApplication`, `UiServer` (its own socket), `SocketClient` (the app's socket), and the one `MainWindow`: its `ThumbnailLoader` (shared by Home and Settings), its `Sidebar` and its pages, `HomePage` (with its `PlaylistRow`s and `MonitorsView`), `LibraryPage` (a placeholder until Phase 5), `SettingsPage` (with its `PlaylistEditor`s, a `MonitorsView` and the `AboutPage`) |
+| **UI process**, thumbnail threads (the `ThumbnailLoader`'s own `QThreadPool`, 2 threads) | nothing that lives there: each job reads one image file with Pillow (a small copy, and the row's thumbnail as a `QImage`) and emits it back |
 | **CLI** (a separate process) | `ipc.send`: blocking client, no event loop |
 
 Only the service thread ever touches the `PlaylistService`, so the core needs
@@ -160,7 +160,7 @@ the new overview is published, both before the reply.
 | `PlaylistRow.hovered`, `MonitorsView.hovered` (the pointer: a playlist, or None) | `HomePage._hover` -> `MonitorsView.set_highlight`, `PlaylistRow.set_highlighted` |
 | `PlaylistRow.requested` (a button: playlist, command) | `HomePage._send` -> `Client.run` (reply: `HomePage.replied`) |
 | Home's countdown `QTimer` (every second, only while a playlist counts down) | `HomePage.refresh_schedule` |
-| `ThumbnailLoader.loaded` (an image is ready) | `HomePage._thumbnail_loaded` (the rows and `MonitorsView` that still show it) |
+| `ThumbnailLoader.loaded` (an image is ready) | `HomePage._thumbnail_loaded` (the rows and `MonitorsView` that still show it), `SettingsPage._image_loaded` (its `MonitorsView`) |
 | `Tabs.current_changed` (Settings' sub-tabs) | `QStackedWidget.setCurrentIndex` |
 | `PlaylistEditor.edited`, and the *General* tab's fields | `SettingsPage._edited` -> `SettingsPage._refresh` (problems, summaries, the monitor rows, Save / Revert, the status line, the drawing) |
 | `PlaylistEditor.toggle_requested` (a playlist's header row clicked) | `SettingsPage._toggle_playlist` -> `SettingsPage.open_playlist` (the others close) |
@@ -181,7 +181,9 @@ them when they paint.
 
 Thumbnail threads -> UI thread (queued): each job emits `_Relay.done`,
 which `ThumbnailLoader._done` receives on the UI thread; it makes the
-`QPixmap` there, caches it, and emits `ThumbnailLoader.loaded`.
+`QPixmap` there, caches it, and emits `ThumbnailLoader.loaded`. The
+monitor previews are rendered on the UI thread, when a `MonitorsView`
+paints (a few ms each, cached; `MonitorsView.preview`).
 
 `Client.run` sends each command on a connection of its own (an
 `ipc.LineRequest`); the reply comes back to the callback on this thread.
@@ -320,7 +322,7 @@ sequenceDiagram
     L->>P: PlaylistRow.show_view (text, chips, toggles: the overview's state)
     L->>T: ThumbnailLoader.want(current images)
     L->>C: Client.run(status): the schedule, one request at a time
-    T--)L: ThumbnailLoader.loaded(path): set on the rows still showing it
+    T--)L: ThumbnailLoader.loaded(path): set on the rows still showing it, and given to MonitorsView.set_image
     C->>L: the StatusResult: order, interval, time left
     Note over L: the countdown QTimer redraws the time left every second
     P->>L: PlaylistRow.requested(playlist, "fav")
@@ -337,14 +339,19 @@ sequenceDiagram
 - A toggle shows the overview's state: a click only sends the command
   (`fav` or `unfav`, `hold` or `resume`, chosen from the current state),
   and the next overview turns it on or off.
-- Thumbnails and image details (dimensions from the header, file size)
-  come from the files, on the `ThumbnailLoader`'s own pool: a job decodes
-  at a reduced size into a `QImage`; `ThumbnailLoader.want` takes jobs for
-  images no longer shown off the queue, and drops a result that arrives
-  for one anyway. Results are cached by path.
+- Thumbnails, the monitor previews and image details (dimensions, file
+  size) come from the files, on the `ThumbnailLoader`'s own pool: a job
+  decodes once with Pillow at a reduced size (a small copy that covers
+  the preview's longer side, and the row's thumbnail made from it);
+  `ThumbnailLoader.want` takes jobs for images no longer shown off the
+  queue, and drops a result that arrives for one anyway. Results are
+  cached by path. `MonitorsView` renders each monitor's preview from the
+  small copy with the renderer the app uses for the wallpaper, for the
+  monitor's screen size and look (`DesktopMonitor.look`).
 - A reply that arrives after the window closed is ignored (the callback
   holds the page weakly); closing the window waits for running jobs
-  (`HomePage.shutdown` -> `ThumbnailLoader.close`).
+  (`ThumbnailLoader.close`, by the window, which owns the loader; a page
+  closes only a loader it made itself, as in tests).
 
 The Settings page (the app keeps the settings; the page reads and writes
 them only through its commands):

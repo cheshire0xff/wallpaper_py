@@ -8,9 +8,10 @@ into `Settings` for `save_settings`. `problems` says what keeps a draft
 from being saved, per field, for the form to show next to it; the app
 checks again when it saves (core.settings.check_settings).
 
-Also the texts the page derives from a draft: monitor labels for the
+Also what the page derives from a draft: monitor labels for the
 drop-down (`monitor_entries`), what a playlist is shown on, the summary of
-a closed playlist and what changed (`change_summary`).
+a closed playlist, what changed (`change_summary`) and what the drawing
+shows (`drawing`, with `current_images`).
 """
 
 from __future__ import annotations
@@ -36,7 +37,7 @@ from ...core.settings import (
     parse_duration,
     same_path,
 )
-from ...protocol import DesktopMonitor
+from ...protocol import DesktopMonitor, MonitorView, Overview, PlaylistView
 from .arrangement import twins
 
 NEW_NAME = "New playlist"
@@ -524,3 +525,53 @@ def _row(settings: Settings, monitor_id: MonitorId) -> MonitorSettings | None:
 
 def mode_look(look: Look, mode: ImageMode) -> Look:
     return replace(look, mode=mode)
+
+
+def current_images(
+    base: Settings, draft: Draft, shown: Sequence[PlaylistView]
+) -> dict[str, Path]:
+    """
+    Playlist id -> the image it shows now (`shown`: the app's overview),
+    for the saved playlists still in `draft` with their folder unchanged:
+    a new folder shows an image from it once saved, unknown here.
+    """
+    by_name = {p.name.casefold(): p.current for p in shown if p.current is not None}
+    result: dict[str, Path] = {}
+    for saved in base.playlists:
+        edited = draft.playlist(saved.id)
+        if edited is None or not same_path(_path(edited.directory), saved.directory):
+            continue
+        if (image := by_name.get(saved.name.casefold())) is not None:
+            result[saved.id] = image
+    return result
+
+
+def drawing(
+    draft: Draft,
+    listed: tuple[DesktopMonitor, ...],
+    current: Mapping[str, Path] | None = None,
+) -> Overview:
+    """
+    What the drawing shows: the attached monitors with their looks and the
+    playlists as edited, each with its `current` image (by playlist id).
+    """
+    current = current or {}
+    names = {m.id: m.name for m in listed}
+    playlists = tuple(
+        PlaylistView(
+            name=playlist.name.strip() or "(no name)",
+            monitors=tuple(
+                MonitorView(id=m, name=names.get(m, str(m)), attached=m in names)
+                for m in draft.members(playlist.id)
+            ),
+            current=current.get(playlist.id),
+            favourite=False,
+        )
+        for playlist in draft.playlists
+    )
+    attached = tuple(
+        m.model_copy(update={"look": draft.monitor(m.id).look})
+        for m in listed
+        if m.attached
+    )
+    return Overview(playlists=playlists, monitors=attached)

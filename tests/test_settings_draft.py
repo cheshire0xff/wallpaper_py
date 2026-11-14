@@ -10,6 +10,7 @@ from wallpaper_py.app.ui.settings_draft import (
     Draft,
     PlaylistDraft,
     change_summary,
+    current_images,
     entry_names,
     interval_problem,
     monitor_entries,
@@ -26,7 +27,7 @@ from wallpaper_py.core.settings import (
     PlaylistSettings,
     Settings,
 )
-from wallpaper_py.protocol import DesktopMonitor, Geometry
+from wallpaper_py.protocol import DesktopMonitor, Geometry, PlaylistView
 
 
 def monitor(name: str, key: str, x: int | None) -> DesktopMonitor:
@@ -197,3 +198,17 @@ def test_change_summary(saved: Settings, tmp_path: Path) -> None:
     assert change_summary(saved, gone, names, {A}) == (
         "A shows no playlist, delete walls and its history"
     )
+
+
+def test_current_images_keep_a_folder_written_another_way(
+    saved: Settings, tmp_path: Path
+) -> None:
+    image = tmp_path / "walls" / "one.jpg"
+    shown = [PlaylistView(name="walls", monitors=(), current=image, favourite=False)]
+    draft = Draft.of(saved)
+    assert current_images(saved, draft, shown) == {"w": image}
+    same = replace(draft.playlists[0], directory=f" {tmp_path / 'walls' / '.'} ")
+    retyped = draft.with_playlist(same)
+    assert current_images(saved, retyped, shown) == {"w": image}
+    moved = draft.with_playlist(replace(same, directory=str(tmp_path / "other")))
+    assert not current_images(saved, moved, shown)  # unknown until saved

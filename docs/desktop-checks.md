@@ -27,6 +27,7 @@ Status: **ok** (with the date, when known) all steps seen working;
 | [9. Pick, hold and manual](#9-pick-hold-and-manual) | ok 2026-11-11, except waiting past an interval (steps 3, 6) | todo | todo |
 | [10. Looks: always rendered](#10-looks-always-rendered) | todo | todo | todo |
 | [11. Settings in the database](#11-settings-in-the-database) | todo | todo | todo |
+| [12. Previews: virtual monitors](#12-previews-virtual-monitors) | todo | todo | todo |
 
 ## 1. Monitors and `set`
 
@@ -360,3 +361,38 @@ no config file, no *Reload config* and no `--config`.
    then point it at another folder in Settings and Save: its monitors show
    an image from the new folder before the page says it is saved, and it
    stays held. *Previous* goes back to the image from the old folder.
+
+## 12. Previews: virtual monitors
+
+Phase 4b step 4: the monitor drawings show each image as the monitor
+shows it, rendered by the same renderer at a small size.
+
+1. **Home matches the screens.** Put one monitor of a mirrored playlist on
+   Fit and keep the other on Fill (Settings, Save). On Home, the Fit one
+   shows its image letterboxed with black bars, the Fill one cropped, as
+   on the real screens; compare each with its screen (the same part of
+   the image visible, the bars the same thickness relative to the screen).
+   A portrait image on a landscape monitor in Fit: bars left and right.
+2. **Settings shows the edit before saving.** In Settings, select a
+   monitor and switch *Mode* between Fill, Fit and Stretch without
+   saving: its preview changes at once each time, the other monitors stay
+   as they are, and the real screen doesn't change. Revert: back as saved.
+3. **No guessed image.** Point a playlist at another folder (not saved):
+   its monitors' previews go empty until it is saved; then they show the
+   image from the new folder. A monitor put on *New playlist…* is empty.
+   Retyping the same folder another way (`/` for `\`, other letter case,
+   a trailing `\`) keeps the preview, and Save stays off.
+4. **Previews are sharp enough.** At 150 % display scale (or on a 4K
+   monitor at 200 %), the previews and the row thumbnails are not blurry
+   or blocky, and an image with fine detail shows no jagged edges. With
+   screens at different scales: open the window on the 100 % one, then
+   move it to the 150 % one: still sharp there. Known limitation: if the
+   150 % one was switched off when the window opened and is switched on
+   while it stays open, previews there look soft; closing and opening
+   the window again makes them sharp.
+5. **A broken image keeps its details.** Make a playlist's current image
+   a cut-off JPEG (half a file): its Home row says it can't show the image
+   and still shows the resolution and file size.
+6. **The window stays responsive.** With large PNGs, press *Next* several
+   times quickly on Home and resize the window: no stall; each monitor
+   ends on its current image, in its look.

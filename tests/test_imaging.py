@@ -3,8 +3,16 @@ from pathlib import Path
 import pytest
 from PIL import Image, ImageChops, ImageStat
 
-from wallpaper_py.core.imaging import fill_box, fit_size, load, render
-from wallpaper_py.core.model import ImageMode, Look
+from wallpaper_py.core.imaging import (
+    fill_box,
+    fit_size,
+    image_size,
+    load,
+    load_small,
+    preview_size,
+    render,
+)
+from wallpaper_py.core.model import ImageLoadError, ImageMode, Look
 
 RED, GREEN, BLUE, BLACK = (255, 0, 0), (0, 255, 0), (0, 0, 255), (0, 0, 0)
 
@@ -131,3 +139,78 @@ def test_a_jpeg_turned_by_exif_is_not_decoded_too_small(tmp_path: Path) -> None:
     assert img.size[0] < img.size[1]  # upright
     # Half scale (400x300 as stored) would be 300x400 upright: too narrow.
     assert img.size[0] >= 400 and img.size[1] >= 300
+
+
+@pytest.mark.parametrize(
+    ("screen", "side", "expected"),
+    [
+        ((3840, 2160), 480, (480, 270)),
+        ((1080, 1920), 480, (270, 480)),
+        ((5120, 1440), 960, (960, 270)),
+    ],
+)
+def test_preview_size_keeps_the_screens_shape(
+    screen: tuple[int, int], side: int, expected: tuple[int, int]
+) -> None:
+    assert preview_size(screen, side) == expected
+
+
+@pytest.mark.parametrize(
+    ("stored", "expected"),
+    [
+        ((3000, 1000), (1440, 480)),  # wide: its height is the side
+        ((1000, 3000), (480, 1440)),  # tall: its width is
+        ((300, 200), (300, 200)),  # smaller already: never enlarged
+    ],
+)
+def test_load_small_covers_a_square(
+    tmp_path: Path, stored: tuple[int, int], expected: tuple[int, int]
+) -> None:
+    source = tmp_path / "image.png"
+    stripes(*stored).save(source)
+    small = load_small(source, 480)
+    assert small.image.size == expected
+    assert small.size == stored
+    assert small.image.mode == "RGB"
+
+
+def test_load_small_gives_the_size_as_shown(tmp_path: Path) -> None:
+    source = tmp_path / "phone.jpg"
+    exif = Image.Exif()
+    exif[0x0112] = 6  # turn 90 degrees to show it upright
+    stripes(1600, 900).save(source, quality=90, exif=exif)
+    small = load_small(source, 480)
+    assert small.size == (900, 1600)
+    assert small.image.size == (480, 853)
+    assert image_size(source) == (900, 1600)  # the header alone says the same
+
+
+def test_image_size_needs_an_image(tmp_path: Path) -> None:
+    fake = tmp_path / "fake.jpg"
+    fake.write_text("not an image", encoding="utf-8")
+    with pytest.raises(ImageLoadError):
+        image_size(fake)
+
+
+@pytest.mark.parametrize("mode", list(ImageMode))
+@pytest.mark.parametrize("screen", [(3840, 2160), (1080, 1920), (5120, 1440)])
+def test_a_preview_from_the_small_copy_is_the_wallpaper_smaller(
+    tmp_path: Path, mode: ImageMode, screen: tuple[int, int]
+) -> None:
+    """
+    What the windows show (a small copy, rendered small) is the wallpaper
+    the app sets (the file, rendered at the screen's size), smaller: for
+    every look, on any screen shape.
+    """
+    img = stripes(2700, 1200)
+    img.paste((255, 255, 255), (1200, 450, 1500, 750))
+    source = tmp_path / "image.png"
+    img.save(source)
+    look = Look(mode)
+    side = 480
+    output = preview_size(screen, side)
+    wallpaper = render(load(source, screen), screen, screen, look)
+    preview = render(load_small(source, side).image, screen, output, look)
+    expected = wallpaper.resize(output, Image.Resampling.LANCZOS)
+    difference = ImageStat.Stat(ImageChops.difference(preview, expected)).mean
+    assert max(difference) < 4, difference

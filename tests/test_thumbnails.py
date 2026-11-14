@@ -1,6 +1,7 @@
 """
-Thumbnails: read from the files off the UI thread, cached by path, and a
-result for an image that is no longer wanted is dropped.
+Images for the windows: read from the files off the UI thread, cached by
+path (never dropping a wanted one), and a result for an image that is no
+longer wanted is dropped.
 """
 
 from __future__ import annotations
@@ -11,18 +12,19 @@ from pathlib import Path
 
 import pytest
 from PIL import Image
-from PySide6.QtCore import QSize
-from PySide6.QtGui import QImage
+from PySide6.QtGui import QGuiApplication, QImage
 from pytestqt.qtbot import QtBot
 
 from wallpaper_py.app.ui.thumbnails import (
     Decoded,
     ImageInfo,
+    Sizes,
     ThumbnailLoader,
-    read_thumbnail,
+    read_image,
+    to_qimage,
 )
 
-BOX = QSize(480, 270)
+SIZES = Sizes(480, (176, 99))
 A, B, C = Path("/p/a.jpg"), Path("/p/b.jpg"), Path("/p/c.jpg")
 
 
@@ -36,15 +38,18 @@ class Decoder:
         self.threads: set[int] = set()
         self._lock = threading.Lock()
 
-    def __call__(self, path: Path, box: QSize) -> Decoded:
+    def __call__(self, path: Path, sizes: Sizes) -> Decoded:
         with self._lock:
             self.started.append(path)
             self.threads.add(threading.get_ident())
         if path in self.blocked:
             assert self._gate.wait(10)
-        image = QImage(box.width() // 2, box.height() // 2, QImage.Format.Format_RGB32)
-        image.fill(0x804020)
-        return Decoded(ImageInfo(3840, 2160, 1234), image)
+        small = Image.new("RGB", (sizes.side * 16 // 9, sizes.side), (128, 64, 32))
+        thumbnail = QImage(
+            sizes.thumbnail[0], sizes.thumbnail[1], QImage.Format.Format_RGB32
+        )
+        thumbnail.fill(0x804020)
+        return Decoded(ImageInfo(3840, 2160, 1234), small, thumbnail)
 
     def release(self) -> None:
         self._gate.set()
@@ -73,7 +78,7 @@ def fixture_decoder() -> Decoder:
 
 
 def make_loader(decoder: Decoder, threads: int = 2) -> ThumbnailLoader:
-    return ThumbnailLoader(BOX, decoder, threads=threads)
+    return ThumbnailLoader(SIZES, decoder, threads=threads)
 
 
 @pytest.fixture(name="loaders")
@@ -97,6 +102,7 @@ def test_decodes_off_the_ui_thread_and_caches(
     assert loaded.on_ui_thread == [True]  # delivered back on it
     thumbnail = loader.get(A)
     assert thumbnail is not None and thumbnail.pixmap is not None
+    assert thumbnail.small is not None and thumbnail.small.size == (853, 480)
     assert thumbnail.info == ImageInfo(3840, 2160, 1234)
     assert not loader.pending()
     loader.want([A])  # cached: no second decode
@@ -158,49 +164,103 @@ def test_wanting_others_after_a_job_ran_but_before_its_result_arrived(
 
 
 def test_the_cache_is_bounded(qtbot: QtBot, decoder: Decoder) -> None:
-    loader = ThumbnailLoader(BOX, decoder, cache_entries=2)
+    loader = ThumbnailLoader(SIZES, decoder, cache_entries=1)
     try:
         loaded = Loaded(loader)
         for path in (A, B, C):
             loader.want([path])
             qtbot.waitUntil(lambda p=path: p in loaded.paths)  # type: ignore[misc]
+        # C is wanted; of the others only the latest one stays.
         assert loader.get(A) is None
         assert loader.get(B) is not None and loader.get(C) is not None
     finally:
         loader.close()
 
 
-def test_read_thumbnail_reads_the_header_and_decodes_scaled(tmp_path: Path) -> None:
+def test_a_wanted_image_is_never_dropped(qtbot: QtBot, decoder: Decoder) -> None:
+    loader = ThumbnailLoader(SIZES, decoder, cache_entries=0)
+    try:
+        loaded = Loaded(loader)
+        loader.want([A, B, C])
+        qtbot.waitUntil(lambda: len(loaded.paths) == 3)
+        assert all(loader.get(p) is not None for p in (A, B, C))
+    finally:
+        loader.close()
+
+
+def test_read_image_makes_a_small_copy_and_a_thumbnail(tmp_path: Path) -> None:
     path = tmp_path / "big.jpg"
     Image.new("RGB", (3840, 2160), (200, 90, 40)).save(path)
-    result = read_thumbnail(path, BOX)
+    result = read_image(path, SIZES)
     assert result.error is None
     assert result.info == ImageInfo(3840, 2160, path.stat().st_size)
-    assert (result.image.width(), result.image.height()) == (480, 270)
+    # Covers 480 x 480: enough for a preview of any screen shape.
+    assert result.small is not None and result.small.size == (853, 480)
+    assert (result.thumbnail.width(), result.thumbnail.height()) == (176, 99)
 
     small = tmp_path / "small.png"
     Image.new("RGB", (100, 150)).save(small)
-    result = read_thumbnail(small, BOX)
+    result = read_image(small, SIZES)
     assert result.info == ImageInfo(100, 150, small.stat().st_size)
-    assert (result.image.width(), result.image.height()) == (100, 150)  # no upscale
+    assert result.small is not None and result.small.size == (100, 150)  # as is
+    assert (result.thumbnail.width(), result.thumbnail.height()) == (66, 99)
 
 
-def test_read_thumbnail_follows_the_exif_orientation(tmp_path: Path) -> None:
+def test_read_image_follows_the_exif_orientation(tmp_path: Path) -> None:
     path = tmp_path / "turned.jpg"
     exif = Image.Exif()
     exif[0x0112] = 6  # stored landscape, shown rotated 90 degrees
     Image.new("RGB", (1600, 900)).save(path, exif=exif)
-    result = read_thumbnail(path, BOX)
+    result = read_image(path, SIZES)
     assert result.info is not None
     assert (result.info.width, result.info.height) == (900, 1600)
+    assert result.small is not None and result.small.size == (480, 853)
     # Fitted into the box as shown (portrait in a landscape box).
-    assert result.image.height() == 270 and result.image.width() in (151, 152)
+    assert result.thumbnail.height() == 99 and result.thumbnail.width() in (55, 56)
 
 
-def test_read_thumbnail_errors(tmp_path: Path) -> None:
-    missing = read_thumbnail(tmp_path / "missing.jpg", BOX)
-    assert missing.info is None and missing.image.isNull() and missing.error
+def test_read_image_errors(tmp_path: Path) -> None:
+    missing = read_image(tmp_path / "missing.jpg", SIZES)
+    assert missing.info is None and missing.small is None
+    assert missing.thumbnail.isNull() and missing.error
     fake = tmp_path / "fake.jpg"
     fake.write_text("not an image", encoding="utf-8")
-    broken = read_thumbnail(fake, BOX)
-    assert broken.image.isNull() and broken.error
+    broken = read_image(fake, SIZES)
+    assert broken.small is None and broken.thumbnail.isNull() and broken.error
+    assert broken.info is None
+
+
+def test_read_image_keeps_the_details_of_a_file_that_fails_to_decode(
+    tmp_path: Path,
+) -> None:
+    whole = tmp_path / "whole.jpg"
+    Image.effect_noise((1600, 900), 64).convert("RGB").save(whole)
+    cut = tmp_path / "cut.jpg"  # e.g. still being downloaded
+    cut.write_bytes(whole.read_bytes()[: whole.stat().st_size // 2])
+    result = read_image(cut, SIZES)
+    assert result.error and result.small is None and result.thumbnail.isNull()
+    assert result.info == ImageInfo(1600, 900, cut.stat().st_size)
+
+
+def test_sizes_are_for_the_sharpest_screen(qtbot: QtBot) -> None:
+    del qtbot  # for the QApplication
+    ratio = max(s.devicePixelRatio() for s in QGuiApplication.screens())
+    assert Sizes.sharpest() == Sizes.at(ratio)
+    assert Sizes.at(2.0) == Sizes(960, (352, 198))
+
+
+def test_to_qimage_keeps_the_pixels() -> None:
+    image = Image.new("RGB", (3, 2), (10, 20, 30))
+    image.putpixel((2, 1), (200, 100, 50))
+    converted = to_qimage(image)
+    assert (converted.width(), converted.height()) == (3, 2)
+    assert (
+        converted.pixelColor(0, 0).red(),
+        converted.pixelColor(0, 0).green(),
+        converted.pixelColor(0, 0).blue(),
+    ) == (10, 20, 30)
+    assert (
+        converted.pixelColor(2, 1).red(),
+        converted.pixelColor(2, 1).green(),
+        converted.pixelColor(2, 1).blue(),
+    ) == (200, 100, 50)

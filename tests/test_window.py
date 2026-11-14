@@ -16,6 +16,7 @@ from pytestqt.qtbot import QtBot
 
 from wallpaper_py.app.ui import theme
 from wallpaper_py.app.ui.settings import Choice, SettingsPage
+from wallpaper_py.app.ui.thumbnails import ThumbnailLoader
 from wallpaper_py.app.ui.window import MainWindow, status_of
 from wallpaper_py.core.settings import Settings
 from wallpaper_py.protocol import (
@@ -28,6 +29,7 @@ from wallpaper_py.protocol import (
 
 from .fake_client import FakeClient
 from .test_settings import LISTED, FakeDialogs, answer, editor, requests
+from .test_settings import fixture_loader  # noqa: F401  pylint: disable=unused-import
 from .test_settings import fixture_saved  # noqa: F401  pylint: disable=unused-import
 from .test_theme import DARK, LIGHT
 from .test_theme import fixture_app_palette  # noqa: F401  pylint: disable=unused-import
@@ -47,9 +49,13 @@ def fixture_dialogs() -> FakeDialogs:
 
 @pytest.fixture(name="window")
 def fixture_window(
-    qtbot: QtBot, client: FakeClient, dialogs: FakeDialogs, saved: Settings
+    qtbot: QtBot,
+    client: FakeClient,
+    dialogs: FakeDialogs,
+    saved: Settings,
+    loader: ThumbnailLoader,
 ) -> Iterator[MainWindow]:
-    settings = SettingsPage(client, dialogs.dialogs(), version="1")
+    settings = SettingsPage(client, dialogs.dialogs(), loader=loader, version="1")
     window = MainWindow(client, settings=settings)
     qtbot.addWidget(window)
     answer(client, SettingsRequest, SettingsResult(settings=saved, revision=1))
@@ -220,9 +226,12 @@ def test_tones_come_from_the_palette_and_follow_it(
     qtbot: QtBot,
     client: FakeClient,
     app_palette: Callable[[QPalette], None],
+    loader: ThumbnailLoader,
 ) -> None:
     app_palette(DARK)
-    window = MainWindow(client, settings=SettingsPage(client, version="1"))
+    window = MainWindow(
+        client, settings=SettingsPage(client, loader=loader, version="1")
+    )
     qtbot.addWidget(window)
     window.show()
     dark = theme.derive_tones(QApplication.palette())

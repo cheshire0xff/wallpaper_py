@@ -31,8 +31,10 @@ app/                          PySide6 (Qt only here); two processes
                  row), field problems
     settings_draft.py  the edit without widgets (Draft): problems per field,
                  monitor labels, what changed
-    arrangement.py  the monitors drawn to scale (arrange(): pure geometry)
-    thumbnails.py   ThumbnailLoader: image details and thumbnails, off the UI thread
+    arrangement.py  the monitors drawn to scale (arrange(): pure geometry),
+                 each with its preview (the renderer's, at a small output)
+    thumbnails.py   ThumbnailLoader: a small copy of each image, its thumbnail
+                 and details, off the UI thread
     theme.py     the shared look: tones derived from the palette, spacing,
                  tinted icons, painted widgets (IconButton, TextButton, Tabs,
                  Divider, Panel, Chip, ImageView)
@@ -47,7 +49,8 @@ core/                         pure Python, no Qt, no platform APIs
   backend.py     Backend protocol (the only thing platforms implement)
   selection.py   user-typed monitor selector -> Monitor (names/ids, never numbers)
   setter.py      put an image on a monitor safely (renders it, re-checks)
-  imaging.py     render(image, screen, output, look): fill / fit / stretch
+  imaging.py     render(image, screen, output, look): fill / fit / stretch;
+                 load, load_small (a preview's source), preview_size
   paths.py       per-user data, log and cache locations (per OS, never shared)
   settings.py    Settings (pydantic): playlists, monitors (playlist, look), pausing,
                  list files; their checks and warnings; durations
@@ -213,9 +216,26 @@ Home redraws from `overview_changed` (which carries each monitor's id,
 name and geometry, attached or not) and asks `status` once per new
 overview for the schedule, counting the time left down itself in between;
 it never polls. Toggles show the overview's state, never the click.
-Images are read from the files, not the socket: `ThumbnailLoader` reads
-the header (dimensions) and decodes at a reduced size on a thread pool of
-its own, caches by path and drops results for images no longer shown.
+Images are read from the files, not the socket: `ThumbnailLoader` decodes
+each once with Pillow at a reduced size, on a thread pool of its own, into
+a small copy (covering a square of the preview's longer side) and the
+row's thumbnail made from it; it caches by path (never dropping an image
+shown now) and drops results for images no longer shown. The window has
+one loader, shared by Home and Settings (they show the same images).
+
+The monitor drawings show previews, not thumbnails: virtual monitors.
+`MonitorsView` renders each monitor's image with `imaging.render`, for the
+monitor's real screen size and its look, at a small output (480 px on the
+longer side, times the display scale), and paints it whole into the
+monitor's box. Home draws each monitor's saved look (`DesktopMonitor.look`
+in the overview); Settings draws the look as edited, so an unsaved change
+shows at once. Renders are cached by image, look and sizes, only while
+drawn, and made on the UI thread (a few ms; the decode is the slow part).
+No small preview shows sharpness (a small image enlarged on a 4K screen
+looks crisp in it) or pixel-level effects. The small copies are decoded
+for the screen with the highest scale when the window opens; a sharper
+screen attached later shows softer previews until the window is opened
+again (a known limitation, see plan.md, Phase 4b step 4).
 
 The settings live in the state database (`core/store.py`), written only
 by the app: `settings` reads them with a revision, `save_settings` replaces
@@ -339,8 +359,11 @@ did not change.
 
 `imaging.render(image, screen, output, look)` separates the screen (whose
 size the look is worked out for) from the output (the size drawn): the
-app renders with output = screen; previews will render the same look at a
-small output. A look depends on the screen, never on the output.
+app renders with output = screen; the windows' previews render the same
+look at a small output, from a small copy of the image
+(`imaging.load_small`). A look depends on the screen, never on the output:
+tests render at both sizes, from the file and from the small copy, and
+compare.
 
 A rendered image depends on the look and the monitor's size, so the
 service renders again when either changes: a monitor whose resolution

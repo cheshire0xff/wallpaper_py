@@ -1,6 +1,8 @@
 """
-Thumbnails and image details for the windows, read from the files (never
-over the socket), off the UI thread.
+Images for the windows, read from the files (never over the socket), off
+the UI thread: per image one small copy (core.imaging.load_small), which
+the monitor drawings render their previews from (arrangement.py), a
+playlist row's thumbnail made from it, and the image's details.
 
 `ThumbnailLoader.want(paths)` says which images the window shows now: the
 ones not cached yet are decoded on a small `QThreadPool` of its own,
@@ -8,13 +10,17 @@ ones not cached yet are decoded on a small `QThreadPool` of its own,
 job for an image that is no longer wanted skips its decode, and a result
 that arrives for one anyway is dropped, so a stale image never lands on a
 card. (Jobs are never taken back out of the pool: the pool deletes a job
-once it has run, so its Python handle may be dead by then.)
+once it has run, so its Python handle may be dead by then.) The cache
+never drops a wanted image, and keeps a few others (the image before,
+for *Previous*).
 
-Each job reads the header for the dimensions (`QImageReader.size()`, no
-full decode) and the file size, then decodes at a reduced size
-(`QImageReader.setScaledSize`; JPEG decodes scaled down directly), so a 4K
-image never stalls the window. Workers make a `QImage` (safe off the UI
-thread); the `QPixmap` is made on the UI thread when the result arrives.
+Each job decodes once with Pillow, at a reduced size (JPEGs decode scaled
+down directly), so a 4K image never stalls the window: the small copy
+covers a square of the preview's longer side (`Sizes.side`), enough for a
+preview of any screen shape and look. Workers make a `QImage` of the
+thumbnail (safe off the UI thread); the `QPixmap` is made on the UI thread
+when the result arrives. The window's pages share one loader (they show
+the same images: each playlist's current one).
 """
 
 from __future__ import annotations
@@ -26,13 +32,42 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import override
 
-from PySide6.QtCore import QObject, QRunnable, QSize, Qt, QThreadPool, Signal, Slot
-from PySide6.QtGui import QImage, QImageIOHandler, QImageReader, QPixmap
+from PIL import Image
+from PySide6.QtCore import QObject, QRunnable, QSize, QThreadPool, Signal, Slot
+from PySide6.QtGui import QGuiApplication, QImage, QPixmap
+
+from ...core.imaging import image_size, load_small
+from ...core.model import ImageLoadError
 
 log = logging.getLogger(__name__)
 
-CACHE_ENTRIES = 64  # Home shows one image per playlist
+CACHE_ENTRIES = 8  # besides the wanted ones, which always stay
 THREADS = 2
+PREVIEW_SIDE = 480  # logical px: the longer side of a monitor's preview
+ROW_THUMBNAIL = QSize(176, 99)  # logical px: a playlist row's image
+
+
+@dataclass(frozen=True)
+class Sizes:
+    """What a job makes, in device pixels."""
+
+    side: int  # the small copy covers side x side (the previews' longer side)
+    thumbnail: tuple[int, int]  # the row's thumbnail fits in this
+
+    @classmethod
+    def at(cls, ratio: float) -> Sizes:
+        """For a display scale of `ratio` (devicePixelRatio)."""
+        row = ROW_THUMBNAIL * ratio
+        return cls(round(PREVIEW_SIDE * ratio), (row.width(), row.height()))
+
+    @classmethod
+    def sharpest(cls) -> Sizes:
+        """
+        For the screen with the highest scale: the images stay sharp on any
+        screen the window is moved to, whichever it opened on.
+        """
+        screens = QGuiApplication.screens()
+        return cls.at(max((s.devicePixelRatio() for s in screens), default=1.0))
 
 
 @dataclass(frozen=True)
@@ -47,7 +82,8 @@ class Decoded:
     """What a worker made of one file (no QPixmap: those are UI-thread only)."""
 
     info: ImageInfo | None
-    image: QImage  # null if it could not be decoded
+    small: Image.Image | None  # the previews' source; None: not decoded (error)
+    thumbnail: QImage  # null if not decoded
     error: str | None = None
 
 
@@ -56,40 +92,50 @@ class Thumbnail:
     """A loaded image, on the UI thread."""
 
     info: ImageInfo | None
-    pixmap: QPixmap | None  # None: could not be decoded (see error)
+    pixmap: QPixmap | None  # the row's; None: could not be decoded (see error)
     error: str | None = None
+    small: Image.Image | None = None  # the previews' source (read only)
 
 
-# Runs on a worker thread: (file, bounding box in device pixels) -> result.
-Decoder = Callable[[Path, QSize], Decoded]
+# Runs on a worker thread: (file, sizes) -> result.
+Decoder = Callable[[Path, Sizes], Decoded]
 
 
-def read_thumbnail(path: Path, box: QSize) -> Decoded:
-    """Dimensions and file size from the header, then a scaled-down decode."""
+def to_qimage(image: Image.Image) -> QImage:
+    """An RGB Pillow image as a QImage of its own (no shared buffer)."""
+    data = image.tobytes("raw", "RGB")
+    width, height = image.size
+    view = QImage(data, width, height, 3 * width, QImage.Format.Format_RGB888)
+    return view.copy()  # `view` reads `data`, which goes with this frame
+
+
+def read_image(path: Path, sizes: Sizes) -> Decoded:
+    """
+    The file size, then one decode: the small copy and the thumbnail (if
+    the decode fails, the details still, from the header).
+    """
     try:
         file_size = path.stat().st_size
     except OSError as err:
-        return Decoded(None, QImage(), err.strerror or str(err))
-    reader = QImageReader(str(path))
-    reader.setAutoTransform(True)
-    stored = reader.size()  # header only
-    if not stored.isValid():
-        return Decoded(None, QImage(), reader.errorString())
-    turned = bool(
-        reader.transformation() & QImageIOHandler.Transformation.TransformationRotate90
-    )
-    shown = stored.transposed() if turned else stored
-    info = ImageInfo(shown.width(), shown.height(), file_size)
-    # The scaled size applies before the orientation is, so in stored terms.
-    stored_box = box.transposed() if turned else box
-    if stored.width() > stored_box.width() or stored.height() > stored_box.height():
-        reader.setScaledSize(
-            stored.scaled(stored_box, Qt.AspectRatioMode.KeepAspectRatio)
-        )
-    image = reader.read()
-    if image.isNull():
-        return Decoded(info, QImage(), reader.errorString())
-    return Decoded(info, image)
+        return Decoded(None, None, QImage(), err.strerror or str(err))
+    try:
+        small = load_small(path, sizes.side)
+    except ImageLoadError as err:
+        cause = err.__cause__
+        return Decoded(_header_info(path, file_size), None, QImage(), str(cause or err))
+    thumbnail = small.image.copy()
+    thumbnail.thumbnail(sizes.thumbnail, Image.Resampling.LANCZOS, reducing_gap=3.0)
+    info = ImageInfo(small.size[0], small.size[1], file_size)
+    return Decoded(info, small.image, to_qimage(thumbnail))
+
+
+def _header_info(path: Path, file_size: int) -> ImageInfo | None:
+    """The details of a file that fails to decode, if its header reads."""
+    try:
+        width, height = image_size(path)
+    except ImageLoadError:
+        return None
+    return ImageInfo(width, height, file_size)
 
 
 class _Relay(QObject):
@@ -111,11 +157,11 @@ class _Wanted:
 class _Job(QRunnable):
     # pylint: disable=too-many-arguments
     def __init__(
-        self, path: Path, box: QSize, decode: Decoder, relay: _Relay, wanted: _Wanted
+        self, path: Path, sizes: Sizes, decode: Decoder, relay: _Relay, wanted: _Wanted
     ):
         super().__init__()
         self.path = path
-        self._box = box
+        self._sizes = sizes
         self._decode = decode
         self._relay = relay
         self._wanted = wanted
@@ -125,10 +171,10 @@ class _Job(QRunnable):
         if self.path not in self._wanted.paths:
             return  # no longer wanted while it waited in the queue
         try:
-            result = self._decode(self.path, self._box)
+            result = self._decode(self.path, self._sizes)
         except Exception as err:  # pylint: disable=broad-exception-caught
             log.exception("Reading %s failed", self.path)
-            result = Decoded(None, QImage(), str(err))
+            result = Decoded(None, None, QImage(), str(err))
         self._relay.done.emit(self.path, result)
 
 
@@ -141,15 +187,15 @@ class ThumbnailLoader(QObject):
 
     def __init__(
         self,
-        box: QSize,
-        decode: Decoder = read_thumbnail,
+        sizes: Sizes,
+        decode: Decoder = read_image,
         *,
         threads: int = THREADS,
         cache_entries: int = CACHE_ENTRIES,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
-        self._box = QSize(box)
+        self._sizes = sizes
         self._decode = decode
         self._cache_entries = cache_entries
         self._cache: OrderedDict[Path, Thumbnail] = OrderedDict()
@@ -163,8 +209,8 @@ class ThumbnailLoader(QObject):
         self._relay.done.connect(self._done)
         self._closed = False
 
-    def box(self) -> QSize:
-        return QSize(self._box)
+    def sizes(self) -> Sizes:
+        return self._sizes
 
     def get(self, path: Path) -> Thumbnail | None:
         """The loaded image, or None if it isn't loaded (yet)."""
@@ -188,7 +234,7 @@ class ThumbnailLoader(QObject):
         for path in wanted:
             if path not in self._cache and path not in self._pending:
                 self._pending.add(path)
-                job = _Job(path, self._box, self._decode, self._relay, self._wanted)
+                job = _Job(path, self._sizes, self._decode, self._relay, self._wanted)
                 self._pool.start(job)
 
     def close(self) -> None:
@@ -204,8 +250,14 @@ class ThumbnailLoader(QObject):
         if self._closed or path not in self._pending:
             return  # no longer wanted: a stale result
         self._pending.discard(path)
-        pixmap = None if result.image.isNull() else QPixmap.fromImage(result.image)
-        self._cache[path] = Thumbnail(result.info, pixmap, result.error)
-        while len(self._cache) > self._cache_entries:
-            self._cache.popitem(last=False)
+        image = result.thumbnail
+        pixmap = None if image.isNull() else QPixmap.fromImage(image)
+        self._cache[path] = Thumbnail(result.info, pixmap, result.error, result.small)
+        self._trim()
         self.loaded.emit(path)
+
+    def _trim(self) -> None:
+        """Drop the least recently used images beyond the budget, never a wanted one."""
+        spare = [p for p in self._cache if p not in self._wanted.paths]
+        for path in spare[: max(0, len(spare) - self._cache_entries)]:
+            del self._cache[path]

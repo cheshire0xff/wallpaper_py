@@ -12,7 +12,7 @@ thin. See [architecture.md](architecture.md) for the layers.
 | 2 | Playlists, mirrored groups, scheduler, history, favourites, to-remove | done (awaiting a real-desktop trial) |
 | 3 | App shell: tray, single instance, IPC, autostart | done (awaiting a real-desktop trial) |
 | 4 | UI process, layout and settings windows | done (pick / hold / manual, the layout and settings windows awaiting review and desktop checks) |
-| 4b | Settings in the database, per-monitor looks, previews | planned (next) |
+| 4b | Settings in the database, per-monitor looks, previews | steps 1-4 done; step 5 (backgrounds) next |
 | 5 | Library window | |
 | 6 | KDE backend | |
 | 7 | Polish | |
@@ -795,7 +795,45 @@ Order, one session each, all checks green after each:
         error kind `wrong_config` went; `PROTOCOL` is 3. The About tab's
         first location is "Settings and state". The sidebar's error status
         reads "Error". docs/config.example.toml is gone.
-4. Previews through the renderer, in Home and Settings.
+4. (done 2026-11-14) Previews through the renderer, in Home and Settings.
+   As built:
+   - `imaging.load_small(source, side)`: one Pillow decode (JPEG draft,
+     then a reduce) to a copy covering a `side` × `side` square (the
+     preview's longer side, 480 px times the display scale: 853×480 for a
+     16:9 image at 100 %, 1707×960 at 200 %), never enlarged, with the
+     file's own size; `imaging.preview_size` gives a preview's output.
+   - `ThumbnailLoader` (thumbnails.py) decodes with it on its pool, no
+     longer with `QImageReader`: `Thumbnail.small` is the previews' source
+     and the row's thumbnail is made from it (`Sizes`, for the screen
+     with the highest scale, so previews stay sharp on any screen the
+     window moves to; a file that fails to decode still shows its size
+     from the header, `imaging.image_size`). The cache never
+     drops a wanted image and keeps 8 others. The window owns one loader,
+     shared by Home and Settings (both want each playlist's current
+     image); it alone closes it, and the pages take it as a required
+     argument. Settings takes from it only the images its drawing shows.
+   - Known limitation: the sizes are read once, when the window opens
+     (each opening is a new UI process). A screen with a higher scale
+     attached while the window is open (the 4K at 150 % switched back on
+     after the window opened while it was off) gets previews enlarged
+     from smaller copies, so they look soft there until the window is
+     closed and opened again. Decoding again at runtime (new sizes, the
+     cache dropped, results of jobs still running with the old sizes
+     refused) was left out: it adds concurrency for a cosmetic issue
+     that a reopen fixes.
+   - `MonitorsView` renders each attached monitor's preview from the
+     small copy with `DesktopMonitor.look`, on the UI thread when it paints
+     (3-11 ms per monitor for 100-200 %, measured), cached by image, look,
+     screen and output size while drawn, and paints it whole into the box
+     (`_cover` went). `MonitorsView.preview(id)` gives it to tests.
+   - Settings draws the draft: each monitor with its edited look and its
+     playlist's current image (`settings_draft.current_images`: by saved
+     name from the overview), none for a new playlist or one whose folder
+     changed (its next image is unknown until saved).
+   - Tests: a render from the small copy at preview size matches the
+     wallpaper rendered from the file, smaller, for every mode on
+     landscape, portrait and 32:9 screens; Home and Settings previews show
+     each monitor's look (an unsaved one in Settings).
 5. Backgrounds: a fixed colour, average, edges.
 
 ## Phase 5: library window

@@ -9,11 +9,19 @@ Detached monitors have no position on the desktop; they are drawn after
 the arrangement, in a row to its right, at their last known size (else
 1920×1080), dimmed and marked "off".
 
-`MonitorsView` paints it: each monitor with the current image of its
-playlist, and under each its name, resolution and playlist ("no playlist"
-for one no playlist drives). Monitors sharing a name (two of one model)
-are told apart by a number counted left to right instead of the
-resolution: "1 of 2 · konachan" (`twins`). No outlines, except on hover:
+`MonitorsView` paints it: each monitor with a preview of the current image
+of its playlist, and under each its name, resolution and playlist ("no
+playlist" for one no playlist drives). A preview is a virtual monitor: the
+image rendered by the wallpaper's own renderer (core.imaging.render) for
+the monitor's real screen size and its look (`DesktopMonitor.look`), at a
+small output (`PREVIEW_SIDE` on its longer side, times the display
+scale), from the small copy the window's loader made (`set_image`). So
+every look shows as it will on the screen, without preview code of its
+own. Renders are cached by image, look and size, kept while drawn.
+
+Monitors sharing a name (two of one model) are told apart by a number
+counted left to right instead of the resolution: "1 of 2 · konachan"
+(`twins`). No outlines, except on hover:
 pointing at a monitor (`hovered`) or at a playlist's card highlights that
 playlist's monitors in the accent (`set_highlight`), so the accent only
 ever means "what you point at" or, on the Settings page, "what you are
@@ -30,6 +38,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import override
 
+from PIL import Image
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, Signal, Slot
 from PySide6.QtGui import (
     QColor,
@@ -43,9 +52,11 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
-from ...core.model import MonitorId
+from ...core.imaging import preview_size, render
+from ...core.model import Look, MonitorId
 from ...protocol import DesktopMonitor, Overview
 from . import theme
+from .thumbnails import PREVIEW_SIDE, to_qimage
 
 DEFAULT_SIZE = (1920, 1080)  # for a detached monitor never seen attached
 DETACHED_GAP = 0.15  # between the arrangement and detached ones, x its height
@@ -81,6 +92,10 @@ class Box:
             and self.y < other.bottom
             and other.y < self.bottom
         )
+
+
+# A rendered preview: (image, look, screen size, output size).
+RenderKey = tuple[Path, Look, tuple[int, int], tuple[int, int]]
 
 
 @dataclass(frozen=True)
@@ -227,7 +242,8 @@ class MonitorsView(QWidget):
         self._clickable = False
         self._pressed: MonitorId | None = None  # monitor under a press
         self.setMouseTracking(True)
-        self._images: dict[Path, QPixmap] = {}
+        self._images: dict[Path, Image.Image] = {}  # small copies, by file
+        self._renders: dict[RenderKey, QPixmap] = {}
         self._last_sizes: dict[MonitorId, tuple[int, int]] = {}
         self._heights = (MIN_HEIGHT, MAX_HEIGHT, HEIGHT_RATIO)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
@@ -259,6 +275,7 @@ class MonitorsView(QWidget):
         self._twins = twins(overview.monitors)
         current = {p.current for p in overview.playlists if p.current is not None}
         self._images = {p: i for p, i in self._images.items() if p in current}
+        self._renders = {k: r for k, r in self._renders.items() if k[0] in current}
         lines = []
         by_monitor = playlists_by_monitor(overview)
         for monitor in overview.monitors:
@@ -351,12 +368,51 @@ class MonitorsView(QWidget):
             self._hovered = playlist
             self.hovered.emit(playlist)
 
-    def set_image(self, path: Path, pixmap: QPixmap | None) -> None:
-        if pixmap is None:
+    def set_image(self, path: Path, small: Image.Image | None) -> None:
+        """The small copy of `path` to render previews from (None: none)."""
+        if self._images.get(path) is small:
+            return  # already given: keep its renders
+        self._renders = {k: r for k, r in self._renders.items() if k[0] != path}
+        if small is None:
             self._images.pop(path, None)
         else:
-            self._images[path] = pixmap
+            self._images[path] = small
         self.update()
+
+    def images(self) -> dict[MonitorId, Path]:
+        """Monitor id -> the current image of the playlist that drives it."""
+        return {
+            member.id: playlist.current
+            for playlist in self._overview.playlists
+            for member in playlist.monitors
+            if playlist.current is not None
+        }
+
+    def preview(self, monitor_id: MonitorId) -> QPixmap | None:
+        """
+        The monitor's preview: its playlist's current image as its screen
+        shows it with its look; None if detached, not drawn, without an
+        image, or not loaded yet.
+        """
+        monitor = next((m for m in self._overview.monitors if m.id == monitor_id), None)
+        found = self._preview(monitor) if monitor is not None else None
+        return found[1] if found is not None else None
+
+    def _preview(self, monitor: DesktopMonitor) -> tuple[RenderKey, QPixmap] | None:
+        g = monitor.geometry
+        path = self.images().get(monitor.id)
+        small = self._images.get(path) if path is not None else None
+        if g is None or path is None or small is None:
+            return None
+        screen = (g.width, g.height)
+        output = preview_size(screen, round(PREVIEW_SIDE * self.devicePixelRatioF()))
+        key = (path, monitor.look, screen, output)
+        pixmap = self._renders.get(key)
+        if pixmap is None:
+            rendered = render(small, screen, output, monitor.look)
+            pixmap = QPixmap.fromImage(to_qimage(rendered))
+            self._renders[key] = pixmap
+        return key, pixmap
 
     def placed(self) -> list[Placed]:
         return arrange(
@@ -381,25 +437,21 @@ class MonitorsView(QWidget):
 
         placed = self.placed()
         by_monitor = playlists_by_monitor(self._overview)
-        images = {
-            member.id: playlist.current
-            for playlist in self._overview.playlists
-            for member in playlist.monitors
-            if playlist.current is not None
-        }
+        drawn: dict[RenderKey, QPixmap] = {}
         for item in placed:
-            image = images.get(item.monitor.id)
+            found = self._preview(item.monitor)
+            pixmap = None
+            if found is not None:
+                drawn[found[0]], pixmap = found[1], found[1]
             lit = self._highlight is not None and (
                 by_monitor.get(item.monitor.id) == self._highlight
             )
             self._paint_monitor(
-                painter,
-                item,
-                self._images.get(image) if image is not None else None,
-                tones.panel_accent if lit else None,
+                painter, item, pixmap, tones.panel_accent if lit else None
             )
             if item.monitor.id == self._selected:
                 self._paint_selected(painter, item.box, tones.panel_accent)
+        self._renders = drawn  # only what is drawn now stays
         boxes = [p.box for p in placed]
         for item in placed:
             self._paint_caption(painter, item, by_monitor.get(item.monitor.id), boxes)
@@ -423,10 +475,8 @@ class MonitorsView(QWidget):
         tones = theme.tones()
         painter.fillRect(rect, tones.panel_raised)
         if pixmap is not None and item.attached:
-            painter.save()
-            painter.setClipRect(rect)
-            painter.drawPixmap(_cover(rect, pixmap), pixmap, QRectF(pixmap.rect()))
-            painter.restore()
+            # The preview has the screen's shape: drawn as is, whole.
+            painter.drawPixmap(rect, pixmap, QRectF(pixmap.rect()))
         if not item.attached:
             painter.setOpacity(1.0)
             painter.setPen(tones.panel_text)
@@ -502,16 +552,3 @@ class MonitorsView(QWidget):
         if any(b is not box and below.intersects(b) for b in boxes):
             below = Box(box.x, box.bottom - label, box.width, label)
         return below
-
-
-def _cover(rect: QRectF, pixmap: QPixmap) -> QRectF:
-    """Where to draw `pixmap` so it fills `rect` (cropped, aspect kept)."""
-    ratio = pixmap.devicePixelRatio()
-    width, height = pixmap.width() / ratio, pixmap.height() / ratio
-    if width <= 0 or height <= 0:
-        return rect
-    scale = max(rect.width() / width, rect.height() / height)
-    w, h = width * scale, height * scale
-    return QRectF(
-        rect.x() + (rect.width() - w) / 2, rect.y() + (rect.height() - h) / 2, w, h
-    )

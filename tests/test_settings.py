@@ -12,6 +12,7 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
+from PIL import Image
 from PySide6.QtCore import QUrl
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QStyleFactory, QWidget
@@ -23,6 +24,7 @@ from wallpaper_py.app.ui.about import existing_folder, version_text
 from wallpaper_py.app.ui.client import ReplyCallback, SocketClient
 from wallpaper_py.app.ui.settings import Choice, Dialogs, SettingsPage
 from wallpaper_py.app.ui.settings_form import PlaylistEditor, combo, line_edit
+from wallpaper_py.app.ui.thumbnails import Sizes, ThumbnailLoader
 from wallpaper_py.core import paths
 from wallpaper_py.core.model import ImageMode, Look, MonitorId
 from wallpaper_py.core.settings import (
@@ -36,7 +38,9 @@ from wallpaper_py.protocol import (
     DesktopMonitor,
     ErrorReply,
     Geometry,
+    MonitorView,
     Overview,
+    PlaylistView,
     Reply,
     Request,
     SaveSettingsRequest,
@@ -135,16 +139,29 @@ def fixture_opened() -> list[QUrl]:
     return []
 
 
+@pytest.fixture(name="loader")
+def fixture_loader() -> Iterator[ThumbnailLoader]:
+    """The window's, for a page made without one (the test closes it)."""
+    loader = ThumbnailLoader(Sizes.at(1.0))
+    yield loader
+    loader.close()
+
+
 @pytest.fixture(name="window")
-def fixture_window(
+def fixture_window(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     qtbot: QtBot,
     client: FakeClient,
     dialogs: FakeDialogs,
     opened: list[QUrl],
     saved: Settings,
+    loader: ThumbnailLoader,
 ) -> Iterator[SettingsPage]:
     window = SettingsPage(
-        client, dialogs.dialogs(), version="1.0 (abc1234)", open_url=opened.append
+        client,
+        dialogs.dialogs(),
+        loader=loader,
+        version="1.0 (abc1234)",
+        open_url=opened.append,
     )
     qtbot.addWidget(window)
     answer(client, SettingsRequest, SettingsResult(settings=saved, revision=REVISION))
@@ -222,11 +239,11 @@ def test_loads_the_saved_settings(window: SettingsPage, tmp_path: Path) -> None:
 
 
 def test_waits_for_the_app_and_reads_again_on_request(
-    qtbot: QtBot, dialogs: FakeDialogs, saved: Settings
+    qtbot: QtBot, dialogs: FakeDialogs, saved: Settings, loader: ThumbnailLoader
 ) -> None:
     client = FakeClient()
     client.publish(Overview(error="favourites.txt is not UTF-8 text"))
-    window = SettingsPage(client, dialogs.dialogs(), version="1")
+    window = SettingsPage(client, dialogs.dialogs(), loader=loader, version="1")
     qtbot.addWidget(window)
     assert not requests(client, SettingsRequest)  # the service isn't running
     assert (
@@ -323,6 +340,51 @@ def test_a_monitors_mode(window: SettingsPage, client: FakeClient) -> None:
     window.mode_combo.setCurrentIndex(window.mode_combo.findData(ImageMode.FILL))
     window.select_monitor(PLX.id)
     assert window.mode_combo.currentText() == "Fill"
+
+
+def edge_colour(window: SettingsPage, monitor: MonitorId) -> tuple[int, int, int]:
+    """The colour at the middle of the left edge of `monitor`'s preview."""
+    pixmap = window.monitors_view.preview(monitor)
+    assert pixmap is not None
+    image = pixmap.toImage()
+    colour = image.pixelColor(1, image.height() // 2)
+    return colour.red(), colour.green(), colour.blue()
+
+
+def test_the_previews_show_the_edit(
+    qtbot: QtBot, window: SettingsPage, client: FakeClient, tmp_path: Path
+) -> None:
+    """Each monitor shows its playlist's current image in its look as edited."""
+    image = tmp_path / "konachan" / "square.png"
+    red = (200, 40, 40)
+    Image.new("RGB", (900, 900), red).save(image)
+    members = tuple(MonitorView(id=m.id, name=m.name, attached=True) for m in (AW, PLX))
+    playlist = PlaylistView(
+        name="konachan", monitors=members, current=image, favourite=False
+    )
+    client.publish(Overview(playlists=(playlist,), monitors=LISTED))
+    view = window.monitors_view
+    try:
+        qtbot.waitUntil(lambda: view.preview(AW.id) is not None)
+        assert edge_colour(window, AW.id) == red  # fill: no bars
+        # Fit, not saved yet: a bar on the left at once.
+        window.select_monitor(AW.id)
+        window.mode_combo.setCurrentIndex(window.mode_combo.findData(ImageMode.FIT))
+        assert edge_colour(window, AW.id) == (0, 0, 0)
+        assert edge_colour(window, PLX.id) == red  # only that monitor
+        # Another folder: its image is unknown until saved.
+        other = tmp_path / "other"
+        other.mkdir()
+        editor(window, "konachan").directory_edit.setText(str(other))
+        assert view.preview(AW.id) is None
+        window.revert()
+        assert edge_colour(window, AW.id) == red
+        # A monitor put on a new playlist has nothing to show yet.
+        choose(window, PLX.id, "new")
+        assert view.preview(PLX.id) is None
+        window.grab()  # paints
+    finally:
+        window.loader.close()
 
 
 def test_a_new_playlist_from_a_monitor(
@@ -666,7 +728,7 @@ def test_version_text() -> None:
 
 
 def test_edits_the_running_apps_settings(
-    qtbot: QtBot, tmp_path: Path, dialogs: FakeDialogs
+    qtbot: QtBot, tmp_path: Path, dialogs: FakeDialogs, loader: ThumbnailLoader
 ) -> None:
     write_settings(tmp_path)
     name = ipc.server_name(tmp_path)
@@ -676,7 +738,7 @@ def test_edits_the_running_apps_settings(
     try:
         with qtbot.waitSignal(host.overview_changed):
             host.start()
-        window = SettingsPage(client, dialogs.dialogs(), version="1")
+        window = SettingsPage(client, dialogs.dialogs(), loader=loader, version="1")
         qtbot.addWidget(window)
         with qtbot.waitSignal(client.overview_changed):
             client.start()

@@ -13,8 +13,9 @@ Pointing at a row (or at a monitor) highlights the playlist in both: a
 faint fill on the row, an accent outline on its monitors. Without
 playlists, it says so, with a button to Settings (`page_wanted`).
 
-Image details (dimensions, file size) and thumbnails are read from the
-files by `ThumbnailLoader`, off the UI thread.
+Image details (dimensions, file size), thumbnails and the small copies the
+monitor previews are rendered from are read from the files by
+`ThumbnailLoader`, off the UI thread (the window's, shared with Settings).
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import cast, override
 
-from PySide6.QtCore import QEvent, QRectF, QSize, Qt, QTimer, Signal, Slot
+from PySide6.QtCore import QEvent, QRectF, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QEnterEvent, QPainter, QPaintEvent, QPalette
 from PySide6.QtWidgets import (
     QFrame,
@@ -54,10 +55,8 @@ from ...protocol import (
 from . import theme
 from .arrangement import MonitorsView
 from .client import Client
-from .thumbnails import ImageInfo, Thumbnail, ThumbnailLoader
+from .thumbnails import ROW_THUMBNAIL, ImageInfo, Thumbnail, ThumbnailLoader
 
-THUMBNAIL_BOX = QSize(480, 270)  # logical px; one decode serves row and monitor
-ROW_IMAGE = QSize(176, 99)
 COUNTDOWN_MS = 1000
 
 Clock = Callable[[], float]
@@ -208,7 +207,7 @@ class PlaylistRow(QWidget):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         self.image = theme.ImageView(parent=self)
-        self.image.setFixedSize(ROW_IMAGE)
+        self.image.setFixedSize(ROW_THUMBNAIL)
         self.title = QLabel(self)
         self.title.setFont(theme.scaled_font(self.title.font(), 1.15, bold=True))
         self.link = QLabel(self)
@@ -488,7 +487,7 @@ class HomePage(QWidget):
     def __init__(
         self,
         client: Client,
-        loader: ThumbnailLoader | None = None,
+        loader: ThumbnailLoader,
         clock: Clock = time.monotonic,
         parent: QWidget | None = None,
     ) -> None:
@@ -503,10 +502,7 @@ class HomePage(QWidget):
         self._closed = False
         self.rows: dict[str, PlaylistRow] = {}
 
-        if loader is None:
-            ratio = self.devicePixelRatioF()
-            loader = ThumbnailLoader(THUMBNAIL_BOX * ratio, parent=self)
-        self.loader = loader
+        self.loader = loader  # the window's, shared with Settings; it closes it
         self.loader.loaded.connect(self._thumbnail_loaded)
 
         self.banner = QLabel(self)
@@ -623,10 +619,9 @@ class HomePage(QWidget):
             row.show_message(None)
 
     def shutdown(self) -> None:
-        """The window closes: stop counting, wait for running thumbnail jobs."""
+        """The window closes: stop counting (the window closes the loader)."""
         self._closed = True
         self._countdown.stop()
-        self.loader.close()
 
     # -- rows --------------------------------------------------------------------
 
@@ -686,7 +681,7 @@ class HomePage(QWidget):
         for row in self.rows.values():
             if row.view().current == path:  # only where it is still current
                 row.set_thumbnail(thumbnail)
-        self.monitors_view.set_image(path, thumbnail.pixmap)
+        self.monitors_view.set_image(path, thumbnail.small)
 
     # -- the schedule (status) ---------------------------------------------------
 

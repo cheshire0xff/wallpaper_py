@@ -10,12 +10,15 @@ they changed since (`stale_settings`), and checks what the values mean
 again. The page never reads the database itself.
 
 - *Playlists*: the monitors as on Home (click one to set it up; it is
-  outlined). Under the drawing, the selected monitor's rows: *Monitor* (a
-  drop-down that also lists switched-off and not-connected monitors, which
-  aren't drawn; those get *Forget monitor*), *Playlist* (None, each
-  playlist, *New playlist…*; several monitors on one playlist mirror it),
-  *Mode*. Then one editor per playlist (settings_form.PlaylistEditor): at
-  most one is open, the others show a summary.
+  outlined), each with a preview of its playlist's current image in its
+  look as edited, so an unsaved change shows at once (no image for a new
+  playlist, or one given another folder). Under the drawing, the selected
+  monitor's rows: *Monitor* (a drop-down that also lists switched-off and
+  not-connected monitors, which aren't drawn; those get *Forget
+  monitor*), *Playlist* (None, each playlist, *New playlist…*; several
+  monitors on one playlist mirror it), *Mode*. Then one editor per
+  playlist (settings_form.PlaylistEditor): at most one is open, the others
+  show a summary.
 - *General*: pausing, and where the favourites / to-remove lists are.
 - *About*: the version and the data locations (about.py).
 
@@ -58,7 +61,6 @@ from ...core.settings import MonitorSettings, Settings, SettingsError, check_set
 from ...protocol import (
     DesktopMonitor,
     ErrorReply,
-    MonitorView,
     Overview,
     PlaylistView,
     Reply,
@@ -82,6 +84,8 @@ from .settings_draft import (
     Field,
     MonitorEntry,
     change_summary,
+    current_images,
+    drawing,
     entry_names,
     mode_look,
     monitor_entries,
@@ -91,6 +95,7 @@ from .settings_draft import (
     shown_on,
     summary_text,
 )
+from .thumbnails import ThumbnailLoader
 from .settings_form import (
     PlaylistEditor,
     Problem,
@@ -151,25 +156,6 @@ class Dialogs:
     list_file: Callable[[QWidget, str], str | None] = field(default=choose_list_file)
 
 
-def drawing(draft: Draft, listed: tuple[DesktopMonitor, ...]) -> Overview:
-    """What the drawing shows: the attached monitors, the playlists as edited."""
-    names = {m.id: m.name for m in listed}
-    playlists = tuple(
-        PlaylistView(
-            name=playlist.name.strip() or "(no name)",
-            monitors=tuple(
-                MonitorView(id=m, name=names.get(m, str(m)), attached=m in names)
-                for m in draft.members(playlist.id)
-            ),
-            current=None,
-            favourite=False,
-        )
-        for playlist in draft.playlists
-    )
-    attached = tuple(m for m in listed if m.attached)
-    return Overview(playlists=playlists, monitors=attached)
-
-
 # -- the page ------------------------------------------------------------------------
 
 
@@ -198,11 +184,12 @@ class SettingsPage(QWidget):
 
     modified = Signal(bool)
 
-    def __init__(
+    def __init__(  # pylint: disable=too-many-arguments
         self,
         client: Client,
         dialogs: Dialogs | None = None,
         *,
+        loader: ThumbnailLoader,
         version: str | None = None,
         open_url: OpenUrl = QDesktopServices.openUrl,
         parent: QWidget | None = None,
@@ -220,6 +207,8 @@ class SettingsPage(QWidget):
         self._saving: Settings | None = None  # sent, not answered yet
         self._close_when_saved = False
         self._listed: tuple[DesktopMonitor, ...] = ()
+        self._shown: tuple[PlaylistView, ...] = ()  # the app's, for their images
+        self._drawn: frozenset[Path] = frozenset()  # the images drawn now
         self.entries: list[MonitorEntry] = []
         self.selected: MonitorId | None = None
         self.problems: dict[Field, str] = {}
@@ -235,6 +224,7 @@ class SettingsPage(QWidget):
         self.stack = QStackedWidget(self)
         self.tabs.current_changed.connect(self.stack.setCurrentIndex)
         self.monitors_view = MonitorsView(self)
+        self.loader = loader  # the window's, shared with Home; it closes it
         self._build_monitor_rows()
         self._editors_box = QVBoxLayout()
         self._editors_box.setSpacing(0)
@@ -336,6 +326,7 @@ class SettingsPage(QWidget):
         self.monitors_view.set_heights(220, 320, 0.25)
         self.monitors_view.set_clickable(True)
         self.monitors_view.clicked.connect(self.select_monitor)
+        self.loader.loaded.connect(self._image_loaded)
         self.revert_button.setToolTip("Back to the saved settings")
         self.revert_button.setFixedHeight(theme.FIELD_HEIGHT)
         self.revert_button.clicked.connect(self.revert)
@@ -503,6 +494,8 @@ class SettingsPage(QWidget):
     @Slot(object)
     def show_overview(self, overview: Overview) -> None:
         self._listed = overview.monitors
+        self._shown = overview.playlists
+        self.loader.want(p.current for p in overview.playlists if p.current)
         if overview.error != self._app_error:
             self._app_error = overview.error
             if self._banner_kind in (None, "app", "connecting"):
@@ -632,6 +625,7 @@ class SettingsPage(QWidget):
             self._show_buttons(False)
             self.entries = []
             self.monitors_view.show_overview(Overview(monitors=self._listed))
+            self._drawn = frozenset()
             return
         self.entries = monitor_entries(self._listed, edited)
         self._show_monitor(edited)
@@ -661,8 +655,26 @@ class SettingsPage(QWidget):
             names = entry_names(self.entries)
             changed = change_summary(self._base, settings, names, listed)
             self.status.setText(f"Changes: {changed}. Not saved yet.")
-        self.monitors_view.show_overview(drawing(edited, self._listed))
+        self._draw(self._base, edited)
+
+    def _draw(self, base: Settings, edited: Draft) -> None:
+        """The drawing as edited: each monitor's playlist, image and look."""
+        current = current_images(base, edited, self._shown)
+        self.monitors_view.show_overview(drawing(edited, self._listed, current))
+        self._drawn = frozenset(current.values())
+        for image in current.values():
+            self._give_image(image)
         self.monitors_view.set_selected(self.selected)
+
+    @Slot(object)
+    def _image_loaded(self, path: Path) -> None:
+        if path in self._drawn:  # not one only Home shows
+            self._give_image(path)
+
+    def _give_image(self, path: Path) -> None:
+        thumbnail = self.loader.get(path)
+        if thumbnail is not None:
+            self.monitors_view.set_image(path, thumbnail.small)
 
     def _check(self, edited: Draft, dirty: bool) -> str | None:
         """Why Save is off, or None."""

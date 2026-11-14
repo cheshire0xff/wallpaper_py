@@ -3,12 +3,15 @@ Render an image as it looks on a screen (a `Look`: fill / fit / stretch).
 
 Every wallpaper is rendered to its monitor's exact resolution (core.setter),
 so the system only ever shows exact-size images and every look is the
-same on every platform. The renderer knows nothing of the service, the
-backend or where the result goes.
+same on every platform. The windows' previews are the same render at a
+small output (`preview_size`), from a small copy of the image
+(`load_small`). The renderer knows nothing of the service, the backend or
+where the result goes.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from PIL import Image, ImageOps
@@ -28,24 +31,85 @@ _ORIENTATION = 0x0112  # the EXIF tag
 Box = tuple[float, float, float, float]
 
 
+@dataclass(frozen=True)
+class Small:
+    """A small copy of an image file (`load_small`), for previews."""
+
+    image: Image.Image  # RGB, upright
+    size: tuple[int, int]  # the file's own size, upright
+
+
 def load(source: Path, size: tuple[int, int]) -> Image.Image:
     """
     Decode `source` as RGB, upright, and close the file before returning.
+    JPEGs decode at a reduced scale that still covers `size`.
 
     Raises:
         ImageLoadError: missing, unreadable, truncated or not an image.
     """
+    return _load(source, size)[0]
+
+
+def load_small(source: Path, side: int) -> Small:
+    """
+    `source` made just big enough to cover a `side` x `side` square (its
+    shorter side `side` px; never enlarged): enough for a preview whose
+    longer side is `side` px, of any screen shape and look (even Fill on a
+    portrait screen), and the file's own size from the same read.
+
+    Raises:
+        ImageLoadError: as `load`.
+    """
+    image, size = _load(source, (side, side))
+    scale = side / min(image.size)
+    if scale < 1:
+        smaller = (
+            max(1, round(image.width * scale)),
+            max(1, round(image.height * scale)),
+        )
+        image = image.resize(smaller, Image.Resampling.LANCZOS, reducing_gap=3.0)
+    return Small(image, size)
+
+
+def _load(source: Path, size: tuple[int, int]) -> tuple[Image.Image, tuple[int, int]]:
+    """The image (see `load`) and the file's own size, upright."""
     try:
         with Image.open(source) as img:
             # JPEG only: decode at the smallest DCT scale that is still >= size.
             # The scale is chosen on the stored image: one EXIF turns on its
             # side (orientations 5-8) needs the size turned as well.
-            sideways = img.getexif().get(_ORIENTATION, 1) in (5, 6, 7, 8)
+            shown, sideways = _upright_size(img)
             img.draft("RGB", size[::-1] if sideways else size)
             oriented = ImageOps.exif_transpose(img) or img
-            return oriented.convert("RGB")  # always a copy, detached from the file
+            image = oriented.convert("RGB")  # always a copy, detached from the file
+            return image, shown
     except (OSError, SyntaxError, ValueError, Image.DecompressionBombError) as err:
         raise ImageLoadError(f"Cannot load {source}: {err}") from err
+
+
+def image_size(source: Path) -> tuple[int, int]:
+    """
+    The file's own size, upright, from the header only: known even for a
+    file that fails to decode (truncated, still being written).
+
+    Raises:
+        ImageLoadError: missing, unreadable or not an image.
+    """
+    try:
+        with Image.open(source) as img:
+            return _upright_size(img)[0]
+    except (OSError, SyntaxError, ValueError, Image.DecompressionBombError) as err:
+        raise ImageLoadError(f"Cannot open {source}: {err}") from err
+
+
+def _upright_size(img: Image.Image) -> tuple[tuple[int, int], bool]:
+    """
+    The size as shown (after the EXIF orientation, from the header), and
+    whether that turns the stored image on its side (orientations 5-8).
+    """
+    sideways = img.getexif().get(_ORIENTATION, 1) in (5, 6, 7, 8)
+    width, height = img.size
+    return ((height, width) if sideways else (width, height)), sideways
 
 
 def check_image(source: Path) -> None:
@@ -79,6 +143,12 @@ def fit_size(src: tuple[int, int], dst: tuple[int, int]) -> tuple[int, int]:
     """Largest size with the aspect ratio of `src` that fits inside `dst`."""
     ratio = min(dst[0] / src[0], dst[1] / src[1])
     return max(1, round(src[0] * ratio)), max(1, round(src[1] * ratio))
+
+
+def preview_size(screen: tuple[int, int], side: int) -> tuple[int, int]:
+    """A preview's output: the screen's shape, `side` px on its longer side."""
+    scale = side / max(screen)
+    return max(1, round(screen[0] * scale)), max(1, round(screen[1] * scale))
 
 
 def render(
