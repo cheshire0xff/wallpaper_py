@@ -7,6 +7,11 @@ light mode only has to stay usable.
 - `home.png`: the Home page (monitors panel, playlists as rows).
 - `settings.png`: the Settings page (settings as rows, no boxes).
 - `library.png`: the Library page (Phase 5 direction).
+- `settings-monitors.dc.html`: the monitor-first Settings page (Phase 4b;
+  approved, replaces `settings.png`). Interactive: click a monitor, change
+  its playlist, mode and background, edit, save and revert playlists.
+- `settings-monitors-twins.dc.html`: two monitors of one model ("1 of 2"),
+  with the monitor list open (switched-off and not-connected ones last).
 - `mockup.dc.html`: the mockup's source, for exact colours, sizes and
   spacing. It is not a runnable page: `{{...}}` are template holes, filled
   in by the script at the bottom (the `dark` theme object holds the

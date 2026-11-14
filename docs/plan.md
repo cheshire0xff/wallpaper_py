@@ -709,6 +709,13 @@ look feature shows in the previews without preview code.
 - Playlists below: Name, Folder, Order, Changes, and a read-only *Shown
   on*. The Monitors row, its *Choose…* menu and the "A + B" text go.
 - Save and Revert stay.
+- Approved 2026-11-14 (docs/design/settings-monitors*.dc.html): the
+  Monitor drop-down is the first row under the drawing; *Forget monitor*
+  shows only for a monitor that isn't drawn (a connected one would get its
+  row back at once); the background colour's picker sits beside the
+  Background drop-down, only for *Colour*; a collapsed playlist reads
+  "monitors · order · interval"; the footer names each change, a deleted
+  playlist as "delete X and its history". The tab stays *Playlists*.
 
 Order, one session each, all checks green after each:
 
@@ -717,7 +724,7 @@ Order, one session each, all checks green after each:
    config.toml meanwhile). A reload re-renders every monitor, as at
    start, so a changed mode shows at once until step 3 replaces reloads.
    A resolution change renders again.
-2. The mockup of the monitor-first Settings page. Independent of the
+2. (done 2026-11-14) The mockup of the monitor-first Settings page. Independent of the
    code; it can be done alongside step 1 or 3a.
 3. Settings in the database, in two steps, so that every session ends
    green and the app (autostart runs it from this checkout) keeps rotating:
