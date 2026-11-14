@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ...core.model import BLACK
 from ...core.settings import MANUAL, Order
 from . import theme
 from .settings_draft import DIRECTORY, INTERVAL, NAME, NEW_INTERVAL, PlaylistDraft
@@ -196,7 +197,7 @@ class ColourButton(theme.PaintedButton):
     def __init__(self, name: str, parent: QWidget | None = None) -> None:
         super().__init__(name, parent)
         self.setFixedSize(theme.space(7), theme.FIELD_HEIGHT)
-        self._colour = QColor("#000000")
+        self._colour = QColor(BLACK)
 
     def set_colour(self, colour: str) -> None:
         """`#rrggbb`."""

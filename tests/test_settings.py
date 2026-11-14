@@ -350,6 +350,12 @@ def test_a_monitors_mode(window: SettingsPage, client: FakeClient) -> None:
     assert window.mode_combo.currentText() == "Fill"
 
 
+def edited_look(window: SettingsPage, monitor: MonitorId) -> Look:
+    edited = window.edited()
+    assert edited is not None
+    return edited.monitor(monitor).look
+
+
 def edge_colour(window: SettingsPage, monitor: MonitorId) -> tuple[int, int, int]:
     """The colour at the middle of the left edge of `monitor`'s preview."""
     pixmap = window.monitors_view.preview(monitor)
@@ -463,6 +469,37 @@ def test_a_fit_monitors_background(  # pylint: disable=too-many-statements
     [aw] = [m for m in sent(client).settings.monitors if m.id == AW.id]
     assert aw.look == Look(ImageMode.FIT, "#3366cc")
     window.grab()  # paints
+
+
+def test_a_background_colour_is_kept(
+    window: SettingsPage, dialogs: FakeDialogs
+) -> None:
+    """Back to Colour: the one picked; a monitor shown meanwhile keeps its own."""
+    window.select_monitor(AW.id)
+    window.mode_combo.setCurrentIndex(window.mode_combo.findData(ImageMode.FIT))
+    box = window.background_combo
+
+    def pick(dialog: QColorDialog) -> bool:
+        dialog.setCurrentColor(QColor("#3366cc"))
+        return True
+
+    dialogs.colour = pick
+    window.colour_button.click()
+    box.setCurrentIndex(box.findData(Background.AVERAGE))
+    box.setCurrentIndex(box.findData(COLOUR))
+    assert edited_look(window, AW.id).background == "#3366cc"
+    assert window.colour_button.colour() == "#3366cc"
+
+    def elsewhere(dialog: QColorDialog) -> bool:
+        window.select_monitor(PLX.id)
+        dialog.setCurrentColor(QColor("#ff0000"))
+        return True
+
+    plx = edited_look(window, PLX.id)
+    dialogs.colour = elsewhere
+    window.colour_button.click()
+    assert edited_look(window, PLX.id) == plx
+    assert edited_look(window, AW.id).background == "#3366cc"
 
 
 def test_a_new_playlist_from_a_monitor(

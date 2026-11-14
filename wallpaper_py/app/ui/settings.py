@@ -258,6 +258,10 @@ class SettingsPage(QWidget):
         for kind, name in BACKGROUND_NAMES.items():
             self.background_combo.addItem(name, kind)
         self.colour_button = ColourButton("Background colour", self)
+        # The fixed colours left for another background in this edit, to
+        # go back to; and the monitor the colour dialog is open for.
+        self._colours: dict[MonitorId, Colour] = {}
+        self._colour_for: MonitorId | None = None
         self.background_row = SettingRow(
             "Background",
             "",
@@ -533,6 +537,7 @@ class SettingsPage(QWidget):
     def _fill(self, draft: Draft) -> None:
         """The form from `draft` (without reporting each field as edited)."""
         self._monitors = draft.monitors
+        self._colours = {}
         for editor in self.editors.values():
             self._editors_box.removeWidget(editor)
             editor.hide()
@@ -807,12 +812,15 @@ class SettingsPage(QWidget):
         if edited is None or self.selected is None or self._base is None:
             return
         kind: BackgroundKind = self.background_combo.currentData()
+        look = edited.monitor(self.selected).look
+        if not isinstance(look.background, Background):
+            self._colours[self.selected] = look.background
         background: Background | Colour
         if isinstance(kind, Background):
             background = kind
-        else:  # a fixed colour: the one saved for the monitor, else black
-            background = colour_of(self._base.look(self.selected))
-        look = edited.monitor(self.selected).look
+        else:  # a fixed colour: the last one in this edit, else the saved one
+            saved = colour_of(self._base.look(self.selected))
+            background = self._colours.get(self.selected, saved)
         self._set_row(edited, look=background_look(look, background))
         self._refresh()
 
@@ -825,21 +833,26 @@ class SettingsPage(QWidget):
         dialog = QColorDialog(before, self)
         dialog.setWindowTitle("Background colour")
         dialog.currentColorChanged.connect(self._colour_previewed)
+        # Its event loop may show another monitor, which keeps its colour.
+        self._colour_for = self.selected
         try:
             chosen = self._dialogs.colour(dialog)
             colour = dialog.currentColor() if chosen else before
+            self._colour_previewed(colour)
         finally:
+            self._colour_for = None
             dialog.currentColorChanged.disconnect(self._colour_previewed)
             dialog.deleteLater()
-        self._colour_previewed(colour)
 
     @Slot(QColor)
     def _colour_previewed(self, colour: QColor) -> None:
-        """The selected monitor's background colour (the dialog's, as it moves)."""
+        """The background colour of the monitor the dialog is open for."""
         edited = self.edited()
-        if edited is None or self.selected is None or not colour.isValid():
+        if edited is None or self._colour_for is None or not colour.isValid():
             return
-        look = edited.monitor(self.selected).look
+        if self._colour_for != self.selected:
+            return
+        look = edited.monitor(self._colour_for).look
         self._set_row(edited, look=background_look(look, colour.name()))
         self._refresh()
 
