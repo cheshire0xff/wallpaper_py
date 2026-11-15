@@ -22,6 +22,7 @@ from wallpaper_py.app import ipc
 from wallpaper_py.app.ui import theme
 from wallpaper_py.app.ui.about import existing_folder, version_text
 from wallpaper_py.app.ui.client import ReplyCallback, SocketClient
+from wallpaper_py.app.ui.controls import Segments
 from wallpaper_py.app.ui.settings import SettingsPage
 from wallpaper_py.app.ui.settings_dialogs import Choice, Dialogs
 from wallpaper_py.app.ui.settings_draft import COLOUR
@@ -192,6 +193,11 @@ def sent(client: FakeClient) -> SaveSettingsRequest:
     return requests(client, SaveSettingsRequest)[-1][0]
 
 
+def choose_value(choice: Segments, value: object) -> None:
+    """Click the choice with this value, as the user does."""
+    choice.button(choice.find_value(value)).click()
+
+
 def editor(window: SettingsPage, name: str) -> PlaylistEditor:
     return next(e for e in window.editors.values() if e.name_edit.text() == name)
 
@@ -223,12 +229,12 @@ def test_loads_the_saved_settings(window: SettingsPage, tmp_path: Path) -> None:
     fantasy = editor(window, "fantasy")
     assert fantasy.changes_combo.currentText() == "Manually"
     assert fantasy.interval_edit.isHidden()
-    assert fantasy.order_combo.currentText() == "Sorted"
+    assert fantasy.order_choice.current_text() == "Sorted"
     assert fantasy.shown_label.text() == "ZeroMOD (switched off)"
     # Closed: a summary each (monitors · order · interval).
     assert window.open_id is None and not konachan.details.isVisibleTo(window)
     assert fantasy.summary.summary == "ZeroMOD (switched off) · sorted · manually"
-    assert window.locked_check.isChecked() and window.idle_edit.text() == "5m"
+    assert window.locked_switch.isChecked() and window.idle_edit.text() == "5m"
     # Attached left to right, then switched off, then not connected.
     assert labels(window) == [
         "PLX2783H",
@@ -280,7 +286,7 @@ def test_a_monitor_is_set_up_by_clicking_or_choosing_it(window: SettingsPage) ->
     assert window.playlist_row.description.text() == (
         "Mirrors PLX2783H: the same image, changed together"
     )
-    assert window.look_editor.mode_combo.currentText() == "Fill"
+    assert window.look_editor.mode_choice.current_text() == "Fill"
     assert window.away_row.isHidden()
 
     window.monitor_combo.setCurrentIndex(2)  # by keyboard: ZeroMOD, switched off
@@ -289,7 +295,7 @@ def test_a_monitor_is_set_up_by_clicking_or_choosing_it(window: SettingsPage) ->
     assert window.playlist_row.description.text() == (
         "Pick the playlist of another monitor to mirror it"
     )
-    assert window.look_editor.mode_combo.currentText() == "Fit"
+    assert window.look_editor.mode_choice.current_text() == "Fit"
     assert window.look_editor.mode_row.description.text() == (
         "Shows the whole image; bars fill the rest"
     )
@@ -336,9 +342,7 @@ def test_a_monitor_changes_playlist_then_save(
 
 def test_a_monitors_mode(window: SettingsPage, client: FakeClient) -> None:
     window.select_monitor(AW.id)
-    window.look_editor.mode_combo.setCurrentIndex(
-        window.look_editor.mode_combo.findData(ImageMode.STRETCH)
-    )
+    choose_value(window.look_editor.mode_choice, ImageMode.STRETCH)
     assert window.look_editor.mode_row.description.text() == (
         "Fills the screen; the image changes its shape"
     )
@@ -347,11 +351,9 @@ def test_a_monitors_mode(window: SettingsPage, client: FakeClient) -> None:
     [aw] = [m for m in sent(client).settings.monitors if m.id == AW.id]
     assert aw.look == Look(ImageMode.STRETCH)
     # Back to fill: no change (and nothing new is stored for it).
-    window.look_editor.mode_combo.setCurrentIndex(
-        window.look_editor.mode_combo.findData(ImageMode.FILL)
-    )
+    choose_value(window.look_editor.mode_choice, ImageMode.FILL)
     window.select_monitor(PLX.id)
-    assert window.look_editor.mode_combo.currentText() == "Fill"
+    assert window.look_editor.mode_choice.current_text() == "Fill"
 
 
 def edited_look(window: SettingsPage, monitor: MonitorId) -> Look:
@@ -387,9 +389,7 @@ def test_the_previews_show_the_edit(
         assert edge_colour(window, AW.id) == red  # fill: no bars
         # Fit, not saved yet: a bar on the left at once.
         window.select_monitor(AW.id)
-        window.look_editor.mode_combo.setCurrentIndex(
-            window.look_editor.mode_combo.findData(ImageMode.FIT)
-        )
+        choose_value(window.look_editor.mode_choice, ImageMode.FIT)
         assert edge_colour(window, AW.id) == (0, 0, 0)
         assert edge_colour(window, PLX.id) == red  # only that monitor
         # Another folder: its image is unknown until saved.
@@ -436,9 +436,7 @@ def test_a_fit_monitors_background(  # pylint: disable=too-many-statements
         window.look_editor.colour_button,
     )
     assert row.isHidden()  # fill
-    window.look_editor.mode_combo.setCurrentIndex(
-        window.look_editor.mode_combo.findData(ImageMode.FIT)
-    )
+    choose_value(window.look_editor.mode_choice, ImageMode.FIT)
     assert not row.isHidden() and not swatch.isHidden()
     assert box.currentText() == "Colour" and swatch.colour() == "#000000"
     assert edge_colour(window, AW.id) == black
@@ -450,13 +448,9 @@ def test_a_fit_monitors_background(  # pylint: disable=too-many-statements
         "Changes: mode of AW3225QF, background of AW3225QF. Not saved yet."
     )
     # Fill hides it; back to Fit, it is still there.
-    window.look_editor.mode_combo.setCurrentIndex(
-        window.look_editor.mode_combo.findData(ImageMode.FILL)
-    )
+    choose_value(window.look_editor.mode_choice, ImageMode.FILL)
     assert row.isHidden()
-    window.look_editor.mode_combo.setCurrentIndex(
-        window.look_editor.mode_combo.findData(ImageMode.FIT)
-    )
+    choose_value(window.look_editor.mode_choice, ImageMode.FIT)
     assert box.currentData() is Background.EDGES
     # A colour: black (none saved), then the dialog; the preview follows it
     # while it moves, and Cancel goes back.
@@ -492,9 +486,7 @@ def test_blur_and_darkening(
     qtbot.waitUntil(lambda: window.monitors_view.preview(AW.id) is not None)
     window.select_monitor(AW.id)
     rows = (window.look_editor.blur_row, window.look_editor.darken_row)
-    window.look_editor.mode_combo.setCurrentIndex(
-        window.look_editor.mode_combo.findData(ImageMode.FIT)
-    )
+    choose_value(window.look_editor.mode_choice, ImageMode.FIT)
     assert all(row.isHidden() for row in rows)  # a colour
     box = window.look_editor.background_combo
     box.setCurrentIndex(box.findData(Background.BLUR))
@@ -551,9 +543,7 @@ def test_a_background_colour_is_kept(
 ) -> None:
     """Back to Colour: the one picked; a monitor shown meanwhile keeps its own."""
     window.select_monitor(AW.id)
-    window.look_editor.mode_combo.setCurrentIndex(
-        window.look_editor.mode_combo.findData(ImageMode.FIT)
-    )
+    choose_value(window.look_editor.mode_choice, ImageMode.FIT)
     box = window.look_editor.background_combo
 
     def pick(dialog: QColorDialog) -> bool:
@@ -616,7 +606,7 @@ def test_forget_a_monitor_not_connected(
 ) -> None:
     window.select_monitor(U27)
     assert window.away_row.label.text() == "Not connected"
-    assert window.look_editor.mode_combo.currentText() == "Stretch"
+    assert window.look_editor.mode_choice.current_text() == "Stretch"
     window.forget_button.click()
     assert "DELA1B2 · not connected" not in labels(window)
     assert window.selected == PLX.id
@@ -712,9 +702,9 @@ def test_changes_every_or_manually(window: SettingsPage, client: FakeClient) -> 
 def test_the_status_line_counts_beyond_three_changes(window: SettingsPage) -> None:
     konachan = editor(window, "konachan")
     konachan.name_edit.setText("anime")
-    konachan.order_combo.setCurrentIndex(1)
+    choose_value(konachan.order_choice, Order.SORTED)
     konachan.interval_edit.setText("1h")
-    window.locked_check.setChecked(False)
+    window.locked_switch.setChecked(False)
     assert window.status.text() == (
         "Changes: name of konachan, order of konachan, interval of konachan, "
         "1 more. Not saved yet."
@@ -803,7 +793,7 @@ def test_closing_with_changes_that_cant_be_saved(
 def test_general_settings(
     window: SettingsPage, client: FakeClient, dialogs: FakeDialogs, tmp_path: Path
 ) -> None:
-    window.idle_check.setChecked(False)
+    window.idle_switch.setChecked(False)
     assert not window.idle_edit.isEnabled()
     dialogs.list_file = str(tmp_path / "favs.txt")
     window.list_buttons["favourites_file"].click()

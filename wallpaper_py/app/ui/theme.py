@@ -1,8 +1,8 @@
 """
 The look every page shares (docs/design/README.md, "The look"; the
-mockups in docs/design/): Qt's native style and the system's palette, plus
-a few tones derived from it, constants and small painted widgets. Not a
-framework.
+mockups in docs/design/): the system's palette, a few tones derived from
+it, constants and small painted widgets. Not a framework. The controls
+(drop-down, segmented choice, switch, buttons, slider) are controls.py's.
 
 - **Tones** (`derive_tones`, `tones`): derived from the application's
   `QPalette`, never hard-coded per OS. In dark mode the page is a shade
@@ -11,7 +11,9 @@ framework.
   lighter than the page. Light mode keeps the palette's Window colour; the
   panel behind images is a silver grey a step darker than the page, with
   the palette's (dark) text on it (wallpapers look washed out on white;
-  the old near-black panel was too stark; chosen from the mockup).
+  the old near-black panel was too stark; chosen from the mockup). The
+  accent is the palette's Accent on Windows and its Highlight elsewhere
+  (`ACCENT_ROLE`): Qt puts KDE's accent only in Highlight.
   `window_palette` puts the tones into the palette roles the native
   style draws with (Window, Base and Button for the borderless filled
   fields, PlaceholderText for muted text); the main window sets it, and
@@ -22,26 +24,29 @@ framework.
 - Icons: bundled Lucide SVGs (`icons/`, ISC licence kept with them),
   tinted when drawn (`tinted_pixmap`, `icon`); a toggle that is on shows
   its icon filled.
-- Widgets: `FieldCombo` (a drop-down whose text starts where a line
-  edit's does), `ValueLabel` (a read-only value lined up with them),
+- Widgets: `ValueLabel` (a read-only value lined up with the fields),
   `IconButton` (borderless; on: accent icon on a faint accent fill),
   `TextButton` (accent text, for secondary actions), `Tabs`
   (sub-tabs with an accent underline), `Divider` (the thin line), `Panel`
   (the lighter panel behind images), `Chip`, `ImageView` (an image
   letterboxed on the panel tone).
+- The keyboard focus: a 2 px accent ring (`draw_focus_ring`), only when
+  the focus came from the keyboard (`keyboard_focus`).
 
-No stylesheet is set anywhere: the OS's own style draws the native widgets
-(Windows 11 style, Breeze on KDE).
+No stylesheet is set anywhere. The style draws only what is still native
+(text fields, scroll bars, dialogs): Windows 11 style on Windows, Fusion
+on Linux (PySide6's own Qt can't load the system's Breeze).
 """
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from functools import lru_cache
 from importlib import resources
 from typing import override
 
-from PySide6.QtCore import QByteArray, QEvent, QRect, QRectF, QSize, Qt, Signal, Slot
+from PySide6.QtCore import QByteArray, QEvent, QRectF, QSize, Qt, Signal, Slot
 from PySide6.QtGui import (
     QColor,
     QEnterEvent,
@@ -51,10 +56,12 @@ from PySide6.QtGui import (
     QGuiApplication,
     QIcon,
     QImage,
+    QMouseEvent,
     QPainter,
     QPainterPath,
     QPaintEvent,
     QPalette,
+    QPen,
     QPixmap,
     QResizeEvent,
 )
@@ -62,15 +69,14 @@ from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QAbstractButton,
     QButtonGroup,
-    QComboBox,
     QFrame,
     QHBoxLayout,
     QLabel,
     QScrollArea,
     QSizePolicy,
     QStyle,
-    QStyleOptionComboBox,
     QStyleOptionFrame,
+    QStyleOptionToolButton,
     QStylePainter,
     QToolButton,
     QVBoxLayout,
@@ -91,6 +97,17 @@ LINE_EDIT_MARGIN = 2
 CONTROL_WIDTH = 360  # the settings' control column
 PAGE_MARGIN = 32  # left / right of a page's content
 PAGE_TOP = 20
+RING = 2  # px: the keyboard focus ring
+RING_GAP = 1  # px between the ring and a filled control's fill
+
+# Where the system's accent is: Qt reads KDE's colours but puts the accent
+# only in Highlight (Accent stays Fusion's built-in blue); Windows sets
+# Accent.
+ACCENT_ROLE = (
+    QPalette.ColorRole.Accent
+    if sys.platform == "win32"
+    else QPalette.ColorRole.Highlight
+)
 
 # The status dot (the palette has no such roles): dark mode, light mode.
 OK = (QColor("#6ccb5f"), QColor("#0f7b0f"))
@@ -98,17 +115,23 @@ ERROR = (QColor("#ff99a4"), QColor("#c42b1c"))
 
 # The bundled icons: Lucide names (https://lucide.dev), files in icons/.
 ICON_NAMES = (
+    "arrow-down-a-z",
     "chevron-down",
     "circle-alert",
     "house",
     "images",
     "link",
     "pin",
+    "shuffle",
     "skip-back",
     "skip-forward",
     "sliders-horizontal",
     "star",
     "trash-2",
+    # Ours, drawn like Lucide's: the modes, for their segmented choice.
+    "mode-fill",
+    "mode-fit",
+    "mode-stretch",
 )
 
 _CHANGES = (
@@ -171,10 +194,20 @@ class Tones:
     text: QColor
     muted: QColor  # descriptions, details
     field: QColor  # borderless filled fields and plain buttons
+    field_hover: QColor  # a field under the pointer
+    outline: QColor  # the edge of a segmented choice
     hover: QColor  # a hovered row or item (translucent)
+    disabled: QColor  # text and marks of a disabled control (translucent)
     accent: QColor  # readable on the page
+    accent_hover: QColor  # a solid accent fill under the pointer
+    accent_down: QColor  # a solid accent fill pressed
     accent_fill: QColor  # a faint accent fill (translucent)
     on_accent: QColor  # text on a solid accent fill
+    popup: QColor  # an open drop-down's list
+    track: QColor  # a slider's groove
+    knob_disabled: QColor  # a disabled slider's knob
+    switch_off: QColor  # a switch that is off
+    switch_off_hover: QColor
     panel: QColor  # behind images: the monitor drawing, thumbnails
     panel_raised: QColor  # an empty image area on the panel
     panel_text: QColor
@@ -192,7 +225,7 @@ def derive_tones(palette: QPalette) -> Tones:
     text = palette.color(group, QPalette.ColorRole.WindowText)
     dark = is_dark(palette)
     page = window.darker(122) if dark else QColor(window)
-    accent = readable_accent(palette.color(group, QPalette.ColorRole.Accent), dark)
+    accent = readable_accent(palette.color(group, ACCENT_ROLE), dark)
     soft = mix(text, page, 0.24)
     if dark:
         panel, panel_text, panel_muted = mix(page, text, 0.04), text, soft
@@ -201,17 +234,33 @@ def derive_tones(palette: QPalette) -> Tones:
         panel = mix(page, text, 0.13)
         panel_text, panel_muted = QColor(text), mix(text, panel, 0.3)
     on_accent = QColor("#000000" if accent.lightnessF() > 0.55 else "#ffffff")
+    field = mix(page, text, 0.07)
+    if dark:
+        accent_hover, popup = mix(accent, QColor("#ffffff"), 0.14), mix(page, text, 0.1)
+    else:  # the palette's Base: white for lists and fields in light mode
+        accent_hover = mix(accent, QColor("#000000"), 0.12)
+        popup = palette.color(group, QPalette.ColorRole.Base)
     return Tones(
         dark=dark,
         page=page,
         line=mix(page, text, 0.09),
         text=QColor(text),
         muted=soft,
-        field=mix(page, text, 0.07),
+        field=field,
+        field_hover=mix(field, text, 0.06),
+        outline=mix(page, text, 0.13),
         hover=with_alpha(text, 0.06),
+        disabled=with_alpha(text, 0.36),
         accent=accent,
+        accent_hover=accent_hover,
+        accent_down=mix(accent, page, 0.25),
         accent_fill=with_alpha(accent, 0.14),
         on_accent=on_accent,
+        popup=popup,
+        track=mix(page, text, 0.2 if dark else 0.22),
+        knob_disabled=mix(page, text, 0.4),
+        switch_off=mix(page, text, 0.18 if dark else 0.2),
+        switch_off_hover=mix(page, text, 0.26 if dark else 0.28),
         panel=panel,
         panel_raised=mix(panel, QColor("#ffffff"), 0.07),
         panel_text=panel_text,
@@ -325,6 +374,56 @@ def scrolling(content: QWidget, parent: QWidget) -> QScrollArea:
     return scroll
 
 
+# -- the keyboard focus ------------------------------------------------------------
+
+_KEYBOARD = (
+    Qt.FocusReason.TabFocusReason,
+    Qt.FocusReason.BacktabFocusReason,
+    Qt.FocusReason.ShortcutFocusReason,
+)
+# The focus coming back, not moving: an open list closing, the window
+# activated again.
+_RETURNING = (
+    Qt.FocusReason.PopupFocusReason,
+    Qt.FocusReason.ActiveWindowFocusReason,
+)
+
+
+def keyboard_focus(event: QFocusEvent, before: bool) -> bool:
+    """
+    Whether a widget's focus is from the keyboard once `event` came in
+    (`before`: whether it was): only then is the ring shown, until a click.
+    """
+    reason = event.reason()
+    if reason in _RETURNING:
+        return before
+    return reason in _KEYBOARD
+
+
+def draw_focus_ring(
+    painter: QPainter, rect: QRectF, radius: float = RADIUS_SMALL
+) -> None:
+    """The keyboard focus: a RING px accent ring just inside `rect`."""
+    painter.save()
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(QPen(tones().accent, RING))
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    half = RING / 2
+    painter.drawRoundedRect(
+        rect.adjusted(half, half, -half, -half), radius - half, radius - half
+    )
+    painter.restore()
+
+
+def inside_ring(rect: QRectF) -> QRectF:
+    """
+    A filled control's fill while it shows the ring: inside it, after a
+    gap (so the ring shows on an accent fill too).
+    """
+    inset = RING + RING_GAP
+    return rect.adjusted(inset, inset, -inset, -inset)
+
+
 # -- icons -----------------------------------------------------------------------
 
 
@@ -405,6 +504,7 @@ class IconButton(QToolButton):
         super().__init__(parent)
         self._icon_name = icon_name
         self._on = False
+        self._keyboard_focus = False
         self.setAutoRaise(True)
         self.setIconSize(QSize(SMALL_ICON, SMALL_ICON))
         self.setFixedSize(38, 34)
@@ -456,18 +556,37 @@ class IconButton(QToolButton):
             self._tint()
 
     @override
+    def focusInEvent(self, event: QFocusEvent) -> None:  # pylint: disable=invalid-name
+        super().focusInEvent(event)
+        self._keyboard_focus = keyboard_focus(event, self._keyboard_focus)
+
+    @override
+    def mousePressEvent(
+        self, event: QMouseEvent
+    ) -> None:  # pylint: disable=invalid-name
+        self._keyboard_focus = False  # the pointer took over: no ring
+        super().mousePressEvent(event)
+
+    @override
     def paintEvent(self, event: QPaintEvent) -> None:  # pylint: disable=invalid-name
+        del event
+        painter = QStylePainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         if self._on:
-            painter = QPainter(self)
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
             painter.setPen(Qt.PenStyle.NoPen)
             color = tones().accent_fill
             if not self.isEnabled():
                 color.setAlphaF(color.alphaF() / 2)
             painter.setBrush(color)
             painter.drawRoundedRect(QRectF(self.rect()), RADIUS_SMALL, RADIUS_SMALL)
-            painter.end()
-        super().paintEvent(event)
+        # The style draws the button and its icon, but not its focus: ours.
+        option = QStyleOptionToolButton()
+        self.initStyleOption(option)
+        option.state &= ~QStyle.StateFlag.State_HasFocus
+        painter.drawComplexControl(QStyle.ComplexControl.CC_ToolButton, option)
+        if self.hasFocus() and self._keyboard_focus:
+            draw_focus_ring(painter, QRectF(self.rect()))
+        painter.end()
 
 
 class PaintedButton(QAbstractButton):
@@ -490,23 +609,30 @@ class PaintedButton(QAbstractButton):
     @override
     def focusInEvent(self, event: QFocusEvent) -> None:  # pylint: disable=invalid-name
         super().focusInEvent(event)
-        self._keyboard_focus = event.reason() in (
-            Qt.FocusReason.TabFocusReason,
-            Qt.FocusReason.BacktabFocusReason,
-            Qt.FocusReason.ShortcutFocusReason,
-        )
+        self._keyboard_focus = keyboard_focus(event, self._keyboard_focus)
 
-    def focus_ring(self, painter: QPainter, rect: QRectF | None = None) -> None:
-        """An accent outline while it has the focus from the keyboard."""
-        if not (self.hasFocus() and self._keyboard_focus):
-            return
-        area = QRectF(self.rect()) if rect is None else rect
-        painter.save()
-        painter.setPen(with_alpha(tones().accent, 0.6))
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        area = area.adjusted(0.5, 0.5, -0.5, -0.5)
-        painter.drawRoundedRect(area, RADIUS_SMALL, RADIUS_SMALL)
-        painter.restore()
+    @override
+    def mousePressEvent(
+        self, event: QMouseEvent
+    ) -> None:  # pylint: disable=invalid-name
+        self._keyboard_focus = False  # the pointer took over: no ring
+        super().mousePressEvent(event)
+
+    def shows_focus(self) -> bool:
+        """It has the focus, from the keyboard: it shows the ring."""
+        return self.hasFocus() and self._keyboard_focus
+
+    def focus_ring(
+        self,
+        painter: QPainter,
+        rect: QRectF | None = None,
+        radius: float = RADIUS_SMALL,
+    ) -> None:
+        """The accent ring while it has the focus from the keyboard."""
+        if self.shows_focus():
+            draw_focus_ring(
+                painter, QRectF(self.rect()) if rect is None else rect, radius
+            )
 
     @override
     def enterEvent(self, event: QEnterEvent) -> None:  # pylint: disable=invalid-name
@@ -731,47 +857,6 @@ def field_text_x(widget: QWidget) -> int:
         QStyle.SubElement.SE_LineEditContents, option, None
     )
     return contents.x() + FIELD_PADDING + LINE_EDIT_MARGIN
-
-
-class FieldCombo(QComboBox):
-    """
-    A drop-down whose text starts at the same x as a borderless line
-    edit's (`field_text_x`), so all values in a column line up: styles put a
-    combo box's label a few pixels from where they put a line edit's text
-    (Windows 11: 7 against 10). The style draws the box and its arrow; the
-    text is drawn here, in the Text colour, as a line edit's is.
-    """
-
-    @override
-    def paintEvent(self, event: QPaintEvent) -> None:  # pylint: disable=invalid-name
-        del event
-        painter = QStylePainter(self)
-        painter.setPen(self.palette().color(QPalette.ColorRole.Text))
-        option = QStyleOptionComboBox()
-        self.initStyleOption(option)
-        text, option.currentText = option.currentText, ""
-        painter.drawComplexControl(QStyle.ComplexControl.CC_ComboBox, option)
-        painter.drawControl(QStyle.ControlElement.CE_ComboBoxLabel, option)
-        field = self.style().subControlRect(
-            QStyle.ComplexControl.CC_ComboBox,
-            option,
-            QStyle.SubControl.SC_ComboBoxEditField,
-            self,
-        )
-        left = field_text_x(self)
-        area = QRect(left, field.y(), max(field.right() - left, 0), field.height())
-        group = (
-            QPalette.ColorGroup.Active
-            if self.isEnabled()
-            else QPalette.ColorGroup.Disabled
-        )
-        painter.setPen(self.palette().color(group, QPalette.ColorRole.Text))
-        elided = self.fontMetrics().elidedText(
-            text, Qt.TextElideMode.ElideRight, area.width()
-        )
-        flags = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
-        painter.drawText(area, int(flags), elided)
-        painter.end()
 
 
 class ValueLabel(QLabel):

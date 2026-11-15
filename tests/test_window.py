@@ -217,12 +217,6 @@ def tones_of(window: MainWindow) -> theme.Tones:
     return tones
 
 
-def save_colour(window: MainWindow) -> object:
-    """Save's fill while it can be clicked (disabled, it is a plain button)."""
-    palette = window.settings.save_button.palette()
-    return palette.color(QPalette.ColorGroup.Active, QPalette.ColorRole.Button)
-
-
 def test_tones_come_from_the_palette_and_follow_it(
     qtbot: QtBot,
     client: FakeClient,
@@ -240,13 +234,11 @@ def test_tones_come_from_the_palette_and_follow_it(
     palette = window.palette()
     assert palette.color(QPalette.ColorRole.Window) == dark.page
     assert palette.color(QPalette.ColorRole.Base) == dark.field
-    assert save_colour(window) == dark.accent
     # The system switches to light: everything is derived again.
     app_palette(LIGHT)
     qtbot.waitUntil(lambda: not tones_of(window).dark)
     light = theme.derive_tones(QApplication.palette())
     assert window.applied_tones() == light
     assert window.palette().color(QPalette.ColorRole.Window) == light.page
-    qtbot.waitUntil(lambda: save_colour(window) == light.accent)
     window.grab()  # every page paints with the new tones
     window.home.shutdown()

@@ -284,10 +284,18 @@ no stylesheet.
    cycle…* sits beside Seen, as *Rescan* beside Images; a sorted walk's
    place is the newest image it showed (where it goes on), which is the
    current one unless *Previous* went back.
-2. **Controls**, from design/controls.dc.html: drop-down, segmented
-   buttons, switches, buttons and slider, used in Settings and the
-   Library page; the 2 px focus ring everywhere; the accent from
-   `Highlight` on Linux; the docs say Fusion.
+2. **Controls** (done), from design/controls.dc.html: drop-down,
+   segmented buttons, switches, buttons and slider, used in Settings and
+   the Library page; the 2 px focus ring everywhere; the accent from
+   `Highlight` on Linux; the docs say Fusion. Decided while building:
+   the drop-down's open list is a popup of our own (restyling Qt's would
+   mean overriding Qt's non-event methods, AGENTS.md rule 3), placed
+   under the box (above if there is no room), with all entries (the
+   app's lists are short); a click drops the focus ring until the next
+   Tab; the ring lies on the control's edge with the fill inside it (Qt
+   can't paint outside a widget), and a switch keeps 4 px around its
+   pill for it; *Changes* (Every / Manually) stays a drop-down beside the
+   interval field. Mode's icons are our own, drawn like Lucide's.
 3. **Data for the grids**: marks by `image`, `unremove`,
    `marks_changed`, `upcoming` (and their CLI); the UI-side scan with
    "added" times; the read-only history reader.

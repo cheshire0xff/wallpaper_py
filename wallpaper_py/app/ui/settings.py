@@ -36,16 +36,14 @@ settings_dialogs.py's.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal, override
+from typing import Literal
 
-from PySide6.QtCore import QEvent, Qt, Signal, Slot
-from PySide6.QtGui import QDesktopServices, QFont, QPalette
+from PySide6.QtCore import Qt, Signal, Slot
+from PySide6.QtGui import QDesktopServices, QFont
 from PySide6.QtWidgets import (
-    QCheckBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QPushButton,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -69,6 +67,7 @@ from . import theme
 from .about import AboutPage, OpenUrl, data_locations, version_text
 from .arrangement import MonitorsView
 from .client import Client, ReplyTo
+from .controls import Button, Switch
 from .settings_draft import (
     DEFAULT_IDLE,
     FAVOURITES,
@@ -171,11 +170,10 @@ class SettingsPage(QWidget):
         self._general = self._general_tab()
         self.about = AboutPage(version or version_text(), open_url, self)
         self.status = theme.muted("", self, wrap=True)
-        self.revert_button = QPushButton("Revert", self)
-        self.save_button = QPushButton("Save", self)
+        self.revert_button = Button("Revert", self)
+        self.save_button = Button("Save", self, primary=True)
         self._set_up_widgets()
         self._build()
-        self._color_save()
         self._refresh()
 
         self._set_banner("Connecting to wallpaper_py…", "connecting")
@@ -225,10 +223,8 @@ class SettingsPage(QWidget):
         self.forget_button.clicked.connect(self._forget)
 
     def _build_general(self) -> None:
-        self.locked_check = QCheckBox("Pause", self)
-        self.locked_check.setAccessibleName("Pause while the session is locked")
-        self.idle_check = QCheckBox("Pause after", self)
-        self.idle_check.setAccessibleName("Pause when idle")
+        self.locked_switch = Switch("Pause while the session is locked", self)
+        self.idle_switch = Switch("Pause when idle", self)
         self.idle_edit = line_edit("", "Idle time before pausing", self)
         self.idle_edit.setPlaceholderText("e.g. 5m")
         self.idle_edit.setFixedWidth(theme.space(14))
@@ -249,8 +245,8 @@ class SettingsPage(QWidget):
         self.general_problems = {
             key: Problem(self) for key in (IDLE, FAVOURITES, TO_REMOVE)
         }
-        self.locked_check.toggled.connect(self._edited)
-        self.idle_check.toggled.connect(self._idle_toggled)
+        self.locked_switch.toggled.connect(self._edited)
+        self.idle_switch.toggled.connect(self._idle_toggled)
         self.idle_edit.textChanged.connect(self._edited)
 
     def _set_up_widgets(self) -> None:
@@ -259,10 +255,7 @@ class SettingsPage(QWidget):
         self.monitors_view.clicked.connect(self.select_monitor)
         self.loader.loaded.connect(self._image_loaded)
         self.revert_button.setToolTip("Back to the saved settings")
-        self.revert_button.setFixedHeight(theme.FIELD_HEIGHT)
         self.revert_button.clicked.connect(self.revert)
-        self.save_button.setDefault(True)
-        self.save_button.setFixedHeight(theme.FIELD_HEIGHT)
         self.save_button.clicked.connect(self._save_clicked)
 
     def _build(self) -> None:
@@ -345,7 +338,7 @@ class SettingsPage(QWidget):
             SettingRow(
                 "While locked",
                 "Nothing changes while the session is locked",
-                self.locked_check,
+                self.locked_switch,
                 parent=general,
             )
         )
@@ -394,25 +387,10 @@ class SettingsPage(QWidget):
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(theme.space(1.5))
-        row.addWidget(self.idle_check)
+        row.addWidget(self.idle_switch)
         row.addWidget(self.idle_edit)
         row.addStretch(1)
         return row
-
-    def _color_save(self) -> None:
-        """Save is the one solid accent button (palette roles, not a stylesheet)."""
-        tones = theme.tones()
-        palette = QPalette()  # only these roles; the rest is inherited
-        for group in (QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive):
-            palette.setColor(group, QPalette.ColorRole.Button, tones.accent)
-            palette.setColor(group, QPalette.ColorRole.ButtonText, tones.on_accent)
-        self.save_button.setPalette(palette)
-
-    @override
-    def changeEvent(self, event: QEvent) -> None:  # pylint: disable=invalid-name
-        super().changeEvent(event)
-        if theme.palette_changed(event):
-            self._color_save()
 
     # -- from the app ------------------------------------------------------------
 
@@ -483,16 +461,16 @@ class SettingsPage(QWidget):
         for playlist in draft.playlists:
             self._add_editor(PlaylistEditor(playlist, self))
         widgets = [
-            self.locked_check,
-            self.idle_check,
+            self.locked_switch,
+            self.idle_switch,
             self.idle_edit,
             *self.list_edits.values(),
         ]
         for widget in widgets:
             widget.blockSignals(True)
-        self.locked_check.setChecked(draft.pause_when_locked)
+        self.locked_switch.setChecked(draft.pause_when_locked)
         idle = draft.pause_when_idle
-        self.idle_check.setChecked(idle is not None)
+        self.idle_switch.setChecked(idle is not None)
         self.idle_edit.setText(idle if idle is not None else DEFAULT_IDLE)
         self.idle_edit.setEnabled(idle is not None)
         self.list_edits[FAVOURITES].setText(draft.favourites_file)
@@ -513,11 +491,11 @@ class SettingsPage(QWidget):
         """The settings as the form has them now; None if nothing is loaded."""
         if self._monitors is None:
             return None
-        idle = self.idle_edit.text().strip() if self.idle_check.isChecked() else None
+        idle = self.idle_edit.text().strip() if self.idle_switch.isChecked() else None
         return Draft(
             monitors=self._monitors,
             playlists=tuple(e.draft() for e in self.editors.values()),
-            pause_when_locked=self.locked_check.isChecked(),
+            pause_when_locked=self.locked_switch.isChecked(),
             pause_when_idle=idle,
             favourites_file=self.list_edits[FAVOURITES].text().strip(),
             to_remove_file=self.list_edits[TO_REMOVE].text().strip(),

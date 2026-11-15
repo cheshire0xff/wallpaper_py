@@ -6,11 +6,16 @@ matters; light mode only has to stay usable.
 
 ## The look
 
-- **Follow the system**: Qt's native style on each OS (Windows 11 style,
-  Breeze on KDE), the system's light / dark mode and accent, read from the
-  `QPalette`. No stylesheets and no hard-coded colours, except the panel
-  behind images in light mode (wallpapers look washed out on white) and
-  the status dot's green / red (the palette has no such roles).
+- **Follow the system**: the system's colours, light / dark mode and
+  accent, read from the `QPalette`, with our own controls: drop-downs,
+  segmented choices, switches, buttons and sliders are painted in code
+  (`controls.dc.html`), so they look the same on Windows and KDE. The
+  style draws only what is left (text fields, scroll bars, dialogs):
+  Windows 11 style on Windows, Fusion on Linux (PySide6's own Qt can't
+  load the system's Breeze). No stylesheets and no hard-coded colours,
+  except the panel behind images in light mode (wallpapers look washed out
+  on white) and the status dot's green / red (the palette has no such
+  roles). The page mockups stay the reference for layout.
 - **One window with a sidebar**: *Home*, *Library*, *Settings*, each a
   Lucide icon and a label; the selected page has an accent bar on its left
   edge, a faint accent fill and a bold label; the app's status ("Rotation

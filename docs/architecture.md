@@ -41,8 +41,10 @@ app/                          PySide6 (Qt only here); two processes
     thumbnails.py   ThumbnailLoader: a small copy of each image, its thumbnail
                  and details, off the UI thread
     theme.py     the shared look: tones derived from the palette, spacing,
-                 tinted icons, painted widgets (IconButton, TextButton, Tabs,
-                 Divider, Panel, Chip, ImageView)
+                 tinted icons, the focus ring, painted widgets (IconButton,
+                 TextButton, Tabs, Divider, Panel, Chip, ImageView)
+    controls.py  the controls painted in code: FieldCombo (drop-down and its
+                 list), Segments, Switch, Button, Slider
     icons/       bundled Lucide SVGs (ISC licence alongside), package data
 commands.py                   runs a Request on the service -> a reply model (+ the
                               change made); overview(). Qt-free
@@ -210,15 +212,24 @@ steps. The UI process logs to `ui.log` next to the app's log.
 
 The pages live as long as the window, so switching pages keeps unsaved
 settings; closing the window with them asks Save / Discard / Cancel on the
-Settings page. The look follows the system (native style, the palette,
-light / dark): the tones (page, sidebar line, panels behind images,
-filled fields, accent fills) are derived from the application's palette
-(`theme.derive_tones`), set on the window as palette roles (Window, Base,
-Button, PlaceholderText; nothing else, so a palette change still reaches
-it) and derived again when the palette changes; widgets painted here
-(sidebar items, rows, tabs, text buttons) read them when they paint. No
-stylesheets. In light mode the panels behind images stay dark. Icons are
-Lucide SVGs tinted from the tones and re-tinted when they change.
+Settings page. The look follows the system's colours (the palette, light
+/ dark, the accent) with controls of our own: the tones (page, sidebar
+line, panels behind images, filled fields, accent fills, the controls'
+states) are derived from the application's palette (`theme.derive_tones`;
+the accent from Accent on Windows, from Highlight elsewhere, where Qt puts
+KDE's), set on the window as palette roles (Window, Base, Button,
+PlaceholderText; nothing else, so a palette change still reaches it) and
+derived again when the palette changes; everything painted here (sidebar
+items, rows, tabs, buttons, drop-downs, segmented choices, switches,
+sliders: controls.py) reads them when it paints, so it looks the same on
+Windows and KDE. The style still draws text fields, scroll bars and
+dialogs: Windows 11 style on Windows, Fusion on Linux (PySide6's own Qt
+can't load the system's Breeze). No stylesheets. The keyboard focus is a
+2 px accent ring, shown only when the focus came from the keyboard; Qt
+can't paint outside a widget, so it lies on the control's edge and a
+filled control's fill shrinks inside it. In light mode the panels behind
+images stay dark. Icons are Lucide SVGs tinted from the tones and
+re-tinted when they change.
 
 Home redraws from `overview_changed` (which carries each monitor's id,
 name and geometry, attached or not) and asks `status` once per new
