@@ -1,0 +1,572 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>wallpaper_py controls</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+body{margin:0}
+a{color:#005fb8}a:hover{color:#003d75}
+</style>
+</helmet>
+<div style="width: 1280px; height: 1180px; box-sizing: border-box; background: {{t.page}}; color: {{t.text}}; font-family: 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif; font-size: 14px; padding: 32px 40px; display: flex; flex-direction: column; gap: 28px; overflow: hidden">
+
+  <header style="display: flex; flex-direction: column; gap: 4px">
+    <h1 style="margin: 0; font-size: 20px; font-weight: 600">Controls</h1>
+    <p style="margin: 0; font-size: 13px; color: {{t.muted}}">Flat and filled, without borders (only segmented choices are outlined). Every colour comes from the system palette, the accent from the system: try others in Tweaks.</p>
+  </header>
+
+  <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 56px; align-items: start">
+
+    <section aria-label="In Settings" style="display: flex; flex-direction: column">
+      <h2 style="margin: 0; font-size: 15px; font-weight: 600">In Settings</h2>
+      <p style="margin: 4px 0 12px; font-size: 12px; color: {{t.muted}}">These work: pick the choices, flip the switches, drag the sliders.</p>
+      <div style="height: 1px; background: {{t.divider}}"></div>
+
+      <div style="display: flex; align-items: center; gap: 24px; padding: 12px 0">
+        <div style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px">
+          <label for="c-monitor" style="font-weight: 600">Monitor</label>
+          <span style="font-size: 12px; color: {{t.muted}}">Also lists monitors that are switched off or not connected</span>
+        </div>
+        <div style="width: 300px; flex-shrink: 0; position: relative">
+          <select id="c-monitor" value="{{monitor.value}}" onChange="{{monitor.change}}" style="width: 100%; height: 34px; box-sizing: border-box; border: 0; border-radius: 4px; background: {{t.field}}; color: {{t.text}}; font: inherit; padding: 0 32px 0 12px; appearance: none; cursor: pointer">
+            <option value="AW3225QF">AW3225QF</option>
+            <option value="PLX2783H">PLX2783H</option>
+            <option value="ZeroMOD">ZeroMOD</option>
+          </select>
+          <svg width="10" height="6" viewBox="0 0 10 6" aria-hidden="true" style="position: absolute; right: 12px; top: 14px; pointer-events: none"><path d="M0 0h10L5 6z" fill="{{t.muted}}"></path></svg>
+        </div>
+      </div>
+
+      <div style="display: flex; align-items: center; gap: 24px; padding: 12px 0 12px 24px">
+        <div style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px">
+          <label for="c-playlist">Playlist</label>
+        </div>
+        <div style="width: 300px; flex-shrink: 0; position: relative">
+          <select id="c-playlist" value="{{playlist.value}}" onChange="{{playlist.change}}" style="width: 100%; height: 34px; box-sizing: border-box; border: 0; border-radius: 4px; background: {{t.field}}; color: {{t.text}}; font: inherit; padding: 0 32px 0 12px; appearance: none; cursor: pointer">
+            <option value="konachan">konachan</option>
+            <option value="fantasy">fantasy</option>
+            <option value="none">None</option>
+          </select>
+          <svg width="10" height="6" viewBox="0 0 10 6" aria-hidden="true" style="position: absolute; right: 12px; top: 14px; pointer-events: none"><path d="M0 0h10L5 6z" fill="{{t.muted}}"></path></svg>
+        </div>
+      </div>
+
+      <div style="display: flex; align-items: center; gap: 24px; padding: 12px 0 12px 24px">
+        <div style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px">
+          <span>Mode</span>
+          <span style="font-size: 12px; color: {{t.muted}}">{{modeHelp}}</span>
+        </div>
+        <div style="width: 300px; flex-shrink: 0; display: flex; gap: 6px">
+          <sc-for list="{{modes}}" as="m" hint-placeholder-count="3">
+            <button aria-pressed="{{m.pressed}}" onClick="{{m.pick}}" style="height: 34px; box-sizing: border-box; padding: 0 12px; border-radius: 4px; border: 1px solid {{m.border}}; background: {{m.bg}}; color: {{m.color}}; font: inherit; font-weight: {{m.weight}}; display: flex; align-items: center; gap: 8px; cursor: pointer">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"></rect><sc-if value="{{m.isFill}}" hint-placeholder-val="{{false}}"><path d="m3 15 5-5 5 5 3-3 5 5"></path></sc-if><sc-if value="{{m.isFit}}" hint-placeholder-val="{{true}}"><rect x="8.5" y="8" width="7" height="8" rx="1"></rect></sc-if><sc-if value="{{m.isStretch}}" hint-placeholder-val="{{false}}"><path d="M7 12h10"></path><path d="m9 10-2 2 2 2"></path><path d="m15 10 2 2-2 2"></path></sc-if></svg>
+              <span>{{m.label}}</span>
+            </button>
+          </sc-for>
+        </div>
+      </div>
+
+      <sc-if value="{{isFit}}" hint-placeholder-val="{{true}}">
+        <div style="display: flex; flex-direction: column">
+          <div style="display: flex; align-items: center; gap: 24px; padding: 12px 0 12px 24px">
+            <div style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px">
+              <label for="c-background">Background</label>
+              <span style="font-size: 12px; color: {{t.muted}}">The image, blurred, fills the bars</span>
+            </div>
+            <div style="width: 300px; flex-shrink: 0; position: relative">
+              <select id="c-background" value="{{background.value}}" onChange="{{background.change}}" style="width: 100%; height: 34px; box-sizing: border-box; border: 0; border-radius: 4px; background: {{t.field}}; color: {{t.text}}; font: inherit; padding: 0 32px 0 12px; appearance: none; cursor: pointer">
+                <option value="colour">Colour</option>
+                <option value="average">Average of the image</option>
+                <option value="dominant">Main colour of the image</option>
+                <option value="edges">Edges of the image</option>
+                <option value="blur">Blurred image</option>
+              </select>
+              <svg width="10" height="6" viewBox="0 0 10 6" aria-hidden="true" style="position: absolute; right: 12px; top: 14px; pointer-events: none"><path d="M0 0h10L5 6z" fill="{{t.muted}}"></path></svg>
+            </div>
+          </div>
+
+          <div style="display: flex; align-items: center; gap: 24px; padding: 12px 0 12px 24px">
+            <div style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px">
+              <span>Blur</span>
+              <span style="font-size: 12px; color: {{t.muted}}">How soft the image in the bars is</span>
+            </div>
+            <div style="width: 300px; flex-shrink: 0; display: flex; align-items: center; gap: 12px">
+              <span style="font-size: 12px; color: {{t.muted}}">Less</span>
+              <div style="position: relative; flex-grow: 1; height: 20px">
+                <div style="position: absolute; left: 0; right: 0; top: 8px; height: 4px; border-radius: 2px; background: {{t.track}}"></div>
+                <div style="position: absolute; left: 0; top: 8px; height: 4px; border-radius: 2px; width: {{blur.fill}}; background: {{t.accent}}"></div>
+                <div style="position: absolute; top: 2px; left: {{blur.knobLeft}}; width: 16px; height: 16px; border-radius: 8px; background: {{t.accent}}; box-shadow: 0 0 0 2px {{t.page}}"></div>
+                <input type="range" aria-label="Blur" min="0" max="100" value="{{blur.value}}" onChange="{{blur.change}}" style="position: absolute; left: 0; top: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer">
+              </div>
+              <span style="font-size: 12px; color: {{t.muted}}">More</span>
+            </div>
+          </div>
+
+          <div style="display: flex; align-items: center; gap: 24px; padding: 12px 0 12px 24px">
+            <div style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px">
+              <span>Darken</span>
+              <span style="font-size: 12px; color: {{t.muted}}">Darker bars make the image stand out</span>
+            </div>
+            <div style="width: 300px; flex-shrink: 0; display: flex; align-items: center; gap: 12px">
+              <span style="font-size: 12px; color: {{t.muted}}">None</span>
+              <div style="position: relative; flex-grow: 1; height: 20px">
+                <div style="position: absolute; left: 0; right: 0; top: 8px; height: 4px; border-radius: 2px; background: {{t.track}}"></div>
+                <div style="position: absolute; left: 0; top: 8px; height: 4px; border-radius: 2px; width: {{darken.fill}}; background: {{t.accent}}"></div>
+                <div style="position: absolute; top: 2px; left: {{darken.knobLeft}}; width: 16px; height: 16px; border-radius: 8px; background: {{t.accent}}; box-shadow: 0 0 0 2px {{t.page}}"></div>
+                <input type="range" aria-label="Darken" min="0" max="100" value="{{darken.value}}" onChange="{{darken.change}}" style="position: absolute; left: 0; top: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer">
+              </div>
+              <span style="font-size: 12px; color: {{t.muted}}">More</span>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+      <h3 style="margin: 16px 0 0; padding-bottom: 8px; font-size: 14px; font-weight: 600; border-bottom: 1px solid {{t.divider}}">Playlist</h3>
+
+      <div style="display: flex; align-items: center; gap: 24px; padding: 12px 0 12px 24px">
+        <div style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px">
+          <span>Order</span>
+          <span style="font-size: 12px; color: {{t.muted}}">{{orderHelp}}</span>
+        </div>
+        <div style="width: 300px; flex-shrink: 0; display: flex; gap: 6px">
+          <sc-for list="{{orders}}" as="o" hint-placeholder-count="2">
+            <button aria-pressed="{{o.pressed}}" onClick="{{o.pick}}" style="height: 34px; box-sizing: border-box; padding: 0 12px; border-radius: 4px; border: 1px solid {{o.border}}; background: {{o.bg}}; color: {{o.color}}; font: inherit; font-weight: {{o.weight}}; display: flex; align-items: center; gap: 8px; cursor: pointer">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><sc-if value="{{o.isShuffle}}" hint-placeholder-val="{{true}}"><path d="m18 14 4 4-4 4"></path><path d="m18 2 4 4-4 4"></path><path d="M2 18h1.973a4 4 0 0 0 3.3-1.7l5.454-7.6a4 4 0 0 1 3.3-1.7H22"></path><path d="M2 6h1.972a4 4 0 0 1 3.6 2.2"></path><path d="M22 18h-6.041a4 4 0 0 1-3.3-1.8l-.359-.45"></path></sc-if><sc-if value="{{o.isSorted}}" hint-placeholder-val="{{false}}"><path d="m3 16 4 4 4-4"></path><path d="M7 20V4"></path><path d="M20 8h-5"></path><path d="M15 10V6.5a2.5 2.5 0 0 1 5 0V10"></path><path d="M15 14h5l-5 6h5"></path></sc-if></svg>
+              <span>{{o.label}}</span>
+            </button>
+          </sc-for>
+        </div>
+      </div>
+
+      <h3 style="margin: 16px 0 0; padding-bottom: 8px; font-size: 14px; font-weight: 600; border-bottom: 1px solid {{t.divider}}">Pausing</h3>
+
+      <div style="display: flex; align-items: center; gap: 24px; padding: 12px 0">
+        <div style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px">
+          <span>While locked</span>
+          <span style="font-size: 12px; color: {{t.muted}}">Nothing changes while the session is locked</span>
+        </div>
+        <div style="width: 300px; flex-shrink: 0; display: flex; align-items: center">
+          <button role="switch" aria-checked="{{locked.checked}}" aria-label="Pause while the session is locked" onClick="{{locked.toggle}}" style="width: 40px; height: 20px; box-sizing: border-box; border: 0; border-radius: 10px; background: {{locked.track}}; position: relative; padding: 0; cursor: pointer; flex-shrink: 0">
+            <span style="position: absolute; top: 3px; left: {{locked.knobLeft}}; width: 14px; height: 14px; border-radius: 7px; background: {{locked.knob}}"></span>
+          </button>
+        </div>
+      </div>
+
+      <div style="display: flex; align-items: center; gap: 24px; padding: 12px 0">
+        <div style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px">
+          <span>When idle</span>
+          <span style="font-size: 12px; color: {{t.muted}}">After no keyboard or mouse input for this long</span>
+        </div>
+        <div style="width: 300px; flex-shrink: 0; display: flex; align-items: center; gap: 12px">
+          <button role="switch" aria-checked="{{idle.checked}}" aria-label="Pause when idle" onClick="{{idle.toggle}}" style="width: 40px; height: 20px; box-sizing: border-box; border: 0; border-radius: 10px; background: {{idle.track}}; position: relative; padding: 0; cursor: pointer; flex-shrink: 0">
+            <span style="position: absolute; top: 3px; left: {{idle.knobLeft}}; width: 14px; height: 14px; border-radius: 7px; background: {{idle.knob}}"></span>
+          </button>
+          <input type="text" aria-label="Idle time" value="{{idleTime.value}}" onChange="{{idleTime.change}}" style="width: 80px; height: 34px; box-sizing: border-box; border: 0; border-radius: 4px; background: {{t.field}}; color: {{t.text}}; font: inherit; padding: 0 12px">
+        </div>
+      </div>
+
+      <div style="margin-top: 16px; padding-top: 16px; border-top: 1px solid {{t.divider}}; display: flex; align-items: center; gap: 8px">
+        <span style="flex-grow: 1; font-size: 13px; color: {{t.muted}}">Unsaved changes</span>
+        <button style="height: 34px; border: 0; border-radius: 4px; padding: 0 18px; background: {{t.field}}; color: {{t.text}}; font: inherit; font-weight: 600; cursor: pointer">Revert</button>
+        <button style="height: 34px; border: 0; border-radius: 4px; padding: 0 18px; background: {{t.accent}}; color: {{t.onAccent}}; font: inherit; font-weight: 600; cursor: pointer">Save</button>
+      </div>
+    </section>
+
+    <section aria-label="States" style="display: flex; flex-direction: column; gap: 22px">
+      <div style="display: flex; flex-direction: column; gap: 4px">
+        <h2 style="margin: 0; font-size: 15px; font-weight: 600">States</h2>
+        <p style="margin: 0; font-size: 12px; color: {{t.muted}}">Still pictures of each control: at rest, under the pointer, with the keyboard focus (a 2 px accent ring), pressed, disabled.</p>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 8px">
+        <h3 style="margin: 0; font-size: 13px; font-weight: 600">Drop-down</h3>
+        <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; align-items: start">
+          <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 10px">
+            <div style="display: flex; flex-direction: column; gap: 6px">
+              <button aria-haspopup="listbox" style="width: 100%; height: 34px; box-sizing: border-box; border: 0; border-radius: 4px; background: {{t.field}}; color: {{t.text}}; font: inherit; padding: 0 12px; display: flex; align-items: center; justify-content: space-between; gap: 8px">
+                <span>konachan</span>
+                <svg width="10" height="6" viewBox="0 0 10 6" aria-hidden="true"><path d="M0 0h10L5 6z" fill="{{t.muted}}"></path></svg>
+              </button>
+              <span style="font-size: 12px; color: {{t.muted}}">Rest</span>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 6px">
+              <button aria-haspopup="listbox" style="width: 100%; height: 34px; box-sizing: border-box; border: 0; border-radius: 4px; background: {{t.fieldHover}}; color: {{t.text}}; font: inherit; padding: 0 12px; display: flex; align-items: center; justify-content: space-between; gap: 8px">
+                <span>konachan</span>
+                <svg width="10" height="6" viewBox="0 0 10 6" aria-hidden="true"><path d="M0 0h10L5 6z" fill="{{t.text}}"></path></svg>
+              </button>
+              <span style="font-size: 12px; color: {{t.muted}}">Hover</span>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 6px">
+              <button aria-haspopup="listbox" style="width: 100%; height: 34px; box-sizing: border-box; border: 0; border-radius: 4px; background: {{t.field}}; color: {{t.text}}; font: inherit; padding: 0 12px; display: flex; align-items: center; justify-content: space-between; gap: 8px; outline: 2px solid {{t.accent}}; outline-offset: 1px">
+                <span>konachan</span>
+                <svg width="10" height="6" viewBox="0 0 10 6" aria-hidden="true"><path d="M0 0h10L5 6z" fill="{{t.muted}}"></path></svg>
+              </button>
+              <span style="font-size: 12px; color: {{t.muted}}">Focus</span>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 6px">
+              <button aria-haspopup="listbox" disabled style="width: 100%; height: 34px; box-sizing: border-box; border: 0; border-radius: 4px; background: {{t.field}}; color: {{t.disabled}}; font: inherit; padding: 0 12px; display: flex; align-items: center; justify-content: space-between; gap: 8px">
+                <span>konachan</span>
+                <svg width="10" height="6" viewBox="0 0 10 6" aria-hidden="true"><path d="M0 0h10L5 6z" fill="{{t.disabled}}"></path></svg>
+              </button>
+              <span style="font-size: 12px; color: {{t.muted}}">Disabled</span>
+            </div>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 6px">
+            <button aria-haspopup="listbox" aria-expanded="true" style="width: 100%; height: 34px; box-sizing: border-box; border: 0; border-radius: 4px; background: {{t.fieldHover}}; color: {{t.text}}; font: inherit; padding: 0 12px; display: flex; align-items: center; justify-content: space-between; gap: 8px">
+              <span>Blurred image</span>
+              <svg width="10" height="6" viewBox="0 0 10 6" aria-hidden="true"><path d="M0 6h10L5 0z" fill="{{t.text}}"></path></svg>
+            </button>
+            <ul role="listbox" aria-label="Background" style="list-style: none; margin: 0; padding: 4px; border-radius: 6px; background: {{t.popup}}; box-shadow: 0 8px 24px {{t.shadow}}; display: flex; flex-direction: column; gap: 2px">
+              <li role="option" aria-selected="false" style="height: 32px; display: flex; align-items: center; padding: 0 12px; border-radius: 4px">Colour</li>
+              <li role="option" aria-selected="false" style="height: 32px; display: flex; align-items: center; padding: 0 12px; border-radius: 4px">Average of the image</li>
+              <li role="option" aria-selected="false" style="height: 32px; display: flex; align-items: center; padding: 0 12px; border-radius: 4px; background: {{t.hover}}">Main colour of the image</li>
+              <li role="option" aria-selected="false" style="height: 32px; display: flex; align-items: center; padding: 0 12px; border-radius: 4px">Edges of the image</li>
+              <li role="option" aria-selected="true" style="position: relative; height: 32px; display: flex; align-items: center; padding: 0 12px; border-radius: 4px; background: {{t.accentFill}}; font-weight: 600"><span style="position: absolute; left: 0; top: 8px; width: 3px; height: 16px; border-radius: 2px; background: {{t.accent}}"></span>Blurred image</li>
+            </ul>
+            <span style="font-size: 12px; color: {{t.muted}}">Open: the current entry has the sidebar's mark, the pointer's the hover tone</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 8px">
+        <h3 style="margin: 0; font-size: 13px; font-weight: 600">Segmented choice</h3>
+        <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px">
+          <div style="display: flex; flex-direction: column; gap: 6px; align-items: flex-start">
+            <button aria-pressed="true" style="height: 34px; box-sizing: border-box; padding: 0 12px; border-radius: 4px; border: 1px solid {{t.accent}}; background: {{t.accentFill}}; color: {{t.accent}}; font: inherit; font-weight: 600; display: flex; align-items: center; gap: 8px">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"></rect><rect x="8.5" y="8" width="7" height="8" rx="1"></rect></svg>
+              <span>Fit</span>
+            </button>
+            <span style="font-size: 12px; color: {{t.muted}}">Chosen</span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 6px; align-items: flex-start">
+            <button aria-pressed="false" style="height: 34px; box-sizing: border-box; padding: 0 12px; border-radius: 4px; border: 1px solid {{t.line}}; background: {{t.hover}}; color: {{t.text}}; font: inherit; display: flex; align-items: center; gap: 8px">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="m3 15 5-5 5 5 3-3 5 5"></path></svg>
+              <span>Fill</span>
+            </button>
+            <span style="font-size: 12px; color: {{t.muted}}">Hover</span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 6px; align-items: flex-start">
+            <button aria-pressed="false" style="height: 34px; box-sizing: border-box; padding: 0 12px; border-radius: 4px; border: 1px solid {{t.line}}; background: transparent; color: {{t.text}}; font: inherit; display: flex; align-items: center; gap: 8px; outline: 2px solid {{t.accent}}; outline-offset: 1px">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="m3 15 5-5 5 5 3-3 5 5"></path></svg>
+              <span>Fill</span>
+            </button>
+            <span style="font-size: 12px; color: {{t.muted}}">Focus</span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 6px; align-items: flex-start">
+            <button aria-pressed="false" disabled style="height: 34px; box-sizing: border-box; padding: 0 12px; border-radius: 4px; border: 1px solid {{t.line}}; background: transparent; color: {{t.disabled}}; font: inherit; display: flex; align-items: center; gap: 8px">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M7 12h10"></path><path d="m9 10-2 2 2 2"></path><path d="m15 10 2 2-2 2"></path></svg>
+              <span>Stretch</span>
+            </button>
+            <span style="font-size: 12px; color: {{t.muted}}">Disabled</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 8px">
+        <h3 style="margin: 0; font-size: 13px; font-weight: 600">Switch</h3>
+        <div style="display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px">
+          <div style="display: flex; flex-direction: column; gap: 8px; align-items: flex-start">
+            <button role="switch" aria-checked="false" aria-label="Off" style="width: 40px; height: 20px; box-sizing: border-box; border: 0; border-radius: 10px; background: {{t.switchOff}}; position: relative; padding: 0">
+              <span style="position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 7px; background: {{t.knobOff}}"></span>
+            </button>
+            <span style="font-size: 12px; color: {{t.muted}}">Off</span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 8px; align-items: flex-start">
+            <button role="switch" aria-checked="true" aria-label="On" style="width: 40px; height: 20px; box-sizing: border-box; border: 0; border-radius: 10px; background: {{t.accent}}; position: relative; padding: 0">
+              <span style="position: absolute; top: 3px; left: 23px; width: 14px; height: 14px; border-radius: 7px; background: {{t.onAccent}}"></span>
+            </button>
+            <span style="font-size: 12px; color: {{t.muted}}">On</span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 8px; align-items: flex-start">
+            <button role="switch" aria-checked="false" aria-label="Off, hovered" style="width: 40px; height: 20px; box-sizing: border-box; border: 0; border-radius: 10px; background: {{t.switchOffHover}}; position: relative; padding: 0">
+              <span style="position: absolute; top: 3px; left: 3px; width: 14px; height: 14px; border-radius: 7px; background: {{t.text}}"></span>
+            </button>
+            <span style="font-size: 12px; color: {{t.muted}}">Hover</span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 8px; align-items: flex-start">
+            <button role="switch" aria-checked="true" aria-label="On, focused" style="width: 40px; height: 20px; box-sizing: border-box; border: 0; border-radius: 10px; background: {{t.accent}}; position: relative; padding: 0; outline: 2px solid {{t.accent}}; outline-offset: 2px">
+              <span style="position: absolute; top: 3px; left: 23px; width: 14px; height: 14px; border-radius: 7px; background: {{t.onAccent}}"></span>
+            </button>
+            <span style="font-size: 12px; color: {{t.muted}}">Focus</span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 8px; align-items: flex-start">
+            <button role="switch" aria-checked="true" aria-label="On, disabled" disabled style="width: 40px; height: 20px; box-sizing: border-box; border: 0; border-radius: 10px; background: {{t.accent}}; position: relative; padding: 0; opacity: 0.4">
+              <span style="position: absolute; top: 3px; left: 23px; width: 14px; height: 14px; border-radius: 7px; background: {{t.onAccent}}"></span>
+            </button>
+            <span style="font-size: 12px; color: {{t.muted}}">Disabled</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 8px">
+        <h3 style="margin: 0; font-size: 13px; font-weight: 600">Buttons</h3>
+        <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px 10px">
+          <div style="display: flex; flex-direction: column; gap: 6px; align-items: flex-start">
+            <button style="height: 34px; border: 0; border-radius: 4px; padding: 0 18px; background: {{t.accent}}; color: {{t.onAccent}}; font: inherit; font-weight: 600">Save</button>
+            <span style="font-size: 12px; color: {{t.muted}}">Rest</span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 6px; align-items: flex-start">
+            <button style="height: 34px; border: 0; border-radius: 4px; padding: 0 18px; background: {{t.accentHover}}; color: {{t.onAccent}}; font: inherit; font-weight: 600">Save</button>
+            <span style="font-size: 12px; color: {{t.muted}}">Hover</span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 6px; align-items: flex-start">
+            <button style="height: 34px; border: 0; border-radius: 4px; padding: 0 18px; background: {{t.accentDown}}; color: {{t.onAccent}}; font: inherit; font-weight: 600">Save</button>
+            <span style="font-size: 12px; color: {{t.muted}}">Pressed</span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 6px; align-items: flex-start">
+            <button disabled style="height: 34px; border: 0; border-radius: 4px; padding: 0 18px; background: {{t.field}}; color: {{t.disabled}}; font: inherit; font-weight: 600">Save</button>
+            <span style="font-size: 12px; color: {{t.muted}}">Disabled</span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 6px; align-items: flex-start">
+            <button style="height: 34px; border: 0; border-radius: 4px; padding: 0 18px; background: {{t.field}}; color: {{t.text}}; font: inherit; font-weight: 600">Revert</button>
+            <span style="font-size: 12px; color: {{t.muted}}">Rest</span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 6px; align-items: flex-start">
+            <button style="height: 34px; border: 0; border-radius: 4px; padding: 0 18px; background: {{t.fieldHover}}; color: {{t.text}}; font: inherit; font-weight: 600">Revert</button>
+            <span style="font-size: 12px; color: {{t.muted}}">Hover</span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 6px; align-items: flex-start">
+            <button style="height: 34px; border: 0; border-radius: 4px; padding: 0 18px; background: {{t.field}}; color: {{t.text}}; font: inherit; font-weight: 600; outline: 2px solid {{t.accent}}; outline-offset: 1px">Revert</button>
+            <span style="font-size: 12px; color: {{t.muted}}">Focus</span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 6px; align-items: flex-start">
+            <button disabled style="height: 34px; border: 0; border-radius: 4px; padding: 0 18px; background: {{t.field}}; color: {{t.disabled}}; font: inherit; font-weight: 600">Revert</button>
+            <span style="font-size: 12px; color: {{t.muted}}">Disabled</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 8px">
+        <h3 style="margin: 0; font-size: 13px; font-weight: 600">Slider</h3>
+        <div style="display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px 18px">
+          <div style="display: flex; flex-direction: column; gap: 6px">
+            <div style="position: relative; height: 20px">
+              <div style="position: absolute; left: 0; right: 0; top: 8px; height: 4px; border-radius: 2px; background: {{t.track}}"></div>
+              <div style="position: absolute; left: 0; top: 8px; height: 4px; width: 40%; border-radius: 2px; background: {{t.accent}}"></div>
+              <div style="position: absolute; top: 2px; left: calc(40% - 6.4px); width: 16px; height: 16px; border-radius: 8px; background: {{t.accent}}; box-shadow: 0 0 0 2px {{t.page}}"></div>
+            </div>
+            <span style="font-size: 12px; color: {{t.muted}}">Rest</span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 6px">
+            <div style="position: relative; height: 20px">
+              <div style="position: absolute; left: 0; right: 0; top: 8px; height: 4px; border-radius: 2px; background: {{t.track}}"></div>
+              <div style="position: absolute; left: 0; top: 8px; height: 4px; width: 40%; border-radius: 2px; background: {{t.accent}}"></div>
+              <div style="position: absolute; top: 1px; left: calc(40% - 7.4px); width: 18px; height: 18px; border-radius: 9px; background: {{t.accentHover}}; box-shadow: 0 0 0 2px {{t.page}}"></div>
+            </div>
+            <span style="font-size: 12px; color: {{t.muted}}">Hover</span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 6px">
+            <div style="position: relative; height: 20px">
+              <div style="position: absolute; left: 0; right: 0; top: 8px; height: 4px; border-radius: 2px; background: {{t.track}}"></div>
+              <div style="position: absolute; left: 0; top: 8px; height: 4px; width: 40%; border-radius: 2px; background: {{t.accent}}"></div>
+              <div style="position: absolute; top: 2px; left: calc(40% - 6.4px); width: 16px; height: 16px; border-radius: 8px; background: {{t.accent}}; box-shadow: 0 0 0 2px {{t.page}}, 0 0 0 4px {{t.accent}}"></div>
+            </div>
+            <span style="font-size: 12px; color: {{t.muted}}">Focus</span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 6px">
+            <div style="position: relative; height: 20px">
+              <div style="position: absolute; left: 0; right: 0; top: 8px; height: 4px; border-radius: 2px; background: {{t.track}}"></div>
+              <div style="position: absolute; left: 0; top: 8px; height: 4px; width: 40%; border-radius: 2px; background: {{t.disabled}}"></div>
+              <div style="position: absolute; top: 2px; left: calc(40% - 6.4px); width: 16px; height: 16px; border-radius: 8px; background: {{t.knobDisabled}}; box-shadow: 0 0 0 2px {{t.page}}"></div>
+            </div>
+            <span style="font-size: 12px; color: {{t.muted}}">Disabled</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 8px">
+        <h3 style="margin: 0; font-size: 13px; font-weight: 600">Unchanged</h3>
+        <div style="display: flex; align-items: flex-start; gap: 24px">
+          <div style="display: flex; flex-direction: column; gap: 6px">
+            <button style="height: 34px; border: 0; background: transparent; color: {{t.accent}}; font: inherit; font-size: 13px; font-weight: 600; padding: 0 4px">Browse…</button>
+            <span style="font-size: 12px; color: {{t.muted}}">Text button</span>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 6px">
+            <input type="text" aria-label="Folder" value="D:\pictures\KONACHAN" readonly style="width: 220px; height: 34px; box-sizing: border-box; border: 0; border-radius: 4px; background: {{t.field}}; color: {{t.text}}; font: inherit; padding: 0 12px">
+            <span style="font-size: 12px; color: {{t.muted}}">Text field</span>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <section aria-label="In the Library" style="display: flex; flex-direction: column; gap: 12px; padding-top: 20px; border-top: 1px solid {{t.divider}}">
+    <h2 style="margin: 0; font-size: 15px; font-weight: 600">In the Library</h2>
+    <div style="display: flex; align-items: center; gap: 12px">
+      <div style="position: relative; width: 320px">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="{{t.muted}}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="position: absolute; left: 12px; top: 9px; pointer-events: none"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
+        <input type="search" aria-label="Filter by name" placeholder="Filter by name" style="width: 100%; height: 34px; box-sizing: border-box; border: 0; border-radius: 4px; background: {{t.field}}; color: {{t.text}}; font: inherit; padding: 0 12px 0 36px">
+      </div>
+      <div style="position: relative; width: 180px">
+        <select aria-label="Sort" value="{{sort.value}}" onChange="{{sort.change}}" style="width: 100%; height: 34px; box-sizing: border-box; border: 0; border-radius: 4px; background: {{t.field}}; color: {{t.text}}; font: inherit; padding: 0 32px 0 12px; appearance: none; cursor: pointer">
+          <option value="az">Name A–Z</option>
+          <option value="za">Name Z–A</option>
+          <option value="new">Newest added</option>
+          <option value="old">Oldest added</option>
+        </select>
+        <svg width="10" height="6" viewBox="0 0 10 6" aria-hidden="true" style="position: absolute; right: 12px; top: 14px; pointer-events: none"><path d="M0 0h10L5 6z" fill="{{t.muted}}"></path></svg>
+      </div>
+      <span style="flex-grow: 1"></span>
+      <span style="font-size: 13px">Hide removed</span>
+      <button role="switch" aria-checked="{{hide.checked}}" aria-label="Hide removed" onClick="{{hide.toggle}}" style="width: 40px; height: 20px; box-sizing: border-box; border: 0; border-radius: 10px; background: {{hide.track}}; position: relative; padding: 0; cursor: pointer; flex-shrink: 0">
+        <span style="position: absolute; top: 3px; left: {{hide.knobLeft}}; width: 14px; height: 14px; border-radius: 7px; background: {{hide.knob}}"></span>
+      </button>
+    </div>
+  </section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":true},"accent":{"editor":"color","default":"#0078d4","options":["#0078d4","#3daee9","#b43cc8","#f7630c"]},"$preview":{"width":1280,"height":1180}}'>
+class Component extends DCLogic {
+renderVals() {
+const s = Object.assign({
+  mode: 'fit', order: 'shuffle', locked: true, idle: true, hide: true,
+  blur: 50, darken: 25, monitor: 'AW3225QF', playlist: 'konachan',
+  background: 'blur', sort: 'az', idleTime: '5m'
+}, this.state || {});
+const dark = this.props.dark ?? true;
+
+// The app's colour rules (app/ui/theme.py): the system accent made readable
+// on the page (readable_accent), text on it black or white (on_accent).
+const hex = (h) => {
+  let x = String(h || '#0078d4').replace('#', '');
+  if (x.length === 3) x = x.split('').map((c) => c + c).join('');
+  return [0, 2, 4].map((i) => parseInt(x.slice(i, i + 2), 16));
+};
+const css = (c) => '#' + c.map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('');
+const rgba = (c, a) => 'rgba(' + c.map((v) => Math.round(v)).join(', ') + ', ' + a + ')';
+const mix = (a, b, k) => a.map((v, i) => v + (b[i] - v) * k);
+const lightness = (c) => (Math.max(c[0], c[1], c[2]) + Math.min(c[0], c[1], c[2])) / 510;
+const toHsv = (c) => {
+  const r = c[0] / 255, g = c[1] / 255, b = c[2] / 255;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+  let h = 0;
+  if (d) {
+    if (mx === r) h = ((g - b) / d) % 6;
+    else if (mx === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h *= 60;
+    if (h < 0) h += 360;
+  }
+  return [h, mx ? d / mx : 0, mx];
+};
+const fromHsv = (h, sat, v) => {
+  const c = v * sat, x = c * (1 - Math.abs(((h / 60) % 2) - 1)), m = v - c;
+  const k = Math.floor(h / 60) % 6;
+  const rgb = [[c, x, 0], [x, c, 0], [0, c, x], [0, x, c], [x, 0, c], [c, 0, x]][k];
+  return rgb.map((u) => (u + m) * 255);
+};
+const scale = (c, f) => {
+  const hsv = toHsv(c);
+  let sat = hsv[1], v = hsv[2] * f;
+  if (v > 1) { sat = Math.max(0, sat - (v - 1)); v = 1; }
+  return fromHsv(hsv[0], sat, v);
+};
+const readable = (c) => {
+  for (let i = 0; i < 12; i++) {
+    const l = lightness(c);
+    if ((dark && l >= 0.6) || (!dark && l <= 0.45)) break;
+    c = scale(c, dark ? 1.15 : 1 / 1.15);
+  }
+  return c;
+};
+
+// The page tones of the approved mockup (Shell.dc.html).
+const base = dark
+  ? { page: '#1a1a1a', text: '#ffffff', muted: '#c8c8c8', field: '#2b2b2b', line: '#383838', divider: '#2f2f2f' }
+  : { page: '#f3f3f3', text: '#1a1a1a', muted: '#5c5c5c', field: '#e6e6e6', line: '#d6d6d6', divider: '#dcdcdc' };
+const page = hex(base.page), text = hex(base.text), field = hex(base.field);
+const a = readable(hex(this.props.accent ?? '#0078d4'));
+const white = [255, 255, 255], black = [0, 0, 0];
+const t = Object.assign({}, base, {
+  fieldHover: css(mix(field, text, 0.06)),
+  hover: rgba(text, 0.06),
+  accent: css(a),
+  accentHover: css(dark ? mix(a, white, 0.14) : mix(a, black, 0.12)),
+  accentDown: css(mix(a, page, 0.25)),
+  accentFill: rgba(a, 0.14),
+  onAccent: lightness(a) > 0.55 ? '#000000' : '#ffffff',
+  disabled: rgba(text, 0.36),
+  knobDisabled: css(mix(page, text, 0.4)),
+  popup: dark ? css(mix(page, text, 0.1)) : '#ffffff',
+  shadow: dark ? 'rgba(0, 0, 0, 0.5)' : 'rgba(0, 0, 0, 0.16)',
+  track: css(mix(page, text, dark ? 0.2 : 0.22)),
+  switchOff: css(mix(page, text, dark ? 0.18 : 0.2)),
+  switchOffHover: css(mix(page, text, dark ? 0.26 : 0.28)),
+  knobOff: base.muted
+});
+
+const seg = (on) => ({
+  pressed: on ? 'true' : 'false',
+  bg: on ? t.accentFill : 'transparent',
+  border: on ? t.accent : t.line,
+  color: on ? t.accent : t.text,
+  weight: on ? 600 : 400
+});
+const modeHelp = {
+  fill: "Covers the screen; what doesn't fit is cut off",
+  fit: 'Shows the whole image; bars fill the rest',
+  stretch: 'Fills the screen; the image changes its shape'
+};
+const modes = [['fill', 'Fill'], ['fit', 'Fit'], ['stretch', 'Stretch']].map((m) => Object.assign({
+  label: m[1], isFill: m[0] === 'fill', isFit: m[0] === 'fit', isStretch: m[0] === 'stretch',
+  pick: () => this.setState({ mode: m[0] })
+}, seg(s.mode === m[0])));
+const orderHelp = {
+  shuffle: 'Shuffle shows every image once before any repeats',
+  sorted: 'Sorted goes in natural order: 2 before 10'
+};
+const orders = [['shuffle', 'Shuffle'], ['sorted', 'Sorted']].map((o) => Object.assign({
+  label: o[1], isShuffle: o[0] === 'shuffle', isSorted: o[0] === 'sorted',
+  pick: () => this.setState({ order: o[0] })
+}, seg(s.order === o[0])));
+
+const sw = (key) => {
+  const on = !!s[key];
+  return {
+    checked: on ? 'true' : 'false',
+    track: on ? t.accent : t.switchOff,
+    knob: on ? t.onAccent : t.knobOff,
+    knobLeft: on ? '23px' : '3px',
+    toggle: () => this.setState({ [key]: !on })
+  };
+};
+const slider = (key) => {
+  const v = Number(s[key]);
+  return {
+    value: v,
+    fill: v + '%',
+    knobLeft: 'calc(' + v + '% - ' + (v * 0.16).toFixed(1) + 'px)',
+    change: (e) => this.setState({ [key]: Number(e.target.value) })
+  };
+};
+const choice = (key) => ({ value: s[key], change: (e) => this.setState({ [key]: e.target.value }) });
+
+return {
+  t,
+  modes,
+  orders,
+  modeHelp: modeHelp[s.mode],
+  orderHelp: orderHelp[s.order],
+  isFit: s.mode === 'fit',
+  locked: sw('locked'),
+  idle: sw('idle'),
+  hide: sw('hide'),
+  blur: slider('blur'),
+  darken: slider('darken'),
+  monitor: choice('monitor'),
+  playlist: choice('playlist'),
+  background: choice('background'),
+  sort: choice('sort'),
+  idleTime: choice('idleTime')
+};
+}
+}
+</script>
+</body>
+</html>

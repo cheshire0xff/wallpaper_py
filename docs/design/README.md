@@ -52,7 +52,15 @@ matters; light mode only has to stay usable.
   spacing. It is not a runnable page: `{{...}}` are template holes, filled
   in by the script at the bottom (the `dark` theme object holds the
   colours). Pages are switched by `page` / `flow`: Home is
-  `page="layout"` with `flow`, Settings `page="settings"` with `flow`.
+  `page="layout"` with `flow`, Settings `page="settings"` with `flow`;
+  light mode's panel tone by `panel` (`silver` is the one built).
+- `controls.dc.html`: the controls painted in code (Phase 5, step 2;
+  approved): drop-down (closed and open), segmented choice, switch,
+  buttons, slider, each at rest, hovered, focused, pressed and disabled,
+  in Settings and in the Library's toolbar. Same kind of source as
+  `mockup.dc.html`; `dark` and `accent` (the system's, made readable as
+  `theme.readable_accent` does) are its inputs. The look it aims for came
+  from the NVIDIA app; that screenshot stays out of the repo.
 
 Where a screenshot and the source differ, the screenshot wins. The images
 in the mockup are colourful stand-ins, not real wallpapers. Colours are

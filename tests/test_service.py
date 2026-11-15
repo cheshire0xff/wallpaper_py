@@ -24,6 +24,7 @@ from wallpaper_py.core.selection import MonitorSelectionError
 from wallpaper_py.core.service import (
     Change,
     ManualPlaylistError,
+    NoImagesError,
     PlaylistError,
     PlaylistService,
 )
@@ -839,3 +840,119 @@ def test_a_to_remove_list_never_read_stops_choosing(
     env.clock.advance(STEP)
     changes = [c for c in env.service.tick() if c.playlist == "fantasy"]
     assert changes[0].image.name == "f10.png"
+
+
+# -- stats and reset_cycle ---------------------------------------------------------
+
+
+def test_stats_count_a_shuffle_cycle(env: Env) -> None:
+    env.service.tick()
+    env.service.next(env.konachan)  # two seen
+    later = env.service.status(upcoming=1)[0].upcoming[0]
+    env.to_remove_file.parent.mkdir(parents=True, exist_ok=True)
+    env.to_remove_file.write_text(f"{later}\n", encoding="utf-8")
+    env.service.favourite(env.konachan)
+    new = make_images(env.tmp / "konachan", "k09.jpg")[0]
+    stats = env.service.stats(env.konachan)
+    assert (stats.images, stats.seen, stats.unseen, stats.skipped) == (9, 2, 6, 1)
+    assert (stats.favourites_here, stats.to_remove_here) == (1, 1)
+    assert (stats.name, stats.order, stats.percent_seen) == (
+        "konachan",
+        Order.SHUFFLE,
+        25,
+    )
+    # Counting changes nothing: the new file isn't shuffled in yet.
+    assert str(new) not in env.store.deck_paths("1")
+
+
+def test_stats_of_a_sorted_walk_skip_unreadable_images(env: Env) -> None:
+    (env.tmp / "fantasy" / "f1.png").write_bytes(b"")  # not an image
+    env.service.tick()  # f2: f1 failed to load
+    stats = env.service.stats(env.fantasy)
+    assert (stats.images, stats.seen, stats.unseen, stats.skipped) == (3, 1, 1, 1)
+    env.service.next(env.fantasy)  # f10, the last in name order
+    stats = env.service.stats(env.fantasy)
+    assert (stats.seen, stats.unseen, stats.percent_seen) == (2, 0, 100)
+
+
+def test_stats_before_anything_was_shown(env: Env) -> None:
+    for playlist in (env.konachan, env.fantasy):
+        stats = env.service.stats(playlist)
+        assert (stats.seen, stats.unseen, stats.percent_seen) == (0, stats.images, 0)
+
+
+def test_list_stats_count_entries_and_the_files_that_exist(env: Env) -> None:
+    env.favourites_file.parent.mkdir(parents=True, exist_ok=True)
+    k01, f1 = env.tmp / "konachan" / "k01.jpg", env.tmp / "fantasy" / "f1.png"
+    lines = ["# kept", str(k01), str(env.tmp / "gone.jpg"), f'"{f1}"', ""]
+    env.favourites_file.write_text("\n".join(lines), encoding="utf-8")
+    favourites, to_remove = env.service.list_stats()
+    assert (favourites.file, favourites.listed, favourites.available) == (
+        env.favourites_file,
+        3,
+        2,
+    )
+    assert (to_remove.listed, to_remove.available) == (0, 0)  # no file yet
+    assert env.service.stats(env.konachan).favourites_here == 1
+
+
+def test_stats_wait_for_a_list_never_read(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env.to_remove_file.parent.mkdir(parents=True, exist_ok=True)
+    env.to_remove_file.write_text("", encoding="utf-8")
+    BusyFile(env.to_remove_file, monkeypatch)
+    env.restart()  # reads it first while busy
+    with pytest.raises(MarkFileBusyError):
+        env.service.stats(env.konachan)
+
+
+def test_reset_cycle_makes_every_image_unseen(env: Env) -> None:
+    env.service.tick()
+    for _ in range(3):
+        env.service.next(env.konachan)
+    current = env.service.current(env.konachan)
+    assert env.service.stats(env.konachan).seen == 4
+    assert env.service.reset_cycle(env.konachan) == 8
+    stats = env.service.stats(env.konachan)
+    assert (stats.seen, stats.unseen) == (0, 8)
+    assert env.service.current(env.konachan) == current  # it stays on screen
+    assert env.service.next(env.konachan).image != current  # and isn't first
+    assert env.service.stats(env.konachan).seen == 1
+
+
+def test_reset_cycle_refuses_a_sorted_or_empty_playlist(env: Env) -> None:
+    with pytest.raises(PlaylistError, match="fantasy is sorted"):
+        env.service.reset_cycle(env.fantasy)
+    for image in (env.tmp / "konachan").iterdir():
+        image.unlink()
+    with pytest.raises(NoImagesError):
+        env.service.reset_cycle(env.konachan)
+
+
+def test_reset_cycle_after_going_back_avoids_the_newest_image(env: Env) -> None:
+    env.service.tick()
+    newest = env.service.next(env.konachan).image
+    for _ in range(30):  # many shuffles: never the newest image first
+        env.service.previous(env.konachan)
+        env.service.reset_cycle(env.konachan)
+        assert env.service.next(env.konachan).image == newest  # history
+        image = env.service.next(env.konachan).image  # the new cycle's first
+        assert image != newest
+        newest = image
+
+
+def test_reset_cycle_waits_for_a_list_never_read(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env.service.tick()
+    env.service.next(env.konachan)
+    env.to_remove_file.parent.mkdir(parents=True, exist_ok=True)
+    env.to_remove_file.write_text("", encoding="utf-8")
+    busy = BusyFile(env.to_remove_file, monkeypatch)
+    env.restart()  # reads it first while busy
+    with pytest.raises(MarkFileBusyError, match="to-remove"):
+        env.service.reset_cycle(env.konachan)
+    busy.busy = False
+    env.restart()
+    assert env.service.stats(env.konachan).seen == 2  # the cycle is kept

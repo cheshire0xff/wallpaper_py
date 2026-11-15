@@ -35,8 +35,6 @@ settings_dialogs.py's.
 
 from __future__ import annotations
 
-import weakref
-from collections.abc import Callable
 from pathlib import Path
 from typing import Literal, override
 
@@ -44,17 +42,14 @@ from PySide6.QtCore import QEvent, Qt, Signal, Slot
 from PySide6.QtGui import QDesktopServices, QFont, QPalette
 from PySide6.QtWidgets import (
     QCheckBox,
-    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
-    QScrollArea,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
-from shiboken6 import Shiboken
 
 from ...core import paths
 from ...core.model import Look, MonitorId
@@ -73,7 +68,7 @@ from ...protocol import (
 from . import theme
 from .about import AboutPage, OpenUrl, data_locations, version_text
 from .arrangement import MonitorsView
-from .client import Client
+from .client import Client, ReplyTo
 from .settings_draft import (
     DEFAULT_IDLE,
     FAVOURITES,
@@ -113,21 +108,6 @@ NEW = "new"  # the Playlist drop-down's "New playlist…"
 NO_PLAYLIST = ""  # its "None"
 
 # -- the page ------------------------------------------------------------------------
-
-
-class _ReplyTo:
-    """`Client.run`'s callback, holding the page weakly (it may close first)."""
-
-    def __init__(
-        self, page: SettingsPage, method: Callable[[SettingsPage, Reply], None]
-    ):
-        self._page = weakref.ref(page)
-        self._method = method
-
-    def __call__(self, reply: Reply) -> None:
-        page = self._page()
-        if page is not None and Shiboken.isValid(page):
-            self._method(page, reply)
 
 
 BannerKind = Literal["connecting", "app", "load", "stale", "saved"]
@@ -286,7 +266,7 @@ class SettingsPage(QWidget):
         self.save_button.clicked.connect(self._save_clicked)
 
     def _build(self) -> None:
-        tabs = (self._playlists, self._general, self._scrolling(self.about))
+        tabs = (self._playlists, self._general, theme.scrolling(self.about, self))
         for name, tab in zip(TABS, tabs):
             self.tabs.add(name)
             self.stack.addWidget(tab)
@@ -318,18 +298,6 @@ class SettingsPage(QWidget):
         outer.addWidget(self.stack, 1)
         outer.addWidget(theme.Divider(self))
         outer.addLayout(footer)
-
-    def _scrolling(self, content: QWidget) -> QScrollArea:
-        """A tab's content, scrolling, within the page's margins."""
-        box = QWidget(self)
-        layout = QVBoxLayout(box)
-        layout.setContentsMargins(theme.PAGE_MARGIN, 0, theme.PAGE_MARGIN, 0)
-        layout.addWidget(content)
-        scroll = QScrollArea(self)
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setWidget(box)
-        return scroll
 
     def _section(self, title: str, note: str, parent: QWidget) -> QHBoxLayout:
         header = QHBoxLayout()
@@ -365,7 +333,7 @@ class SettingsPage(QWidget):
         layout.addSpacing(theme.space())
         layout.addWidget(self.add_button, 0, Qt.AlignmentFlag.AlignLeft)
         layout.addStretch(1)
-        return self._scrolling(content)
+        return theme.scrolling(content, self)
 
     def _general_tab(self) -> QWidget:
         general = QWidget(self)
@@ -420,7 +388,7 @@ class SettingsPage(QWidget):
             )
         )
         layout.addStretch(1)
-        return self._scrolling(general)
+        return theme.scrolling(general, self)
 
     def _idle_row(self) -> QHBoxLayout:
         row = QHBoxLayout()
@@ -475,7 +443,7 @@ class SettingsPage(QWidget):
     def load(self) -> None:
         """Read the saved settings (again), dropping unsaved edits."""
         self._loading = True
-        self._client.run(SettingsRequest(), _ReplyTo(self, SettingsPage.loaded))
+        self._client.run(SettingsRequest(), ReplyTo(self, SettingsPage.loaded))
 
     def loaded(self, reply: Reply) -> None:
         """The answer to `load`."""
@@ -790,7 +758,7 @@ class SettingsPage(QWidget):
         settings = edited.settings()
         self._saving = settings
         request = SaveSettingsRequest(settings=settings, revision=self._revision)
-        self._client.run(request, _ReplyTo(self, SettingsPage.saved))
+        self._client.run(request, ReplyTo(self, SettingsPage.saved))
         self._refresh()
         return True
 

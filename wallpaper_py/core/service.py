@@ -3,7 +3,7 @@ The playlist service: rotates wallpapers, walks history, marks images.
 
 Driven by `tick()` (every few seconds, from the app's timer) and by user
 commands (`next`, `previous`, `pick`, `favourite`, `remove`, `hold`,
-`resume`). The backend, presence hook, clock and random generator are
+`resume`, `reset_cycle`). The backend, presence hook, clock and random generator are
 injected, so all of it is tested with fakes.
 
 Timing: each playlist counts *active* seconds since its last change, i.e.
@@ -20,6 +20,10 @@ removal, deleted, unreadable).
 Pick shows a chosen image, from any directory, as if `next` had chosen it:
 it goes into the history right after the current entry.
 
+Stats count what a playlist picks up (`stats`, `list_stats`): its images,
+seen and unseen in this shuffle cycle (or sorted walk), skipped; and the
+lists. `reset_cycle` starts a shuffle cycle over.
+
 Settings: the service runs on the settings stored in the database, and
 `save_settings` stores new ones and uses them at once: a monitor whose
 playlist or look changed is rendered again on the next tick.
@@ -32,6 +36,7 @@ one member is attached; a member that comes back gets the current image.
 
 from __future__ import annotations
 
+import bisect
 import logging
 import os
 import random
@@ -43,7 +48,7 @@ from typing import Literal
 
 from .backend import Backend
 from .imaging import check_image
-from .library import Library, path_key
+from .library import Library, natural_key, path_key
 from .marks import MarkFile, MarkFileBusyError
 from .model import (
     Clock,
@@ -153,6 +158,44 @@ class PlaylistStatus:
 
 
 @dataclass(frozen=True)
+class PlaylistStats:  # pylint: disable=too-many-instance-attributes
+    """
+    What a playlist picks up from its folder. images = seen + unseen +
+    skipped. A sorted playlist's seen / unseen: up to and including the
+    walk's image / after it, in name order.
+    """
+
+    name: str
+    directory: Path
+    order: Order
+    scan_age: float  # seconds since the folder was scanned (cached up to 5 min)
+    images: int  # found in the folder
+    seen: int  # drawn in this shuffle cycle (picked ones too)
+    unseen: int  # still to come, new files too
+    skipped: int  # listed to remove, or failed to load
+    favourites_here: int  # favourites entries among the images
+    to_remove_here: int  # to-remove entries among the images
+
+    @property
+    def percent_seen(self) -> int:
+        """Of seen + unseen; 100 only once all are seen."""
+        total = self.seen + self.unseen
+        if total == 0:
+            return 0
+        percent = round(100 * self.seen / total)
+        return min(percent, 99) if self.unseen else 100
+
+
+@dataclass(frozen=True)
+class ListStats:
+    """A list file's entries (lines naming a path), and how many exist."""
+
+    file: Path
+    listed: int
+    available: int
+
+
+@dataclass(frozen=True)
 class _Candidate:
     image: Path
     history_id: int | None = None  # walking existing history
@@ -161,6 +204,7 @@ class _Candidate:
 
 class PlaylistService:
     # pylint: disable=too-many-instance-attributes,too-many-arguments
+    # pylint: disable=too-many-public-methods
     def __init__(
         self,
         backend: Backend,
@@ -522,6 +566,79 @@ class PlaylistService:
         except MonitorNotAttachedError:
             return image, None
 
+    def reset_cycle(self, playlist: PlaylistSettings) -> int:
+        """
+        Start the shuffle cycle over from the folder's current scan: every
+        image unseen again. The newest image shown (the one on screen,
+        unless we went back) stays, and isn't first. Returns how many are
+        unseen now (the skipped ones aren't). Nothing changes if it raises.
+
+        Raises:
+            PlaylistError: the playlist is sorted (no cycle).
+            NoImagesError: nothing in its folder (maybe not mounted); the
+                cycle is kept.
+            MarkFileBusyError: the to-remove list has never been read.
+        """
+        if playlist.order is Order.SORTED:
+            raise PlaylistError(
+                f"{playlist.name} is sorted: it walks its folder in name order, "
+                f"with no shuffle cycle to start over"
+            )
+        hidden = self.to_remove.keys() | self._broken
+        images = self._library.images(playlist.directory)
+        if not images:
+            raise NoImagesError(f"{playlist.name}: no images in {playlist.directory}")
+        latest = self._store.latest_history(playlist.id)
+        self._deck(playlist).reset(images, avoid=latest.path if latest else None)
+        return sum(path_key(p) not in hidden for p in images)
+
+    def stats(self, playlist: PlaylistSettings, rescan: bool = False) -> PlaylistStats:
+        """
+        Counted from the folder's cached scan (`rescan`: scanned again
+        first), the deck or the walk, and the lists. Changes nothing (new
+        files are not shuffled in yet: they count as unseen).
+
+        Raises:
+            MarkFileBusyError: a list has never been read (busy).
+        """
+        images = self._library.images(playlist.directory, refresh=rescan)
+        keys = [path_key(p) for p in images]
+        hidden = self.to_remove.keys() | self._broken
+        left = [p for p, key in zip(images, keys) if key not in hidden]
+        seen = self._seen(playlist, left)
+        scanned = set(keys)
+        return PlaylistStats(
+            name=playlist.name,
+            directory=playlist.directory,
+            order=playlist.order,
+            scan_age=self._library.age(playlist.directory),
+            images=len(images),
+            seen=seen,
+            unseen=len(left) - seen,
+            skipped=len(images) - len(left),
+            favourites_here=_count_in(self.favourites.paths(), scanned),
+            to_remove_here=_count_in(self.to_remove.paths(), scanned),
+        )
+
+    def _seen(self, playlist: PlaylistSettings, images: Sequence[Path]) -> int:
+        """Of `images` (scanned, so in name order): the ones seen."""
+        if playlist.order is Order.SORTED:
+            after = self._sorted_after(playlist)
+            if after is None:
+                return 0
+            return bisect.bisect_right(images, natural_key(after), key=natural_key)
+        drawn = self._store.deck_drawn(playlist.id)
+        return sum(str(p) in drawn for p in images)
+
+    def list_stats(self) -> tuple[ListStats, ListStats]:
+        """
+        Favourites and to-remove: one `stat` per entry.
+
+        Raises:
+            MarkFileBusyError: a list has never been read (busy).
+        """
+        return _list_stats(self.favourites), _list_stats(self.to_remove)
+
     def monitors(self) -> list[Monitor]:
         """Every monitor the backend lists, detached ones included."""
         return self._backend.monitors()
@@ -819,6 +936,20 @@ class PlaylistService:
             tuple(m.name for m in shown),
             tuple(m.name for m in missed),
         )
+
+
+def _count_in(entries: Sequence[Path], keys: set[str]) -> int:
+    """How many of the list's `entries` name one of these path keys."""
+    return sum(path_key(p) in keys for p in entries)
+
+
+def _list_stats(marks: MarkFile) -> ListStats:
+    entries = marks.paths()
+    return ListStats(
+        file=marks.file,
+        listed=len(entries),
+        available=sum(p.is_file() for p in entries),
+    )
 
 
 def _playlist_of(settings: Settings, monitor_id: MonitorId) -> str | None:

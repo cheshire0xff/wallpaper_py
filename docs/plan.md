@@ -15,7 +15,7 @@ thin. See [architecture.md](architecture.md) for the layers.
 | 4b | Settings in the database, per-monitor looks, previews, backgrounds | done |
 | 4c | More backgrounds for Fit: dominant, blur | done |
 | 4d | Blur strength and darkening per monitor; the look stored as one value | done |
-| 5 | Library window | low priority |
+| 5 | Library page: overview (stats), grids, enlarged view | next |
 | 6 | KDE backend | backend done; Kubuntu and the checks by hand left |
 | 7 | Polish | |
 
@@ -40,56 +40,266 @@ Phase 4c's: `cd44203`; Phase 4d's: `280a3ef`).
 - **Native lock / unlock and sleep / resume notifications.** The 5 s tick
   notices both (the session flag, the tick gap); they would add platform
   code for no visible gain.
-- **Stylesheets.** The look comes from the native style and the palette
-  ([design/](design/README.md)).
+- **Stylesheets.** The colours come from the palette, and the controls are
+  painted in code (Phase 5, "Controls"; [design/](design/README.md)).
 - **Golden-image tests** (see Phase 7).
 
-## Phase 5: library window
+## Phase 5: Library page
 
-Low priority: the app already covers most of what is needed day to day.
+The sidebar's Library page (a placeholder now): what a playlist picks
+up, first in numbers, then as images. Features: the "Library window"
+section of [todo.md](../todo.md), plus **"Show on <playlist>"** (`pick`)
+in the enlarged view. The library stats of todo.md's "Settings / about"
+item go to the Overview tab, not to About: About keeps the version and
+the data locations (facts about the app, not the library), and loses its
+"come in a later version" line.
 
-Features: the "Library window" section of [todo.md](../todo.md) (enlarge
-with path / size / dimensions, toggles, filter, sort, ...), plus **"Show on
-<playlist>"** (`pick`) in the enlarged view.
+### The page
 
-Sorting by "added": Favourites and To remove use the line order of their
-.txt files (entries are appended). The library uses the file's creation
-time on Windows (taken from the symlink itself for links, i.e. when it was
-added to the library; not mtime, which copies keep), and mtime on Linux
-(no portable creation time in Python).
+The title, a playlist drop-down and the count of the open tab
+(`Library  konachan ▾  · 20,431 images · 1,204 seen`; "312 of 20,431"
+while filtered), then the tabs **All images**, **Favourites**, **To
+remove**, **History**, **Upcoming**, **Stats**; under a grid tab, its
+toolbar (filter, sort, toggles) and the grid, as in
+[design/library.png](design/library.png). Stats has no toolbar.
 
-Reading and updating state (the pages run in the UI process, a client of
-the app's socket; see [architecture.md](architecture.md), "App shell"):
+The images come first: a library is its images (the phone app's opens on
+All Images), and the numbers go last, as such tabs usually do; the seen
+count in the header shows the cycle on every tab. Until the grid tabs
+exist, the Stats tab is called Overview and comes first (the others only
+say they come later).
 
-- All writes are socket commands (fav / remove / pick / hold ...), which
-  the app runs through `ServiceWorker.execute`: the service stays the only
-  writer.
-- Pages may read directly, without a round trip: a read-only SQLite
-  connection (history, deck / upcoming; WAL allows it) and the
-  favourites / to-remove .txt files. Not the settings (one JSON
-  document in the `settings` table): those are read with the `settings`
-  command.
-- They re-read on events received through `subscribe`, not only the
-  `Overview`: `marks_changed` (favourites / to-remove, including external
-  edits of the .txt files, noticed on a tick by their mtime / size),
-  `history_changed(playlist)`, and `changed` (a wallpaper changed, from a
-  tick *or* a command). Add these to docs/app-wiring.md.
+- The drop-down picks the playlist for Overview, All images, History and
+  Upcoming. Favourites and To remove are one list each for the whole
+  app: their tabs show the whole list, with an *Only <playlist>* toggle
+  (off by default) for the entries in the playlist's folder.
+- Remembered: the playlist, the tab, each tab's sort, the toggles. In
+  `ui-state.json` in the data directory, written only by the UI process
+  (a pydantic model; missing or unreadable: the defaults, logged, never
+  an error shown). It is view state, not settings: no revision, no
+  socket, nothing the app reads. Not `QSettings`: that is the registry on
+  Windows, outside the data locations About lists.
 
-Tabs: Library, Favourites, Removed, History, Upcoming. Grids that scale to
-20k images (`QListView` icon mode with a virtual model; thumbnails decoded in
-worker threads with a LIFO queue, Pillow draft mode, an LRU memory budget
-(built in, generous: ~1.5 GB, no setting), a
-disk cache, at tile size x DPR). Background pre-generation of the disk cache.
+### Overview tab (Stats, once the grid tabs exist)
 
-Memory: the thumbnails live in the UI process, so closing the last window
-ends that process and gives everything back; the always-running app never
-holds thumbnails. The disk cache stays, so reopening is still fast. The
-budget covers long sessions with the window open; no "Free memory" button
-is needed (closing the window does that).
+Named as in the phone app's Information dialog (WallpaperSwitcher), so
+both read the same:
 
-Suggested split, one session each: read-only state and the new
-`subscribe` events; the thumbnail pipeline; the library page; the enlarged
-view; reset cycle and About.
+```
+This cycle                                                 6 %  ▓░░░░░░
+  Images      D:\pictures\KONACHAN, scanned 2 min ago    20,431  Rescan
+  Seen        shown in this shuffle cycle                 1,204
+  Unseen      still to come before the next reshuffle    19,179
+  Skipped     listed to remove, or unreadable                48
+                                                       Reset cycle…
+Lists (shared by all playlists)
+  Favourites  favourites.txt      312 listed · 298 available · 120 here
+  To remove   to-remove.txt        60 listed ·  48 available ·  48 here
+```
+
+- Seen + Unseen + Skipped = Images, always.
+- **Images**: the files the playlist's scan found (the app's cached scan,
+  up to 5 min old; *Rescan* scans again). **Skipped**: of those, the ones
+  listed to remove or that failed to load. **Seen**: of the rest, the
+  ones drawn in this cycle (picked ones count). **Unseen**: the rest;
+  new files count as unseen before they are shuffled into the deck.
+- **Listed**: entries in the file. **Available**: the file exists.
+  **Here**: in the playlist's folder (as scanned).
+- A sorted playlist has no cycle: the heading is "This walk", Seen /
+  Unseen are the images before / after the current one in name order
+  (the current one counts as seen; "at 1,205 of 20,383"), and there is
+  no *Reset cycle*.
+- *Reset cycle…* asks first ("Start konachan's shuffle cycle over? All
+  20,383 images become unseen."); the image on screen stays, and isn't
+  first in the new cycle.
+- Asked again when the tab is shown, and on `overview_changed`,
+  `changed` and `marks_changed` while it is.
+
+### Commands and events
+
+- `stats` (`target` optional: one playlist, else all; `rescan`): per
+  playlist `name`, `directory`, `order`, `scan_age` (seconds), `images`,
+  `seen`, `unseen`, `skipped`, `favourites_here`, `to_remove_here`; and
+  `favourites` / `to_remove`: `file`, `listed`, `available`. Counted on
+  the service thread from the scan, the deck and the lists: one `stat`
+  per listed entry for *available* (the lists, never the folders).
+- `reset_cycle` (`target`): a new shuffle cycle from the current scan;
+  `failed` for a sorted playlist.
+- `fav`, `unfav`, `remove` take an optional `image` (any path; without
+  it, the playlist's current image as now; with it, no `target` is
+  needed), and a new `unremove` takes an image off the list. `remove`
+  with an `image` only lists it: a playlist showing it moves on at its
+  next tick, as for a hand-edited list.
+- `upcoming` (`target`, `limit` up to 1000): the next images in order,
+  like `status`'s three (history ahead first, after *Previous*; then the
+  deck or the sorted walk). Asked from the app, not read from SQLite: the
+  order logic stays in one place (`PlaylistService._upcoming`).
+- Event `marks_changed`: favourites or to-remove changed, by a command or
+  by hand (the service compares each file's mtime / size on every tick;
+  `MarkFile` already reloads on that signature).
+- No `history_changed`: history only changes with a `changed` (a new
+  image, *Previous*, pick) or a settings save (`overview_changed`).
+- CLI: `wallpaper stats [target] [--rescan]`, `wallpaper reset-cycle
+  target` (asks first, unless `--yes`), `wallpaper upcoming [target]
+  [-n N]`, and `--image PATH` on `fav` / `unfav` / `remove` / `unremove`.
+- docs/protocol.md and docs/app-wiring.md get the new commands, the
+  event and its connections.
+
+### What the UI process reads itself
+
+Writes are always commands: the service stays the only writer. For the
+grids, the UI process reads these itself, off the UI thread:
+
+- The playlist's folder: `core.library.scan`, plus each file's "added"
+  time for sorting: the creation time on Windows (of the link itself for
+  symlinks, i.e. when it was added to the library; not mtime, which
+  copies keep), mtime on Linux (no portable creation time in Python). It
+  may differ from the app's cached scan for up to 5 min; the header
+  counts the grid's own.
+- favourites.txt and to-remove.txt, through `MarkFile`, again on
+  `marks_changed`. Their "added" order is the line order (entries are
+  appended).
+- History, from a read-only SQLite connection (WAL allows it), again on
+  `changed` for the playlist.
+- Not the settings (the `settings` command) and not the deck
+  (`upcoming`).
+
+### Thumbnails
+
+A second pipeline beside `ThumbnailLoader` (which stays for Home's few
+images), built from the Phase 0 spike (`spikes/grid_prototype.py`):
+
+- `QListView` in icon mode over a virtual model, uniform item sizes:
+  only visible tiles are painted or asked for. Tiles have a fixed size
+  (16:9, the image fitted on the panel tone); the number of columns
+  follows the width.
+- Decoded in worker threads with Pillow (draft mode for JPEGs), newest
+  request first (LIFO); a request for a tile scrolled out of view is
+  dropped before decoding. A tile fades in from the panel tone when its
+  thumbnail arrives (as in the phone app).
+- In memory: an LRU with a byte budget, built in and generous (~1.5 GB,
+  no setting). The thumbnails live only in the UI process: closing the
+  window ends it and gives everything back, so no "Free memory" button;
+  the always-running app never holds or makes thumbnails.
+- On disk: `paths.thumbnail_dir()`, one JPEG per image at tile size x
+  the sharpest screen's DPR (`Sizes.sharpest`), named by a hash of the
+  path, mtime, size and tile size (an edited image gets a new one).
+  Reopening the window is fast.
+- Pre-generation: while the window is open, one low-priority thread
+  fills the disk cache, the open playlist's folder first, then the other
+  playlists and the lists; it pauses while the grid asks for tiles. Having
+  seen every current image, it deletes the cache files none of them names
+  (old tile sizes, deleted or edited images).
+- A listed entry whose file is gone is a "missing" tile with its name,
+  never an error.
+
+### Grid tabs
+
+- With them, Overview becomes **Stats** and moves last, and All images
+  is the first tab (where a new user lands). The remembered tab is
+  stored by name: `overview` becomes `stats`, and a file that still says
+  `overview` falls back to the defaults once (pre-release, no
+  migration).
+- **All images**: the folder; *Hide removed* on by default.
+- **Favourites**, **To remove**: the list; *Only <playlist>*.
+- **History**: the playlist's entries, newest first, each time it was
+  shown (repeats kept), captioned with when ("2 h ago").
+- **Upcoming**: the next 500 in order (`upcoming`); no sort.
+- Sort, per tab: name A–Z / Z–A, newest / oldest added (History: newest
+  / oldest shown).
+- Filter by name: a case-insensitive part of the file name; the grid
+  narrows as you type (debounced) and the count follows. A click (or
+  Enter on the selected tile) opens the image enlarged.
+- Badges as in the mockup: favourite star, to-remove mark, *On screen*
+  (the current image of any playlist).
+- A slim, draggable fast-scroll bar; back to the top when the sort,
+  filter or playlist changes.
+- Smooth with 20k images: [desktop-checks.md](desktop-checks.md) gets
+  one step for it (scrolling and memory, which no test sees).
+
+### Enlarged view
+
+Over the page (not a window of its own), on the panel tone:
+
+- Fitted at first; the wheel zooms at the pointer (up to ~5x), a
+  double-click toggles zoom / fit, dragging pans. Decoded at full size
+  off the UI thread; the thumbnail stands in until then.
+- An info overlay (a click hides / shows it): the full path (selectable,
+  with *Copy path*), dimensions, file size.
+- Toggles for favourite and to remove (by path, so un-favourite and
+  un-remove too), and **Show on <playlist>** (`pick`; a drop-down with
+  several playlists).
+- ← / → go to the image before / after in the tab's order; Esc closes.
+
+### Controls
+
+Flat controls in the NVIDIA app's manner, in the system's accent. Today
+the native style draws a few controls, and it differs by OS: Windows 11
+style on Windows, but **Fusion on Linux**, not Breeze (PySide6's own Qt
+can't load the system's Breeze; design/README.md and theme.py say Breeze,
+wrongly). So these are painted in code too, as the tabs, text buttons,
+icon buttons and panels already are: one look on Windows and KDE, colours
+from the palette (light / dark and the accent still follow the system),
+no stylesheet.
+
+- **Drop-down** (`FieldCombo`): a filled box without a border, a solid ▾
+  at the right, lighter on hover; its popup list in the same tones, the
+  current entry marked.
+- **Segmented buttons** for a few choices, like NVIDIA's Orientation row:
+  Mode (Fill / Fit / Stretch, each with a small icon), Order (Shuffle /
+  Sorted). Long lists (Background, playlists, monitors, sort) stay
+  drop-downs.
+- **Switches** for on / off, not check boxes: the two in Settings, and
+  *Hide removed* / *Only <playlist>* later.
+- **Buttons**: the main action (Save) filled with the accent, the others
+  (Revert) a neutral fill. Text buttons stay for secondary actions.
+- **Slider** (Blur, Darken): a thin track, accent up to a round handle.
+- Text fields stay as they are (filled, no border).
+- Each handles hover, the keyboard focus ring, disabled, its accessible
+  name and high DPI, as `PaintedButton` does; tested offscreen
+  (`tests/test_theme.py`).
+- **The accent on Linux**: Qt reads KDE's colours (kdeglobals) but puts
+  the accent only in `Highlight`; `Accent` stays Fusion's built-in
+  `#308cc6`, which is what the app uses now, so a KDE accent other than
+  Breeze's blue is ignored (tried with a copy of kdeglobals: Highlight
+  followed a purple accent, Accent didn't). Take `Highlight` on Linux,
+  `Accent` on Windows. To try once: change the accent in KDE with the
+  window open (does it follow at once, or on the next start?).
+- **The mockup**: [design/controls.dc.html](design/controls.dc.html)
+  (approved): the exact sizes, tones and states; build from it, not from
+  this list. Decided with it: corners stay 4 px; the open list marks the
+  current entry like the sidebar marks the current page (an accent bar
+  on a faint accent fill); the keyboard focus is a 2 px solid accent
+  ring, also on the tabs, text buttons and icon buttons (today 1 px at
+  60 %).
+- design/README.md's "Follow the system" becomes: the system's colours,
+  light / dark mode and accent, with our own controls; the page mockups
+  stay the reference for layout.
+
+### Steps, one session each
+
+1. **Overview** (done): `stats`, `reset_cycle` and their CLI; the page
+   (title, playlist drop-down, tab bar, `ui-state.json`) with the Overview
+   tab; About's line goes. The grid tabs say they come later. *Reset
+   cycle…* sits beside Seen, as *Rescan* beside Images; a sorted walk's
+   place is the newest image it showed (where it goes on), which is the
+   current one unless *Previous* went back.
+2. **Controls**, from design/controls.dc.html: drop-down, segmented
+   buttons, switches, buttons and slider, used in Settings and the
+   Library page; the 2 px focus ring everywhere; the accent from
+   `Highlight` on Linux; the docs say Fusion.
+3. **Data for the grids**: marks by `image`, `unremove`,
+   `marks_changed`, `upcoming` (and their CLI); the UI-side scan with
+   "added" times; the read-only history reader.
+4. **Thumbnails**: the grid pipeline, the disk cache, pre-generation and
+   pruning; tested offscreen with generated images
+   (`tests/generate_test_images.py`).
+5. **Grid tabs**: the five tabs, toolbars, badges, counts, fast-scroll;
+   Overview becomes Stats, last.
+6. **Enlarged view**.
+
+Each step updates the docs it touches and ends with a few things to try
+by hand.
 
 ## Phase 6: KDE backend
 
@@ -126,8 +336,8 @@ Left:
 
 ## Phase 7: polish
 
-Nice-to-haves from [todo.md](../todo.md): thumbnail fade-in, sound on
-wallpaper change, image overlay. Packaging/installer.
+Nice-to-haves from [todo.md](../todo.md): sound on wallpaper change,
+image overlay. Packaging/installer. (Thumbnail fade-in moved to Phase 5.)
 
 Open (todo.md, normal priority): whether Save asks first when it deletes
 a playlist's history (today the footer names it: "delete X and its
@@ -139,10 +349,9 @@ process may not), on any change the playlist makes: scheduled, next / prev
 / pick. One short bundled sound, through Qt Multimedia (`QSoundEffect`); a
 custom sound file per playlist only if missed.
 
-About page stats: library size per playlist, from a new `stats` command
-(the service has the scan, the deck and the marks). No sizes on disk
-worked out on the UI thread (walking a 20k-image thumbnail cache would
-stall it).
+Sizes on disk of the render and thumbnail caches in About: never worked
+out on the UI thread (walking a 20k-image thumbnail cache would stall
+it). (The library stats moved to Phase 5's Overview tab.)
 
 Virtual backend and page renders (nice to have, for testing; not needed
 before anything else):

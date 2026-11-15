@@ -1,9 +1,8 @@
 """
 The Settings page's About tab: the version (with the git commit when
 run from a checkout), and where everything is kept, each location with
-*Open folder* and *Copy path* (todo.md, "Settings / about").
-
-Library stats per playlist come later, with a `stats` command (Phase 7).
+*Open folder* and *Copy path* (todo.md, "Settings / about"). The
+library's numbers are on the Library page's Overview tab.
 """
 
 from __future__ import annotations
@@ -125,13 +124,6 @@ class AboutPage(QWidget):
         data.setContentsMargins(0, theme.space(2), 0, theme.space(0.5))
         layout.addWidget(data)
         layout.addLayout(self._rows)
-        layout.addSpacing(theme.space())
-        layout.addWidget(theme.Divider(self))
-        later = theme.muted(
-            "Library statistics per playlist come in a later version.", self
-        )
-        later.setContentsMargins(0, theme.space(2), 0, 0)
-        layout.addWidget(later)
         layout.addStretch(1)
 
     def set_locations(self, locations: Sequence[Location]) -> None:

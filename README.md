@@ -63,6 +63,8 @@ wallpaper status                             # playlists, monitors, current, upc
 wallpaper next|prev|fav|unfav|remove [TARGET]  # TARGET: playlist or monitor name
 wallpaper pick IMAGE [TARGET]                # show IMAGE now (any directory)
 wallpaper hold|resume [TARGET]               # stop / restart rotating
+wallpaper stats [TARGET] [--rescan]          # images seen / unseen / skipped; the lists
+wallpaper reset-cycle TARGET [--yes]         # every image unseen again (asks first)
 wallpaper ui [home|library|settings]         # open the window on a page (see below)
 ```
 
@@ -150,8 +152,11 @@ and accent. It logs to `ui.log` next to `wallpaper.log`.
   folder shows before the page says it is saved). Problems show next to
   their field and keep *Save* off. Unsaved changes stay while you visit
   other pages; closing the window with them asks first.
-- **Library** (`wallpaper ui library`, tray *Library*): a placeholder for
-  now.
+- **Library** (`wallpaper ui library`, tray *Library*): a playlist's
+  library in numbers (Overview: images, seen and unseen in this shuffle
+  cycle, skipped; the favourites and to-remove lists), with *Rescan* and
+  *Reset cycle…*. The image grids come later. The playlist and tab shown
+  are remembered.
 
 Other programs can drive the app over the same socket: see
 [docs/protocol.md](docs/protocol.md).

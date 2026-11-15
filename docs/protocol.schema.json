@@ -148,9 +148,11 @@
               "pick": "#/$defs/PickRequest",
               "prev": "#/$defs/Request",
               "remove": "#/$defs/Request",
+              "reset_cycle": "#/$defs/ResetCycleRequest",
               "resume": "#/$defs/Request",
               "save_settings": "#/$defs/SaveSettingsRequest",
               "settings": "#/$defs/SettingsRequest",
+              "stats": "#/$defs/StatsRequest",
               "status": "#/$defs/Request",
               "subscribe": "#/$defs/Subscribe",
               "unfav": "#/$defs/Request"
@@ -163,6 +165,12 @@
             },
             {
               "$ref": "#/$defs/PickRequest"
+            },
+            {
+              "$ref": "#/$defs/StatsRequest"
+            },
+            {
+              "$ref": "#/$defs/ResetCycleRequest"
             },
             {
               "$ref": "#/$defs/SettingsRequest"
@@ -332,6 +340,31 @@
       ],
       "title": "ImageMode",
       "type": "string"
+    },
+    "ListStats": {
+      "description": "A list file's entries (lines naming a path), and how many exist.",
+      "properties": {
+        "file": {
+          "format": "path",
+          "title": "File",
+          "type": "string"
+        },
+        "listed": {
+          "title": "Listed",
+          "type": "integer"
+        },
+        "available": {
+          "title": "Available",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "file",
+        "listed",
+        "available"
+      ],
+      "title": "ListStats",
+      "type": "object"
     },
     "Look": {
       "additionalProperties": false,
@@ -778,6 +811,65 @@
       "title": "PlaylistSettings",
       "type": "object"
     },
+    "PlaylistStats": {
+      "description": "What a playlist picks up from its folder. images = seen + unseen +\nskipped. A sorted playlist's seen / unseen: up to and including the\nwalk's image / after it, in name order.",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "directory": {
+          "format": "path",
+          "title": "Directory",
+          "type": "string"
+        },
+        "order": {
+          "$ref": "#/$defs/Order"
+        },
+        "scan_age": {
+          "title": "Scan Age",
+          "type": "number"
+        },
+        "images": {
+          "title": "Images",
+          "type": "integer"
+        },
+        "seen": {
+          "title": "Seen",
+          "type": "integer"
+        },
+        "unseen": {
+          "title": "Unseen",
+          "type": "integer"
+        },
+        "skipped": {
+          "title": "Skipped",
+          "type": "integer"
+        },
+        "favourites_here": {
+          "title": "Favourites Here",
+          "type": "integer"
+        },
+        "to_remove_here": {
+          "title": "To Remove Here",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "directory",
+        "order",
+        "scan_age",
+        "images",
+        "seen",
+        "unseen",
+        "skipped",
+        "favourites_here",
+        "to_remove_here"
+      ],
+      "title": "PlaylistStats",
+      "type": "object"
+    },
     "PlaylistView": {
       "properties": {
         "name": {
@@ -935,6 +1027,12 @@
               "$ref": "#/$defs/ResumeResult"
             },
             {
+              "$ref": "#/$defs/StatsResult"
+            },
+            {
+              "$ref": "#/$defs/ResetCycleResult"
+            },
+            {
               "$ref": "#/$defs/SettingsResult"
             },
             {
@@ -953,6 +1051,8 @@
               "pick": "#/$defs/PickResult",
               "hold": "#/$defs/HoldResult",
               "resume": "#/$defs/ResumeResult",
+              "stats": "#/$defs/StatsResult",
+              "reset_cycle": "#/$defs/ResetCycleResult",
               "settings": "#/$defs/SettingsResult",
               "save_settings": "#/$defs/SaveSettingsResult"
             }
@@ -965,6 +1065,56 @@
     },
     "Request": {
       "$ref": "#/$defs/Envelope"
+    },
+    "ResetCycleRequest": {
+      "additionalProperties": false,
+      "description": "Start a shuffle playlist's cycle over: every image unseen again.",
+      "properties": {
+        "command": {
+          "const": "reset_cycle",
+          "default": "reset_cycle",
+          "title": "Command",
+          "type": "string"
+        },
+        "target": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target"
+        }
+      },
+      "title": "ResetCycleRequest",
+      "type": "object"
+    },
+    "ResetCycleResult": {
+      "properties": {
+        "command": {
+          "const": "reset_cycle",
+          "default": "reset_cycle",
+          "title": "Command",
+          "type": "string"
+        },
+        "playlist": {
+          "title": "Playlist",
+          "type": "string"
+        },
+        "unseen": {
+          "title": "Unseen",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "playlist",
+        "unseen"
+      ],
+      "title": "ResetCycleResult",
+      "type": "object"
     },
     "ResumeResult": {
       "properties": {
@@ -1150,6 +1300,68 @@
         "revision"
       ],
       "title": "SettingsResult",
+      "type": "object"
+    },
+    "StatsRequest": {
+      "additionalProperties": false,
+      "description": "What playlists pick up from their folders, and the lists' counts.",
+      "properties": {
+        "command": {
+          "const": "stats",
+          "default": "stats",
+          "title": "Command",
+          "type": "string"
+        },
+        "target": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target"
+        },
+        "rescan": {
+          "default": false,
+          "title": "Rescan",
+          "type": "boolean"
+        }
+      },
+      "title": "StatsRequest",
+      "type": "object"
+    },
+    "StatsResult": {
+      "description": "Per playlist asked (all, or the target): its folder's images, seen,\nunseen and skipped, and the list entries among them; and the lists.",
+      "properties": {
+        "command": {
+          "const": "stats",
+          "default": "stats",
+          "title": "Command",
+          "type": "string"
+        },
+        "playlists": {
+          "items": {
+            "$ref": "#/$defs/PlaylistStats"
+          },
+          "title": "Playlists",
+          "type": "array"
+        },
+        "favourites": {
+          "$ref": "#/$defs/ListStats"
+        },
+        "to_remove": {
+          "$ref": "#/$defs/ListStats"
+        }
+      },
+      "required": [
+        "playlists",
+        "favourites",
+        "to_remove"
+      ],
+      "title": "StatsResult",
       "type": "object"
     },
     "StatusResult": {

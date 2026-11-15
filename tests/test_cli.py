@@ -9,7 +9,7 @@ from wallpaper_py.app.instance import InstanceLock
 from wallpaper_py.app.ui.launcher import PAGE_NAMES
 from wallpaper_py.core import paths
 from wallpaper_py.core.backend import Backend
-from wallpaper_py.core.service import Change
+from wallpaper_py.core.service import Change, ListStats, PlaylistStats
 from wallpaper_py.core.settings import Order, Settings
 from wallpaper_py.protocol import (
     CommandRequest,
@@ -18,6 +18,10 @@ from wallpaper_py.protocol import (
     PlaylistDetails,
     RemoveResult,
     Request,
+    ResetCycleRequest,
+    ResetCycleResult,
+    StatsRequest,
+    StatsResult,
     StatusResult,
 )
 
@@ -224,6 +228,33 @@ class TestPlaylistCommands:
         assert "`wallpaper ui settings`" in capsys.readouterr().err
 
     @pytest.mark.usefixtures("settings")
+    def test_stats_and_reset_cycle_of_a_sorted_playlist(
+        self,
+        backend: FakeBackend,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        assert self.run(backend, "next") == 0
+        assert self.run(backend, "stats", "--rescan") == 0
+        out = capsys.readouterr().out.splitlines()
+        assert out[1:] == [
+            "walls  (sorted; this walk: at 1 of 3)",
+            f"  folder:  {tmp_path / 'walls'} (scanned just now)",
+            "  images:  3  in the folder",
+            "  seen:    1  the current image and those before it, in name order",
+            "  unseen:  2  after the current image, in name order",
+            "  skipped: 0  listed to remove, or unreadable",
+            "  here:    0 favourites, 0 to remove",
+            f"favourites: {tmp_path / 'data' / 'favourites.txt'}: 0 listed, "
+            "0 available",
+            f"to remove: {tmp_path / 'data' / 'to-remove.txt'}: 0 listed, "
+            "0 available",
+        ]
+        # Sorted: nothing to ask, and the app refuses.
+        assert self.run(backend, "reset-cycle", "walls") == 1
+        assert "walls is sorted" in capsys.readouterr().err
+
+    @pytest.mark.usefixtures("settings")
     def test_next_on_detached_monitor_fails_cleanly(
         self, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -353,3 +384,90 @@ def test_ui_opens_the_page(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(process, "run_ui", run_ui)
     assert cli.main(["ui", "settings"]) == 0
     assert options == [process.UiOptions("settings")]
+
+
+class FakeApp:
+    """An app that knows one shuffle playlist, "konachan"; records requests."""
+
+    def __init__(self) -> None:
+        self.sent: list[CommandRequest] = []
+
+    def __call__(self, request: CommandRequest, _: cli.RunHere) -> cli.Answer:
+        self.sent.append(request)
+        if isinstance(request, StatsRequest):
+            stats = PlaylistStats(
+                name="konachan",
+                directory=Path("/pictures/konachan"),
+                order=Order.SHUFFLE,
+                scan_age=150.0,
+                images=20_431,
+                seen=1_204,
+                unseen=19_179,
+                skipped=48,
+                favourites_here=120,
+                to_remove_here=48,
+            )
+            lists = ListStats(file=Path("/data/list.txt"), listed=3, available=2)
+            return cli.Answer(
+                StatsResult(playlists=(stats,), favourites=lists, to_remove=lists)
+            )
+        return cli.Answer(ResetCycleResult(playlist="konachan", unseen=20_383))
+
+
+def test_stats_text(capsys: pytest.CaptureFixture[str]) -> None:
+    app = FakeApp()
+    assert cli.main(["stats", "konachan"], app_client=app) == 0
+    assert app.sent == [StatsRequest(target="konachan")]
+    out = capsys.readouterr().out.splitlines()
+    assert out[:6] == [
+        "konachan  (shuffle; this cycle: 6 % seen)",
+        f"  folder:  {Path('/pictures/konachan')} (scanned 2 min ago)",
+        "  images:  20,431  in the folder",
+        "  seen:     1,204  shown in this shuffle cycle",
+        "  unseen:  19,179  still to come before the next reshuffle",
+        "  skipped:     48  listed to remove, or unreadable",
+    ]
+    assert out[6] == "  here:    120 favourites, 48 to remove"
+
+
+@pytest.mark.parametrize(
+    ("argv", "answer", "code", "sent"),
+    [
+        (["konachan"], "y", 0, [StatsRequest, ResetCycleRequest]),
+        (["konachan"], "n", 1, [StatsRequest]),
+        (["konachan"], None, 1, [StatsRequest]),  # no terminal: no
+        (["konachan", "--yes"], None, 0, [ResetCycleRequest]),
+    ],
+)
+def test_reset_cycle_asks_first(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    argv: list[str],
+    answer: str | None,
+    code: int,
+    sent: list[type],
+) -> None:
+    asked: list[str] = []
+
+    def fake_input(question: str) -> str:
+        asked.append(question)
+        if answer is None:
+            raise EOFError
+        return answer
+
+    monkeypatch.setattr("builtins.input", fake_input)
+    app = FakeApp()
+    assert cli.main(["reset-cycle", *argv], app_client=app) == code
+    assert [type(r) for r in app.sent] == sent
+    out = capsys.readouterr().out
+    if "--yes" in argv:
+        assert not asked
+    else:
+        assert asked == [
+            "Start konachan's shuffle cycle over? All 20,383 images become "
+            "unseen. [y/N] "
+        ]
+    if code == 0:
+        assert out == "konachan: a new shuffle cycle; all 20,383 images unseen\n"
+    else:
+        assert out.endswith("Nothing changed\n")

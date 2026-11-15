@@ -63,8 +63,10 @@ from PySide6.QtWidgets import (
     QAbstractButton,
     QButtonGroup,
     QComboBox,
+    QFrame,
     QHBoxLayout,
     QLabel,
+    QScrollArea,
     QSizePolicy,
     QStyle,
     QStyleOptionComboBox,
@@ -308,6 +310,19 @@ def page_layout(widget: QWidget, top: int = PAGE_TOP, bottom: int = 0) -> QVBoxL
     layout.setContentsMargins(PAGE_MARGIN, top, PAGE_MARGIN, bottom)
     layout.setSpacing(space(2))
     return layout
+
+
+def scrolling(content: QWidget, parent: QWidget) -> QScrollArea:
+    """A tab's content, scrolling, within the page's margins."""
+    box = QWidget(parent)
+    layout = QVBoxLayout(box)
+    layout.setContentsMargins(PAGE_MARGIN, 0, PAGE_MARGIN, 0)
+    layout.addWidget(content)
+    scroll = QScrollArea(parent)
+    scroll.setWidgetResizable(True)
+    scroll.setFrameShape(QFrame.Shape.NoFrame)
+    scroll.setWidget(box)
+    return scroll
 
 
 # -- icons -----------------------------------------------------------------------

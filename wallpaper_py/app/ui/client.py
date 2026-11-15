@@ -46,6 +46,22 @@ START_TIMEOUT_S = 10.0  # for a started app to answer
 RETRY_INTERVAL_MS = 200
 
 
+class ReplyTo[P: QObject]:
+    """
+    A `Client.run` callback that calls `method(page, reply)`, holding the
+    page weakly: the window may close (and be deleted) before the reply.
+    """
+
+    def __init__(self, page: P, method: Callable[[P, Reply], None]) -> None:
+        self._page = weakref.ref(page)
+        self._method = method
+
+    def __call__(self, reply: Reply) -> None:
+        page = self._page()
+        if page is not None and Shiboken.isValid(page):
+            self._method(page, reply)
+
+
 class Client(QObject):
     """The narrow interface windows depend on (see the module docstring)."""
 

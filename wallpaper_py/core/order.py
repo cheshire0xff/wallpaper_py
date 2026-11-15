@@ -91,6 +91,13 @@ class ShuffleDeck:
             self._add_new(images)
         return list(islice(self._valid_cards(valid), limit))
 
+    def reset(self, images: Sequence[Path], avoid: Path | None) -> None:
+        """
+        Start a new cycle from `images` now: nothing drawn. `avoid` (the
+        image shown now) is not put first.
+        """
+        self._store.new_deck(self._playlist, self._shuffled(images, avoid))
+
     def draw(self, card: Card) -> None:
         """Consume everything up to and including `card`."""
         self._store.set_deck_pos(self._playlist, card.position)

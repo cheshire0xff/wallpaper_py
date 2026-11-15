@@ -156,7 +156,7 @@ class ServiceWorker(QObject):
                 reply, change = self._failed(f"Command {request.command}", err), None
             if change is not None:
                 self._announce(change)
-        if request.command not in ("status", "settings"):
+        if request.command not in ("status", "stats", "settings"):  # read only
             target = request.target if isinstance(request, TargetRequest) else None
             log.info("%s %s: %r", request.command, target or "", reply)
         if render:

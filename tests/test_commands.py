@@ -7,6 +7,7 @@ from typing import Literal
 
 import pytest
 from PIL import Image
+from pydantic import TypeAdapter, ValidationError
 
 from wallpaper_py.commands import (
     Outcome,
@@ -47,11 +48,15 @@ from wallpaper_py.protocol import (
     RemoveResult,
     Reply,
     Request,
+    ResetCycleRequest,
+    ResetCycleResult,
     ResumeResult,
     SaveSettingsRequest,
     SaveSettingsResult,
     SettingsRequest,
     SettingsResult,
+    StatsRequest,
+    StatsResult,
     StatusResult,
 )
 
@@ -423,3 +428,40 @@ def test_a_favourites_list_never_read_is_unknown(
         assert isinstance(reply, ErrorReply) and "Cannot read" in reply.error.message
         busy.busy = False
         assert overview(service).playlists[0].favourite is True
+
+
+def test_stats_of_every_playlist_or_one(service: PlaylistService) -> None:
+    service.tick()  # walls shows a.jpg; strip has no monitor attached
+    reply = execute(service, StatsRequest()).reply
+    assert isinstance(reply, StatsResult)
+    assert [p.name for p in reply.playlists] == ["walls", "strip"]
+    walls, strip = reply.playlists
+    assert (walls.images, walls.seen, walls.unseen, walls.skipped) == (2, 1, 1, 0)
+    assert (strip.images, strip.seen, strip.unseen) == (1, 0, 1)
+    assert reply.favourites.file == paths.data_dir() / "favourites.txt"
+    assert reply.to_remove.file == paths.data_dir() / "to-remove.txt"
+    # Over the wire and back, as the CLI and the window read it.
+    assert TypeAdapter(Reply).validate_json(reply.model_dump_json()) == reply
+
+    one = execute(service, StatsRequest(target="Main", rescan=True)).reply
+    assert isinstance(one, StatsResult)
+    assert [p.name for p in one.playlists] == ["walls"]  # the one Main shows
+    unknown = execute(service, StatsRequest(target="nope")).reply
+    assert isinstance(unknown, ErrorReply)
+    assert unknown.error.kind == "unknown_target"
+
+
+def test_reset_cycle(service: PlaylistService) -> None:
+    outcome = execute(service, ResetCycleRequest(target="strip"))
+    assert outcome == Outcome(ResetCycleResult(playlist="strip", unseen=1))
+    sorted_one = execute(service, ResetCycleRequest(target="walls")).reply
+    assert isinstance(sorted_one, ErrorReply)
+    assert sorted_one.error.kind == "failed"
+    assert "walls is sorted" in sorted_one.error.message
+
+
+def test_stats_request_is_strict() -> None:
+    """A client's `rescan` must be a boolean (lax pydantic takes 1)."""
+    text = '{"v": 3, "request": {"command": "stats", "rescan": 1}}'
+    with pytest.raises(ValidationError):
+        Envelope.model_validate_json(text)

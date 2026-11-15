@@ -9,7 +9,8 @@ the wallpaper change the command made, if any, so the app announces it like
 a tick's. Qt-free, like the core.
 
 `open_service()` runs the service on the settings in the state database;
-`settings` and `save_settings` read and write them.
+`settings` and `save_settings` read and write them. `stats` counts what
+playlists pick up, `reset_cycle` starts a shuffle cycle over.
 
 `overview()` is the small snapshot the tray and the windows draw from.
 """
@@ -63,12 +64,16 @@ from .protocol import (
     PrevResult,
     RemoveResult,
     Reply,
+    ResetCycleRequest,
+    ResetCycleResult,
     ResumeResult,
     SaveSettingsRequest,
     SaveSettingsResult,
     CommandRequest,
     SettingsRequest,
     SettingsResult,
+    StatsRequest,
+    StatsResult,
     StatusResult,
 )
 
@@ -121,6 +126,8 @@ def execute(service: PlaylistService, request: CommandRequest) -> Outcome:
             return _settings_command(service, request)
         if request.command == "status":
             return Outcome(_status(service))
+        if isinstance(request, StatsRequest | ResetCycleRequest):
+            return Outcome(_library_command(service, request))
         playlist = service.find_playlist(request.target)
         if isinstance(request, PickRequest):
             change = service.pick(playlist, request.image)
@@ -174,6 +181,31 @@ def _save_settings(
     revision = service.save_settings(request.settings, request.revision)
     return SaveSettingsResult(
         revision=revision, warnings=tuple(service.settings.warnings())
+    )
+
+
+def _library_command(
+    service: PlaylistService, request: StatsRequest | ResetCycleRequest
+) -> StatsResult | ResetCycleResult:
+    """The commands on a playlist's library: count it, start its cycle over."""
+    if isinstance(request, StatsRequest):
+        return _stats(service, request)
+    playlist = service.find_playlist(request.target)
+    unseen = service.reset_cycle(playlist)
+    return ResetCycleResult(playlist=playlist.name, unseen=unseen)
+
+
+def _stats(service: PlaylistService, request: StatsRequest) -> StatsResult:
+    """One playlist if a target is named, else all."""
+    if request.target is None:
+        playlists = service.settings.playlists
+    else:
+        playlists = (service.find_playlist(request.target),)
+    favourites, to_remove = service.list_stats()
+    return StatsResult(
+        playlists=tuple(service.stats(p, rescan=request.rescan) for p in playlists),
+        favourites=favourites,
+        to_remove=to_remove,
     )
 
 

@@ -67,3 +67,8 @@ class Library:
             cached = (now, scan(directory))
             self._scans[directory] = cached
         return cached[1]
+
+    def age(self, directory: Path) -> float:
+        """Seconds since `directory` was scanned (0: never, or just now)."""
+        cached = self._scans.get(directory)
+        return 0.0 if cached is None else max(0.0, self._clock() - cached[0])

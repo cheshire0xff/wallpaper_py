@@ -19,7 +19,7 @@ the receiving thread's event loop, so the sender never waits.
 |---|---|
 | **app**, UI thread (main thread, Qt event loop) | `QApplication`, `Tray`, `WindowOpener`, `ScreenWatcher`, and `ServiceHost`, the thin proxy to the service thread |
 | **app**, service thread (`QThread` "playlist-service") | `ServiceWorker` and everything it creates on that thread: the `CommandServer` (socket), the tick `QTimer`, COM (`backends.thread_scope`), the backend, the SQLite `Store`, the `PlaylistService` |
-| **UI process** (`wallpaper ui`, on demand), UI thread | `QApplication`, `UiServer` (its own socket), `SocketClient` (the app's socket), and the one `MainWindow`: its `ThumbnailLoader` (shared by Home and Settings), its `Sidebar` and its pages, `HomePage` (with its `PlaylistRow`s and `MonitorsView`), `LibraryPage` (a placeholder until Phase 5), `SettingsPage` (with its `PlaylistEditor`s, a `MonitorsView` and the `AboutPage`) |
+| **UI process** (`wallpaper ui`, on demand), UI thread | `QApplication`, `UiServer` (its own socket), `SocketClient` (the app's socket), and the one `MainWindow`: its `ThumbnailLoader` (shared by Home and Settings), its `Sidebar` and its pages, `HomePage` (with its `PlaylistRow`s and `MonitorsView`), `LibraryPage` (with its `OverviewTab`), `SettingsPage` (with its `PlaylistEditor`s, a `MonitorsView` and the `AboutPage`) |
 | **UI process**, thumbnail threads (the `ThumbnailLoader`'s own `QThreadPool`, 2 threads) | nothing that lives there: each job reads one image file with Pillow (a small copy, and the row's thumbnail as a `QImage`) and emits it back |
 | **CLI** (a separate process) | `ipc.send`: blocking client, no event loop |
 
@@ -48,7 +48,7 @@ flowchart LR
     subgraph UIP["UI process"]
         uiserver["UiServer<br/>its own socket"]
         client["SocketClient"]
-        windows["MainWindow<br/>HomePage, SettingsPage"]
+        windows["MainWindow<br/>HomePage, LibraryPage,<br/>SettingsPage"]
         thumbs["ThumbnailLoader<br/>thread pool"]
     end
     subgraph UI["app: UI thread"]
@@ -69,7 +69,7 @@ flowchart LR
     opener ==>|"show page / ok"| uiserver
     uiserver -->|"show_requested"| windows
     client -->|"overview_changed, changed"| windows
-    windows -->|"run (also settings, save_settings)"| client
+    windows -->|"run (also stats, reset_cycle,<br/>settings, save_settings)"| client
     windows -->|"want"| thumbs
     thumbs -.->|"loaded"| windows
     server -->|"received, subscribed"| worker
@@ -162,6 +162,9 @@ the new overview is published, both before the reply.
 | Home's countdown `QTimer` (every second, only while a playlist counts down) | `HomePage.refresh_schedule` |
 | `ThumbnailLoader.loaded` (an image is ready) | `HomePage._thumbnail_loaded` (the rows and `MonitorsView` that still show it), `SettingsPage._image_loaded` (its `MonitorsView`) |
 | `Tabs.current_changed` (Settings' sub-tabs) | `QStackedWidget.setCurrentIndex` |
+| `SocketClient.overview_changed`, `SocketClient.changed`, `SocketClient.failed` | `LibraryPage.show_overview` (the playlists in its drop-down; the numbers again), `LibraryPage._changed` (a change of its playlist: the numbers again), `LibraryPage.show_error` |
+| `Tabs.current_changed` (the Library's tabs), the Library's *Playlist* drop-down's `currentIndexChanged` | `LibraryPage._tab_chosen`, `LibraryPage._playlist_chosen` (each remembered in ui-state.json; Overview: the numbers again) |
+| `OverviewTab.rescan_requested`, `OverviewTab.reset_requested` | `LibraryPage._rescan_clicked` (`stats` with `rescan`), `LibraryPage._reset_clicked` (asks first; `reset_cycle`, reply to `LibraryPage.reset_replied`) |
 | `PlaylistEditor.edited`, and the *General* tab's fields | `SettingsPage._edited` -> `SettingsPage._refresh` (problems, summaries, the monitor rows, Save / Revert, the status line, the drawing) |
 | `PlaylistEditor.toggle_requested` (a playlist's header row clicked) | `SettingsPage._toggle_playlist` -> `SettingsPage.open_playlist` (the others close) |
 | `MonitorsView.clicked` (a monitor's id; the Settings drawing is clickable) | `SettingsPage.select_monitor` (outlined; its rows below) |
@@ -385,6 +388,34 @@ sequenceDiagram
   `SettingsPage.confirm_close`, before `MainWindow.closed`). Cancel, or a
   Save that can't happen, keeps the window open; Save sends the edit and
   keeps it open until the reply, then `SettingsPage.saved` closes it.
+
+The Library page's Overview tab (the numbers come from the app; the page
+reads nothing itself yet):
+
+```mermaid
+sequenceDiagram
+    participant C as SocketClient
+    participant L as LibraryPage
+    participant W as ServiceWorker<br/>app, service thread
+
+    Note over L: shown (LibraryPage.showEvent), or its tab or playlist chosen
+    L->>C: Client.run(stats: its playlist), reply to LibraryPage.stats_replied
+    C->>W: stats: commands.execute counts from the scan, the deck and the lists
+    W->>C: StatsResult
+    C->>L: OverviewTab.show_stats
+    C->>L: overview_changed, or changed of its playlist: asked again
+```
+
+- It asks only while the Overview tab is on screen (page shown, tab
+  current, a playlist chosen, the app without an error), one request at a
+  time; what comes meanwhile asks once more after the reply. A reply for a
+  playlist no longer chosen is dropped.
+- *Reset cycle…* asks first (`library.confirm_reset`), then sends
+  `reset_cycle`; the reply asks for the numbers again. A failure shows under
+  the numbers (`OverviewTab.show_notice`).
+- The playlist and the tab are view state (`ui_state.UiState` in
+  `paths.ui_state`), written by `LibraryPage._remember` on each choice and
+  read when the page is made.
 
 Shutdown of the app (tray *Quit* or Ctrl+C): `app.quit()` ends the UI event
 loop -> `ServiceHost.shutdown` emits `_stop` (queued) and waits for the
