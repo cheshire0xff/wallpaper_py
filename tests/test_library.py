@@ -53,3 +53,15 @@ def test_library_caches_until_max_age(tmp_path: Path) -> None:
     make_images(tmp_path, "c.jpg")
     clock.advance(61)
     assert len(library.images(tmp_path)) == 3
+
+
+def test_age_of_the_cached_scan(tmp_path: Path) -> None:
+    clock = FakeClock()
+    library = Library(clock, max_age=300)
+    assert library.age(tmp_path) == 0  # never scanned
+    library.images(tmp_path)
+    clock.advance(120)
+    library.images(tmp_path)  # cached
+    assert library.age(tmp_path) == 120
+    library.images(tmp_path, refresh=True)
+    assert library.age(tmp_path) == 0

@@ -2,7 +2,8 @@
 The Settings page's form (settings.py), as rows without boxes
 (docs/design/settings-monitors.dc.html): each `SettingRow` has its name
 and a muted one-line description on the left and its control on the
-right, all controls in one column; fields are borderless and filled.
+right, all controls in one column; fields are borderless and filled,
+the other controls painted (controls.py).
 
 One `PlaylistEditor` per playlist: a header row (its name, a muted summary
 while closed, a chevron) that opens or closes it, and when open its rows:
@@ -25,7 +26,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QSizePolicy,
-    QSlider,
     QVBoxLayout,
     QWidget,
 )
@@ -33,13 +33,24 @@ from PySide6.QtWidgets import (
 from ...core.model import BLACK
 from ...core.settings import MANUAL, Order
 from . import theme
+from .controls import FieldCombo, Segments, Slider
 from .settings_draft import DIRECTORY, INTERVAL, NAME, NEW_INTERVAL, PlaylistDraft
 
 EVERY, MANUALLY = "every", MANUAL  # the Changes row's choices
 
-ORDERS: tuple[tuple[str, Order, str], ...] = (  # label, value, description
-    ("Shuffle", Order.SHUFFLE, "Shuffle shows every image once before any repeats"),
-    ("Sorted", Order.SORTED, "Sorted goes in natural order: 2 before 10"),
+ORDERS: tuple[tuple[str, Order, str, str], ...] = (  # label, value, help, icon
+    (
+        "Shuffle",
+        Order.SHUFFLE,
+        "Shuffle shows every image once before any repeats",
+        "shuffle",
+    ),
+    (
+        "Sorted",
+        Order.SORTED,
+        "Sorted goes in natural order: 2 before 10",
+        "arrow-down-a-z",
+    ),
 )
 CHANGES = (("Every", EVERY), ("Manually", MANUALLY))
 CHANGES_HELP = {
@@ -90,27 +101,20 @@ class Problem(QWidget):
             self._tint()
 
 
-def borderless(field: QLineEdit | QComboBox) -> QLineEdit | QComboBox:
-    """A field as the design has it: no frame, the filled Base / Button tone."""
-    field.setFrame(False)
-    field.setFixedHeight(theme.FIELD_HEIGHT)
-    if isinstance(field, QLineEdit):
-        padding = theme.FIELD_PADDING
-        field.setTextMargins(padding, 0, padding, 0)
-    return field
-
-
 def line_edit(text: str, name: str, parent: QWidget) -> QLineEdit:
+    """A field as the design has it: no frame, the filled Base tone."""
     edit = QLineEdit(text, parent)
     edit.setAccessibleName(name)
-    borderless(edit)
+    edit.setFrame(False)
+    edit.setFixedHeight(theme.FIELD_HEIGHT)
+    padding = theme.FIELD_PADDING
+    edit.setTextMargins(padding, 0, padding, 0)
     return edit
 
 
-def combo(parent: QWidget, name: str) -> QComboBox:
-    box = theme.FieldCombo(parent)
+def combo(parent: QWidget, name: str) -> FieldCombo:
+    box = FieldCombo(parent)
     box.setAccessibleName(name)
-    borderless(box)
     return box
 
 
@@ -189,16 +193,15 @@ def control_row(*widgets: QWidget) -> QHBoxLayout:
     return layout
 
 
-def slider(parent: QWidget, name: str, steps: tuple[int, int]) -> QSlider:
+def slider(parent: QWidget, name: str, steps: tuple[int, int]) -> Slider:
     """A slider over whole `steps` (first, last), one step per key press."""
-    widget = QSlider(Qt.Orientation.Horizontal, parent)
-    widget.setAccessibleName(name)
+    widget = Slider(name, parent)
     widget.setRange(*steps)
     widget.setPageStep(2)
     return widget
 
 
-def slider_row(widget: QSlider, low: str, high: str) -> QHBoxLayout:
+def slider_row(widget: Slider, low: str, high: str) -> QHBoxLayout:
     """A slider between muted words for its ends ("Less", "More")."""
     layout = QHBoxLayout()
     layout.setContentsMargins(0, 0, 0, 0)
@@ -210,7 +213,7 @@ def slider_row(widget: QSlider, low: str, high: str) -> QHBoxLayout:
     return layout
 
 
-def set_step(widget: QSlider, step: int) -> None:
+def set_step(widget: Slider, step: int) -> None:
     """Move the slider there, without reporting it as an edit."""
     if step != widget.value():
         widget.blockSignals(True)
@@ -369,13 +372,10 @@ class PlaylistEditor(QWidget):
         self.directory_edit.setPlaceholderText("Choose a folder")
         self.directory_edit.setCursorPosition(0)  # the start of the path shows
         self.browse_button = theme.TextButton("Browse…", self)
-        self.order_combo = combo(self, "Order")
-        for text, order, description in ORDERS:
-            self.order_combo.addItem(text, order)
-            self.order_combo.setItemData(
-                self.order_combo.count() - 1, description, Qt.ItemDataRole.ToolTipRole
-            )
-        select(self.order_combo, playlist.order)
+        self.order_choice = Segments("Order", self)
+        for text, order, description, icon_name in ORDERS:
+            self.order_choice.add(text, order, icon_name, description)
+        self.order_choice.select(playlist.order)
         self.changes_combo = combo(self, "Changes")
         for text, value in CHANGES:
             self.changes_combo.addItem(text, value)
@@ -396,7 +396,7 @@ class PlaylistEditor(QWidget):
         self.name_edit.textChanged.connect(self._changed)
         self.directory_edit.textChanged.connect(self._changed)
         self.interval_edit.textChanged.connect(self._changed)
-        self.order_combo.currentIndexChanged.connect(self._order_changed)
+        self.order_choice.current_changed.connect(self._order_changed)
         self.changes_combo.currentIndexChanged.connect(self._changes_changed)
         self.delete_button.clicked.connect(self._delete)
         self.browse_button.clicked.connect(self._browse)
@@ -405,7 +405,7 @@ class PlaylistEditor(QWidget):
     def _build(self) -> None:
         indent = theme.space(3)
         self.order_row = SettingRow(
-            "Order", "", self.order_combo, parent=self, indent=indent
+            "Order", "", self.order_choice, parent=self, indent=indent
         )
         self.changes_row = SettingRow(
             "Changes",
@@ -471,7 +471,7 @@ class PlaylistEditor(QWidget):
             id=self.playlist_id,
             name=self.name_edit.text(),
             directory=self.directory_edit.text().strip(),
-            order=self.order_combo.currentData(),
+            order=Order(self.order_choice.current_value()),
             interval=MANUAL if self.manual() else self.interval_edit.text().strip(),
         )
 
@@ -503,7 +503,7 @@ class PlaylistEditor(QWidget):
         return bool(self.changes_combo.currentData() == MANUALLY)
 
     def _describe(self) -> None:
-        order = self.order_combo.currentIndex()
+        order = self.order_choice.current_index()
         self.order_row.set_description(ORDERS[max(order, 0)][2])
         self.changes_row.set_description(
             CHANGES_HELP[MANUALLY if self.manual() else EVERY]

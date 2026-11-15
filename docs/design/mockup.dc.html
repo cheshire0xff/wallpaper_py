@@ -138,27 +138,27 @@ a{color:#005fb8}a:hover{color:#003d75}
     <main style="flex-grow: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; padding: 20px 32px 0">
       <h1 style="margin: 0 0 16px; font-size: 22px; font-weight: 600">Home</h1>
 
-      <section aria-label="Monitors" style="border-radius: 6px; background: {{t.backdrop}}; display: flex; flex-direction: column; flex-shrink: 0">
+      <section aria-label="Monitors" style="border-radius: 6px; background: {{t.backdrop}}; color: {{t.panelText}}; display: flex; flex-direction: column; flex-shrink: 0">
         <div style="display: flex; align-items: center; gap: 12px; padding: 14px 20px">
           <h2 style="margin: 0; font-size: 16px; font-weight: 600; flex-grow: 1">Monitors (3)</h2>
-          <span style="font-size: 13px; color: {{t.muted}}">Hover a playlist to see its monitors</span>
+          <span style="font-size: 13px; color: {{t.panelMuted}}">Hover a playlist to see its monitors</span>
         </div>
-        <div style="border-top: 1px solid {{t.sideLine}}; margin: 0 20px"></div>
+        <div style="border-top: 1px solid {{t.panelLine}}; margin: 0 20px"></div>
         <div style="height: 250px; display: flex; justify-content: center; align-items: flex-start; gap: 8px; padding: 24px 20px 16px">
           <div style="display: flex; flex-direction: column; gap: 8px; width: 200px; align-items: center">
-            <div style="width: 200px; height: 112px; border-radius: 4px; background: {{konachanPaint}}; outline: 2px solid {{t.accentOnDark}}; outline-offset: -2px"></div>
+            <div style="width: 200px; height: 112px; border-radius: 4px; background: {{konachanPaint}}; outline: 2px solid {{t.panelAccent}}; outline-offset: -2px"></div>
             <span style="font-size: 13px; font-weight: 600">PLX2783H</span>
-            <span style="font-size: 12px; color: {{t.muted}}; margin-top: -6px">1920×1080 · konachan</span>
+            <span style="font-size: 12px; color: {{t.panelMuted}}; margin-top: -6px">1920×1080 · konachan</span>
           </div>
           <div style="display: flex; flex-direction: column; gap: 8px; width: 360px; align-items: center">
-            <div style="width: 360px; height: 202px; border-radius: 4px; background: {{konachanPaint}}; outline: 2px solid {{t.accentOnDark}}; outline-offset: -2px"></div>
+            <div style="width: 360px; height: 202px; border-radius: 4px; background: {{konachanPaint}}; outline: 2px solid {{t.panelAccent}}; outline-offset: -2px"></div>
             <span style="font-size: 13px; font-weight: 600">AW3225QF</span>
-            <span style="font-size: 12px; color: {{t.muted}}; margin-top: -6px">3840×2160 · konachan</span>
+            <span style="font-size: 12px; color: {{t.panelMuted}}; margin-top: -6px">3840×2160 · konachan</span>
           </div>
           <div style="display: flex; flex-direction: column; gap: 8px; width: 200px; align-items: center">
             <div style="width: 200px; height: 50px; border-radius: 4px; background: {{fantasyPaint}}"></div>
             <span style="font-size: 13px; font-weight: 600">ZeroMOD</span>
-            <span style="font-size: 12px; color: {{t.muted}}; margin-top: -6px">1920×480 · fantasy</span>
+            <span style="font-size: 12px; color: {{t.panelMuted}}; margin-top: -6px">1920×480 · fantasy</span>
           </div>
         </div>
       </section>
@@ -342,7 +342,7 @@ a{color:#005fb8}a:hover{color:#003d75}
   </div>
 </div>
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"page":{"editor":"enum","options":["layout","library","settings"],"default":"layout"},"flow":{"editor":"boolean","default":false},"$preview":{"width":1280,"height":800}}'>
+<script type="text/x-dc" data-dc-script data-props='{"dark":{"editor":"boolean","default":false},"page":{"editor":"enum","options":["layout","library","settings"],"default":"layout"},"flow":{"editor":"boolean","default":false},"panel":{"editor":"enum","options":["dark","charcoal","silver","light"],"default":"dark"},"$preview":{"width":1280,"height":800}}'>
 class Component extends DCLogic {
 renderVals() {
 const light = {
@@ -359,7 +359,16 @@ text: '#ffffff', muted: '#c8c8c8', accent: '#60cdff', onAccent: '#000000', accen
 hover: 'rgba(255,255,255,0.06)', accentOnDark: '#60cdff', ok: '#6ccb5f',
 field: '#2b2b2b', divider: '#2f2f2f'
 };
-const t = this.props.dark ? dark : light;
+const panels = {
+dark: { backdrop: '#161616', panelText: '#e8e8e8', panelMuted: '#a0a0a0', panelLine: '#2c2c2c', panelAccent: '#4cc2ff' },
+charcoal: { backdrop: '#3a3a3a', panelText: '#f2f2f2', panelMuted: '#c4c4c4', panelLine: '#4c4c4c', panelAccent: '#4cc2ff' },
+silver: { backdrop: '#d4d4d4', panelText: '#1a1a1a', panelMuted: '#4a4a4a', panelLine: '#bdbdbd', panelAccent: '#005fb8' },
+light: { backdrop: '#e6e6e6', panelText: '#1a1a1a', panelMuted: '#5c5c5c', panelLine: '#d0d0d0', panelAccent: '#005fb8' }
+};
+const base = this.props.dark ? dark : light;
+const t = this.props.dark
+? { ...base, panelText: base.text, panelMuted: base.muted, panelLine: base.sideLine, panelAccent: base.accentOnDark }
+: { ...base, ...panels[this.props.panel ?? 'dark'] };
 const page = this.props.page ?? 'layout';
 const nav = [
 { id: 'layout', label: 'Home' },

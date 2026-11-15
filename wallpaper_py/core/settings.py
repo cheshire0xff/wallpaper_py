@@ -305,3 +305,13 @@ def format_duration(seconds: float) -> str:
     parts = [f"{hours}h" if hours else "", f"{minutes}m" if minutes else ""]
     parts.append(f"{secs}s" if secs or not (hours or minutes) else "")
     return "".join(parts)
+
+
+def format_ago(seconds: float) -> str:
+    """How long ago, roughly: 'just now', '2 min ago', '3 h ago'."""
+    minutes = int(max(0.0, seconds) // 60)
+    if minutes < 1:
+        return "just now"
+    if minutes < 60:
+        return f"{minutes} min ago"
+    return f"{minutes // 60} h ago"

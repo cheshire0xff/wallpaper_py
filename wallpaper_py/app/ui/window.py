@@ -223,7 +223,7 @@ class MainWindow(QWidget):
         # One loader for both pages: they show the same images.
         self.loader = ThumbnailLoader(Sizes.sharpest(), parent=self)
         self.home = home if home is not None else HomePage(client, self.loader)
-        self.library = library if library is not None else LibraryPage()
+        self.library = library if library is not None else LibraryPage(client)
         self.settings = (
             settings
             if settings is not None

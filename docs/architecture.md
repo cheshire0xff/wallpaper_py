@@ -24,7 +24,10 @@ app/                          PySide6 (Qt only here); two processes
     window.py    MainWindow: the sidebar (NavButton per page, the app's status)
                  and the pages; asks before closing with unsaved settings
     home.py      Home: the monitors on a panel, then a row per playlist
-    library.py   Library: a placeholder until Phase 5
+    library.py   Library: a playlist drop-down, the tabs; asks `stats` and
+                 `reset_cycle` (the grid tabs come later in Phase 5)
+    library_overview.py  OverviewTab: a playlist's numbers, Rescan, Reset cycle…
+    ui_state.py  UiState: the window's view state (ui-state.json), not settings
     settings.py  Settings, monitor-first: the selected monitor's playlist and
                  look, then the playlists; General; About tab in about.py
     settings_form.py  its rows: SettingRow, PlaylistEditor (open or a summary
@@ -38,8 +41,10 @@ app/                          PySide6 (Qt only here); two processes
     thumbnails.py   ThumbnailLoader: a small copy of each image, its thumbnail
                  and details, off the UI thread
     theme.py     the shared look: tones derived from the palette, spacing,
-                 tinted icons, painted widgets (IconButton, TextButton, Tabs,
-                 Divider, Panel, Chip, ImageView)
+                 tinted icons, the focus ring, painted widgets (IconButton,
+                 TextButton, Tabs, Divider, Panel, Chip, ImageView)
+    controls.py  the controls painted in code: FieldCombo (drop-down and its
+                 list), Segments, Switch, Button, Slider
     icons/       bundled Lucide SVGs (ISC licence alongside), package data
 commands.py                   runs a Request on the service -> a reply model (+ the
                               change made); overview(). Qt-free
@@ -63,7 +68,8 @@ core/                         pure Python, no Qt, no platform APIs
   marks.py       favourites / to-remove .txt files (the only copy); decode_text
   presence.py    Presence protocol: session locked? seconds idle?
   autostart.py   Autostart protocol: start the app at login
-  service.py     PlaylistService: tick, next / previous, fav / remove, status
+  service.py     PlaylistService: tick, next / previous, fav / remove, status,
+                 stats, reset_cycle
         │
 backends/                     one per platform, thin
   __init__.py    get_backend() / get_presence() / get_autostart(), and
@@ -200,21 +206,30 @@ the app's socket like the CLI: it subscribes (starting the app first if
 none runs, as the CLI does) and quits when the subscription ends, i.e.
 when the app quits. The pages depend only on `Client` (`run` a command
 with a reply callback; `overview_changed`, `changed`, `failed`), never on
-the service or `ServiceWorker`; reading state for the library (SQLite
-read-only, the .txt files) is planned in Phase 5. The UI process logs to
-`ui.log` next to the app's log.
+the service or `ServiceWorker`; reading state for the library's grids
+(SQLite read-only, the .txt files, the folders) comes in Phase 5's later
+steps. The UI process logs to `ui.log` next to the app's log.
 
 The pages live as long as the window, so switching pages keeps unsaved
 settings; closing the window with them asks Save / Discard / Cancel on the
-Settings page. The look follows the system (native style, the palette,
-light / dark): the tones (page, sidebar line, panels behind images,
-filled fields, accent fills) are derived from the application's palette
-(`theme.derive_tones`), set on the window as palette roles (Window, Base,
-Button, PlaceholderText; nothing else, so a palette change still reaches
-it) and derived again when the palette changes; widgets painted here
-(sidebar items, rows, tabs, text buttons) read them when they paint. No
-stylesheets. In light mode the panels behind images stay dark. Icons are
-Lucide SVGs tinted from the tones and re-tinted when they change.
+Settings page. The look follows the system's colours (the palette, light
+/ dark, the accent) with controls of our own: the tones (page, sidebar
+line, panels behind images, filled fields, accent fills, the controls'
+states) are derived from the application's palette (`theme.derive_tones`;
+the accent from Accent on Windows, from Highlight elsewhere, where Qt puts
+KDE's), set on the window as palette roles (Window, Base, Button,
+PlaceholderText; nothing else, so a palette change still reaches it) and
+derived again when the palette changes; everything painted here (sidebar
+items, rows, tabs, buttons, drop-downs, segmented choices, switches,
+sliders: controls.py) reads them when it paints, so it looks the same on
+Windows and KDE. The style still draws text fields, scroll bars and
+dialogs: Windows 11 style on Windows, Fusion on Linux (PySide6's own Qt
+can't load the system's Breeze). No stylesheets. The keyboard focus is a
+2 px accent ring, shown only when the focus came from the keyboard; Qt
+can't paint outside a widget, so it lies on the control's edge and a
+filled control's fill shrinks inside it. In light mode the panels behind
+images stay dark. Icons are Lucide SVGs tinted from the tones and
+re-tinted when they change.
 
 Home redraws from `overview_changed` (which carries each monitor's id,
 name and geometry, attached or not) and asks `status` once per new
@@ -226,6 +241,16 @@ a small copy (covering a square of the preview's longer side) and the
 row's thumbnail made from it; it caches by path (never dropping an image
 shown now) and drops results for images no longer shown. The window has
 one loader, shared by Home and Settings (they show the same images).
+
+The Library page asks the app for a playlist's numbers (`stats`, counted
+on the service thread from the cached scan, the shuffle deck and the
+lists) only while its Overview tab is on screen, and again on
+`overview_changed` and on a `changed` of that playlist; one request at a
+time. Which playlist and tab it shows is view state, in `ui-state.json`
+(`paths.ui_state`, `ui_state.py`), written only by the UI process: not
+settings (no revision, never on the socket, nothing the app reads), and
+not `QSettings` (the registry on Windows, outside the data locations
+About lists). Missing or unreadable, it is the defaults, logged.
 
 The monitor drawings show previews, not thumbnails: virtual monitors.
 `MonitorsView` renders each monitor's image with `imaging.render`, for the
@@ -309,6 +334,16 @@ Time is counted per playlist in *active* seconds, added on each tick: not
 while paused (locked / idle via `Presence`), not while no member is
 attached, and not across gaps longer than a minute (sleep). A manual change
 (next / prev / pick) resets the count.
+
+Stats change nothing: `stats` counts a playlist's scanned images as seen
+(drawn in this cycle: cards up to the deck position, picked ones moved
+there), skipped (listed to remove, or failed to load this run) and
+unseen (the rest, new files not yet shuffled in too); a sorted walk counts
+the images up to the newest one it showed from the folder as seen.
+`reset_cycle` replaces the deck with a new shuffle of the cached scan, the
+newest image shown not first (the one `next` avoids too). It reads the
+to-remove list before it changes anything, so a busy list leaves the
+cycle as it was.
 
 Pick, hold and manual mode: a *pick* shows a chosen image (any directory)
 like `next` would, inserted in the history right after the cursor; one

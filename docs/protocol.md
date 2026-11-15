@@ -7,7 +7,7 @@ other program use the same socket and the same messages. The models live in
 (`uv run python scripts/protocol_schema.py` regenerates it, and a test fails
 while it is out of date).
 
-**Version 2.** It only ever adds commands, fields, error kinds and events.
+**Version 3.** It only ever adds commands, fields, error kinds and events.
 Clients must ignore fields they don't know, and treat an unknown error kind
 like `failed`. A breaking change bumps the version. (Until the first
 release it may still change in place.)
@@ -36,11 +36,13 @@ release it may still change in place.)
 
 - `v`: the protocol version; another one is refused (`protocol`).
 - `request.command`: `status`, `next`, `prev`, `fav`, `unfav`, `remove`,
-  `hold`, `resume`, `pick`, `settings`, `save_settings`, or `subscribe`.
-- `request.target` (the playlist commands: `next` to `resume`, and
-  `pick`): a playlist name, or a monitor the playlist drives (a name, a
-  unique part of one, or the full id). It may be left out when there is
-  only one playlist.
+  `hold`, `resume`, `pick`, `stats`, `reset_cycle`, `settings`,
+  `save_settings`, or `subscribe`.
+- `request.target` (the playlist commands: `next` to `resume`, `pick`,
+  `reset_cycle`, and `stats`): a playlist name, or a monitor the playlist
+  drives (a name, a unique part of one, or the full id). It may be left
+  out when there is only one playlist; for `stats`, leaving it out means
+  every playlist.
 - `request.image` (`pick` only, and required there): the image to show, an
   absolute path (the app doesn't know the client's directory). It may be in
   any directory.
@@ -49,6 +51,8 @@ release it may still change in place.)
 {"v": 3, "request": {"command": "pick", "target": "fantasy", "image": "D:\\pictures\\other\\7.png"}}
 ```
 
+- `request.rescan` (`stats` only, default `false`): scan the folders
+  again first (the app's scan is up to 5 min old).
 - `request.settings` and `request.revision` (`save_settings` only, and
   required there): the whole edited settings (below), and the `revision`
   of the ones the edit was made on (from `settings`).
@@ -72,6 +76,8 @@ get the image when they come back).
 | `fav` / `unfav` | `playlist`, `image`, `list_file` (favourites.txt), `changed` (false: it already was / wasn't a favourite) |
 | `remove` | `playlist`, `image` (listed for removal, never deleted), `list_file` (to-remove.txt), `change` (null: no monitor attached; it moves on later) |
 | `hold` / `resume` | `playlist`, `held` (now), `changed` (false: it already was / wasn't held) |
+| `stats` | `playlists` (each: `name`, `directory`, `order`, `scan_age` in seconds, `images`, `seen`, `unseen`, `skipped`, `favourites_here`, `to_remove_here`), `favourites` and `to_remove` (each: `file`, `listed`, `available`) |
+| `reset_cycle` | `playlist`, `unseen` (now: every image but the skipped ones) |
 | `settings` | `settings` (below), `revision` (an integer; send it back with the edit) |
 | `save_settings` | `revision` (of the saved settings: the next edit goes on this one), `warnings` (settings that are valid but probably a mistake) |
 
@@ -81,6 +87,24 @@ shown before, and the interval starts again. A held playlist doesn't rotate
 by itself, but `next`, `prev` and `pick` still work; a manual one
 (no interval: `interval` null) never rotates, so `hold` / `resume`
 on it are an error (`failed`).
+
+`stats` counts what each playlist picks up, from the app's scan of its
+folder, its shuffle deck and the lists; it changes nothing. `images` =
+`seen` + `unseen` + `skipped`, always: `skipped` are the images listed to
+remove or that failed to load; `seen`, of the rest, the ones drawn in this
+shuffle cycle (picked ones count); `unseen` the others, new files too
+(they are shuffled in when the next image is drawn). A sorted playlist has
+no cycle: `seen` are the images up to and including where its walk is (the
+newest image it showed from the folder), in name order, `unseen` the ones
+after. Of the lists: `listed` entries in the file, `available` the ones
+whose file exists (one `stat` each), and per playlist `favourites_here` /
+`to_remove_here`, the entries among its images.
+
+`reset_cycle` starts a shuffle playlist's cycle over from the current scan:
+every image unseen again. The image on screen stays, and isn't first in
+the new cycle. A sorted playlist has no cycle (`failed`); an empty folder
+(maybe not mounted) keeps it (`no_images`). It can't be undone: the CLI
+asks first.
 
 ## Settings
 
@@ -199,5 +223,5 @@ Read the events promptly: the app drops a subscriber that falls more than
 4 MB behind. Send commands on separate connections.
 
 Not on the socket (by design): thumbnails and image data (read the files by
-path), and history or library listings (read the state database read-only;
-see [plan.md](plan.md), Phase 5).
+path), and history or folder listings (read the state database read-only,
+scan the folder; see [plan.md](plan.md), Phase 5). Counts are (`stats`).

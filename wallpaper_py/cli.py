@@ -8,6 +8,7 @@ app starting meanwhile waits for it), and nothing is left running after:
 only the app rotates. Replies are data (protocol.py); the text printed here
 is made here. `run` and `tray` start the app, `ui` the windows (see
 wallpaper_py.app). The settings are edited in the window (`ui settings`).
+`reset-cycle` asks first (it can't be undone), unless `--yes`.
 """
 
 from __future__ import annotations
@@ -30,7 +31,8 @@ from .core.backend import Backend
 from .core.model import AppError, ImageMode, Look, Monitor, WallpaperError
 from .core.presence import Presence
 from .core.selection import resolve_monitor
-from .core.settings import format_duration
+from .core.service import ListStats, PlaylistStats
+from .core.settings import Order, format_ago, format_duration
 from .core.setter import apply_wallpaper
 from .protocol import (
     TARGET_COMMANDS,
@@ -48,9 +50,13 @@ from .protocol import (
     RemoveResult,
     Reply,
     Request,
+    ResetCycleRequest,
+    ResetCycleResult,
     ResumeResult,
     SaveSettingsResult,
     SettingsResult,
+    StatsRequest,
+    StatsResult,
     StatusResult,
 )
 
@@ -190,15 +196,48 @@ class Text(NamedTuple):
 
 
 def cmd_playlist(ctx: Context, args: argparse.Namespace) -> int:
-    """status, pick and the TARGET_COMMANDS: in the app, or here."""
+    """status, pick, stats and the TARGET_COMMANDS: in the app, or here."""
     target: str | None = getattr(args, "target", None)
     request: CommandRequest
     if args.command == "pick":
         request = PickRequest(target=target, image=args.image)
+    elif args.command == "stats":
+        request = StatsRequest(target=target, rescan=args.rescan)
     else:
         command: Command = args.command  # a subparser name from Command
         request = Request(command=command, target=target)
-    answer = ctx.app_client(request, ctx.run_here)
+    return _print(ctx.app_client(request, ctx.run_here))
+
+
+def cmd_reset_cycle(ctx: Context, args: argparse.Namespace) -> int:
+    """Asks first, with the playlist's count, unless --yes."""
+    if not args.yes:
+        answer = ctx.app_client(StatsRequest(target=args.target), ctx.run_here)
+        reply = answer.reply
+        if not isinstance(reply, StatsResult):
+            return _print(answer)
+        stats = reply.playlists[0]
+        # A sorted one has no cycle: nothing to ask, the app says so.
+        if stats.order is Order.SHUFFLE and not _confirm(
+            f"Start {stats.name}'s shuffle cycle over? All "
+            f"{stats.seen + stats.unseen:,} images become unseen. [y/N] "
+        ):
+            print("Nothing changed")
+            return 1
+    request = ResetCycleRequest(target=args.target)
+    return _print(ctx.app_client(request, ctx.run_here))
+
+
+def _confirm(question: str) -> bool:
+    try:
+        return input(question).strip().lower() in ("y", "yes")
+    except EOFError:  # no terminal to answer from
+        print()
+        return False
+
+
+def _print(answer: Answer) -> int:
+    """Print a command's answer; its exit code."""
     log.info("Reply: %s", answer.reply.model_dump_json())
     text = format_answer(answer)
     if text.out:
@@ -253,6 +292,14 @@ def format_reply(reply: Reply) -> Text:
             return Text(0, "\n".join(lines))
         case HoldResult() | ResumeResult():
             return Text(0, _hold_text(reply))
+        case StatsResult():
+            return Text(0, format_stats(reply))
+        case ResetCycleResult():
+            return Text(
+                0,
+                f"{reply.playlist}: a new shuffle cycle; "
+                f"all {reply.unseen:,} images unseen",
+            )
         case SettingsResult() | SaveSettingsResult():  # for the window; as data
             return Text(0, reply.model_dump_json(indent=2))
     raise AssertionError(f"Unhandled reply {reply!r}")
@@ -285,6 +332,48 @@ def format_status(
     else:
         lines.append("Rotation active")
     return "\n".join(lines)
+
+
+def format_stats(reply: StatsResult) -> str:
+    lines: list[str] = []
+    for playlist in reply.playlists:
+        lines += _playlist_stats(playlist)
+    lines.append(_list_line("favourites", reply.favourites))
+    lines.append(_list_line("to remove", reply.to_remove))
+    return "\n".join(lines)
+
+
+def _playlist_stats(stats: PlaylistStats) -> list[str]:
+    width = len(f"{stats.images:,}")
+
+    def row(label: str, count: int, text: str) -> str:
+        return f"  {label:<9}{count:>{width},}  {text}"
+
+    if stats.order is Order.SORTED:
+        walk = f"this walk: at {stats.seen:,} of {stats.seen + stats.unseen:,}"
+        seen = "the current image and those before it, in name order"
+        unseen = "after the current image, in name order"
+    else:
+        walk = f"this cycle: {stats.percent_seen} % seen"
+        seen = "shown in this shuffle cycle"
+        unseen = "still to come before the next reshuffle"
+    return [
+        f"{stats.name}  ({stats.order.value}; {walk})",
+        f"  folder:  {stats.directory} (scanned {format_ago(stats.scan_age)})",
+        row("images:", stats.images, "in the folder"),
+        row("seen:", stats.seen, seen),
+        row("unseen:", stats.unseen, unseen),
+        row("skipped:", stats.skipped, "listed to remove, or unreadable"),
+        f"  here:    {stats.favourites_here:,} favourites, "
+        f"{stats.to_remove_here:,} to remove",
+    ]
+
+
+def _list_line(label: str, stats: ListStats) -> str:
+    return (
+        f"{label}: {stats.file}: {stats.listed:,} listed, "
+        f"{stats.available:,} available"
+    )
 
 
 def _hold_text(reply: HoldResult | ResumeResult) -> str:
@@ -467,7 +556,36 @@ def build_parser() -> argparse.ArgumentParser:
     pick.add_argument("image", type=absolute_path, help="image file")
     pick.add_argument("target", nargs="?", help=target_help)
     pick.set_defaults(handler=cmd_playlist)
+    _add_library_commands(sub)
     return parser
+
+
+def _add_library_commands(
+    sub: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
+    """`stats` and `reset-cycle`."""
+    stats = sub.add_parser(
+        "stats",
+        help="count each playlist's images: seen and unseen in this cycle, "
+        "skipped; and the lists",
+    )
+    stats.add_argument(
+        "target", nargs="?", help="playlist name, or a monitor it drives; default: all"
+    )
+    stats.add_argument(
+        "--rescan",
+        action="store_true",
+        help="scan the folders again first (the app's scan is up to 5 min old)",
+    )
+    stats.set_defaults(handler=cmd_playlist)
+
+    reset = sub.add_parser(
+        "reset-cycle",
+        help="start a shuffle playlist's cycle over: every image unseen again",
+    )
+    reset.add_argument("target", help="playlist name, or a monitor it drives")
+    reset.add_argument("--yes", action="store_true", help="don't ask first")
+    reset.set_defaults(handler=cmd_reset_cycle)
 
 
 def main(

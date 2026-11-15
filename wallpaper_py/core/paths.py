@@ -31,6 +31,14 @@ def ui_lock() -> Path:
     return data_dir() / "ui.lock"
 
 
+def ui_state() -> Path:
+    """
+    The windows' view state (the Library's playlist, tab, ...): written only
+    by the UI process; not settings.
+    """
+    return data_dir() / "ui-state.json"
+
+
 def log_file() -> Path:
     """The app's log (the tray app has no terminal)."""
     return user_log_path(APP_NAME, appauthor=False) / "wallpaper.log"

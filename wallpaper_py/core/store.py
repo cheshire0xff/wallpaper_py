@@ -399,6 +399,15 @@ class Store:
         rows = self._db.execute("SELECT path FROM deck WHERE playlist = ?", (playlist,))
         return {path for (path,) in rows}
 
+    def deck_drawn(self, playlist: str) -> set[str]:
+        """The cards drawn in the current cycle (picked ones too)."""
+        rows = self._db.execute(
+            "SELECT path FROM deck WHERE playlist = ? AND position <= "
+            "(SELECT deck_pos FROM playlist WHERE id = ?)",
+            (playlist, playlist),
+        )
+        return {path for (path,) in rows}
+
     def deck_after(self, playlist: str, position: float) -> list[tuple[float, Path]]:
         """Cards not drawn yet, in order."""
         rows = self._db.execute(

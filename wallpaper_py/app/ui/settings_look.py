@@ -3,6 +3,7 @@ The Settings page's rows for one monitor's look (core.model.Look), under
 its Monitor and Playlist rows: *Mode*; for Fit, *Background* (a colour,
 with a swatch that opens a colour dialog, or one from the image; or the
 image itself, blurred); for the Blurred image, *Blur* and *Darken* sliders.
+Mode is a segmented choice (controls.Segments), each mode with its icon.
 
 `LookEditor` shows the look of the monitor the page selected, as edited
 (`show_look`), and reports each change as that monitor's new look
@@ -18,6 +19,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QColorDialog, QVBoxLayout, QWidget
 
 from ...core.model import Background, Colour, ImageMode, Look, MonitorId
+from .controls import Segments
 from .settings_dialogs import Dialogs
 from .settings_draft import (
     BACKGROUND_HELP,
@@ -70,11 +72,11 @@ class LookEditor(QWidget):
         self._colours: dict[MonitorId, Colour] = {}
         self._colour_for: MonitorId | None = None
 
-        self.mode_combo = combo(self, "Mode")
+        self.mode_choice = Segments("Mode", self)
         for mode, name in MODE_NAMES.items():
-            self.mode_combo.addItem(name, mode)
+            self.mode_choice.add(name, mode, f"mode-{mode.value}", MODE_HELP[mode])
         self.mode_row = SettingRow(
-            "Mode", "", self.mode_combo, parent=self, indent=indent
+            "Mode", "", self.mode_choice, parent=self, indent=indent
         )
         self.background_combo = combo(self, "Background")
         for kind, name in BACKGROUND_NAMES.items():
@@ -109,7 +111,7 @@ class LookEditor(QWidget):
         for row in (self.mode_row, self.background_row, self.blur_row, self.darken_row):
             layout.addWidget(row)
 
-        self.mode_combo.currentIndexChanged.connect(self._mode_chosen)
+        self.mode_choice.current_changed.connect(self._mode_chosen)
         self.background_combo.currentIndexChanged.connect(self._background_chosen)
         self.colour_button.clicked.connect(self._choose_colour)
         self.blur_slider.valueChanged.connect(self._blur_moved)
@@ -119,7 +121,7 @@ class LookEditor(QWidget):
         """The monitor's look as edited (`saved`: as saved), without reporting it."""
         self._monitor, self._look = monitor_id, look
         self._saved_colour = colour_of(saved)
-        select(self.mode_combo, look.mode)
+        self.mode_choice.select(look.mode)
         self.mode_row.set_description(MODE_HELP[look.mode])
         fit = look.mode is ImageMode.FIT
         self.background_row.setVisible(fit)
@@ -145,7 +147,7 @@ class LookEditor(QWidget):
     @Slot(int)
     def _mode_chosen(self, index: int) -> None:
         del index
-        mode: ImageMode = self.mode_combo.currentData()
+        mode = ImageMode(self.mode_choice.current_value())
         self._edit(mode_look(self._look, mode))
 
     @Slot(int)

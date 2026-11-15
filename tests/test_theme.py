@@ -58,7 +58,10 @@ def with_text(colour: str) -> QPalette:
 
 
 def system_palette(window: str, text: str, accent: str = "#0078d4") -> QPalette:
-    """A palette as the system gives it: Window, its text, the accent."""
+    """
+    A palette as the system gives it: Window, its text, the accent (in
+    Accent on Windows, in Highlight on KDE: both here).
+    """
     palette = QPalette(QApplication.palette())
     for group in (QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive):
         for role, colour in (
@@ -67,6 +70,7 @@ def system_palette(window: str, text: str, accent: str = "#0078d4") -> QPalette:
             (QPalette.ColorRole.ButtonText, text),
             (QPalette.ColorRole.Text, text),
             (QPalette.ColorRole.Accent, accent),
+            (QPalette.ColorRole.Highlight, accent),
         ):
             palette.setColor(group, role, QColor(colour))
     return palette

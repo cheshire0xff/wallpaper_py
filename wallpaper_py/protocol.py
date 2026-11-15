@@ -3,7 +3,8 @@ The app's socket protocol as pydantic models: what goes over the wire, and
 nothing else (no logic, no Qt). See docs/protocol.md.
 
 - In: an `Envelope` holding a `Request` (a playlist command), a
-  `PickRequest` (`pick`, which also carries an image), a
+  `PickRequest` (`pick`, which also carries an image), a `StatsRequest` /
+  `ResetCycleRequest` (count a library / start its shuffle cycle over), a
   `SettingsRequest` / `SaveSettingsRequest` (read / write the settings) or
   `Subscribe`.
 - Out: a `Reply`, which is data only: one result model per command, tagged
@@ -25,10 +26,17 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Annotated, Any, Literal, get_args
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    TypeAdapter,
+    field_validator,
+)
 
 from .core.model import Look, MonitorId
-from .core.service import Change
+from .core.service import Change, ListStats, PlaylistStats
 from .core.settings import Order, Settings
 
 PROTOCOL = 3
@@ -38,7 +46,9 @@ Command = Literal["status", "next", "prev", "fav", "unfav", "remove", "hold", "r
 # Of those, the ones that act on a target (playlist or monitor): all but status.
 TARGET_COMMANDS: tuple[Command, ...] = get_args(Command)[1:]
 # Every command: also these, which have request models of their own.
-AnyCommand = Literal[Command, "pick", "settings", "save_settings"]
+AnyCommand = Literal[
+    Command, "pick", "stats", "reset_cycle", "settings", "save_settings"
+]
 COMMANDS: tuple[AnyCommand, ...] = get_args(AnyCommand)
 
 
@@ -79,6 +89,21 @@ class PickRequest(Strict):
         return image
 
 
+class StatsRequest(Strict):
+    """What playlists pick up from their folders, and the lists' counts."""
+
+    command: Literal["stats"] = "stats"
+    target: str | None = None  # one playlist (or a monitor it drives); None: all
+    rescan: StrictBool = False  # scan the folders again first
+
+
+class ResetCycleRequest(Strict):
+    """Start a shuffle playlist's cycle over: every image unseen again."""
+
+    command: Literal["reset_cycle"] = "reset_cycle"
+    target: str | None = None  # playlist name, or a monitor it drives
+
+
 class SettingsRequest(Strict):
     """The stored settings, and their revision (for `save_settings`)."""
 
@@ -98,9 +123,16 @@ class SaveSettingsRequest(Strict):
 
 
 # Every request answered with one reply (what `commands.execute` takes).
-CommandRequest = Request | PickRequest | SettingsRequest | SaveSettingsRequest
+CommandRequest = (
+    Request
+    | PickRequest
+    | StatsRequest
+    | ResetCycleRequest
+    | SettingsRequest
+    | SaveSettingsRequest
+)
 # Of those, the ones that name a target (playlist or monitor).
-TargetRequest = Request | PickRequest
+TargetRequest = Request | PickRequest | StatsRequest | ResetCycleRequest
 
 
 class Subscribe(Strict):
@@ -114,7 +146,7 @@ class Envelope(Strict):
 
     v: int = PROTOCOL
     request: Annotated[
-        Request | PickRequest | SettingsRequest | SaveSettingsRequest | Subscribe,
+        CommandRequest | Subscribe,
         Field(discriminator="command"),
     ]
 
@@ -260,6 +292,24 @@ class PickResult(Message):
     change: Change
 
 
+class StatsResult(Message):
+    """
+    Per playlist asked (all, or the target): its folder's images, seen,
+    unseen and skipped, and the list entries among them; and the lists.
+    """
+
+    command: Literal["stats"] = "stats"
+    playlists: tuple[PlaylistStats, ...]
+    favourites: ListStats
+    to_remove: ListStats
+
+
+class ResetCycleResult(Message):
+    command: Literal["reset_cycle"] = "reset_cycle"
+    playlist: str
+    unseen: int  # now: every image but the skipped ones
+
+
 class SettingsResult(Message):
     command: Literal["settings"] = "settings"
     settings: Settings
@@ -297,6 +347,8 @@ Result = Annotated[
     | PickResult
     | HoldResult
     | ResumeResult
+    | StatsResult
+    | ResetCycleResult
     | SettingsResult
     | SaveSettingsResult,
     Field(discriminator="command"),
