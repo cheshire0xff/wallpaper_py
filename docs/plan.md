@@ -7,7 +7,7 @@ thin. See [architecture.md](architecture.md) for the layers.
 
 | Phase | What | Status |
 |---|---|---|
-| 0 | Spikes: monitor identity on Windows, 20k-image grid, KDE probe | done (KDE probe pending, needs Arch) |
+| 0 | Spikes: monitor identity on Windows, 20k-image grid, KDE probe | done |
 | 1 | Core model, safe setter, Windows backend, CLI `list`/`set`, tooling, CI | done |
 | 2 | Playlists, mirrored groups, scheduler, history, favourites, to-remove | done |
 | 3 | App shell: tray, single instance, IPC, autostart | done |
@@ -16,7 +16,7 @@ thin. See [architecture.md](architecture.md) for the layers.
 | 4c | More backgrounds for Fit: dominant, blur | done |
 | 4d | Blur strength and darkening per monitor; the look stored as one value | done |
 | 5 | Library window | low priority |
-| 6 | KDE backend | next |
+| 6 | KDE backend | backend done; Kubuntu and the checks by hand left |
 | 7 | Polish | |
 
 Finished phases are described as they work now, not as they were planned:
@@ -93,19 +93,36 @@ view; reset cycle and About.
 
 ## Phase 6: KDE backend
 
-plasmashell D-Bus (`evaluateScript`) for per-monitor wallpapers (per
-activity), KScreen for monitor identity. Run `spikes/kde_probe.sh` on Arch
-first. Then CI and checks on Kubuntu 26.04 as well, and the whole of
-[desktop-checks.md](desktop-checks.md) by hand on Arch and Kubuntu.
+Done (Arch, Plasma 6.8, Wayland; how it works:
+[architecture.md](architecture.md), "Monitor identity"):
+`backends/kde/`, through `kscreen-doctor -j` and `busctl` (plasmashell's
+`evaluateScript`, the ScreenSaver interface); ids are connectors, names
+from EDID; `Rectangle.pixels` for Wayland's logical desktop; the lock
+pauses rotation; the README lists the system packages. Tried for real:
+`list`, `set` in each mode, the app rotating a mirrored pair (Fill + Fit)
+and a strip (Fit, blur), next / prev, with `grabContainmentImage` showing
+each desktop.
 
-Linux Qt dependencies (promised early on, not done yet):
+Decided:
 
-- README: the system packages per distro (Ubuntu/Kubuntu, Arch), e.g.
-  `libxcb-cursor0` for the xcb plugin since Qt 6.5, and the libEGL / libGL
-  / xkbcommon / fontconfig set CI installs.
+- **Command-line tools, not a D-Bus library.** No Qt below `app/`
+  (QtDBus), no new dependency (jeepney); both ship with Plasma and
+  systemd, and a call takes a few ms (kscreen-doctor ~15 ms).
+- **Every activity** gets the image: switching activity keeps the
+  playlist.
+- **No idle pause on KDE.** Wayland gives idle time only to Wayland
+  clients (ext-idle-notify); the ScreenSaver interface refuses
+  GetSessionIdleTime and Plasma doesn't set logind's IdleHint. Lock only.
+
+Left:
+
+- CI and the checks on Kubuntu 26.04, and the whole of
+  [desktop-checks.md](desktop-checks.md) by hand on Arch and Kubuntu
+  (monitor switched off, resolution change, `plasmashell --replace`).
 - A readable startup error when Qt can't load its platform plugin or a
   library, naming the package to install (and `QT_DEBUG_PLUGINS=1` for
   anything else), instead of Qt's cryptic message.
+- Maybe: Settings says the idle pause does nothing on KDE.
 
 ## Phase 7: polish
 

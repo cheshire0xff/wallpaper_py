@@ -151,12 +151,22 @@ class MonitorView(Message):
 
 
 class Geometry(Message):
-    """A monitor's area in desktop pixels; x and y may be negative."""
+    """
+    A monitor's area in desktop coordinates (x and y may be negative), and
+    its size in pixels if that differs (Wayland's logical coordinates:
+    core.model.Rectangle).
+    """
 
     x: int
     y: int
     width: int
     height: int
+    pixels: tuple[int, int] | None = None
+
+    @property
+    def screen(self) -> tuple[int, int]:
+        """The screen's size in pixels: what its wallpaper is rendered at."""
+        return self.pixels or (self.width, self.height)
 
 
 class DesktopMonitor(Message):

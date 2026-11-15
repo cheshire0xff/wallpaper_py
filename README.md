@@ -1,6 +1,6 @@
 # wallpaper_py
 
-Per-monitor wallpaper management for **Windows** and (planned) **KDE Plasma**.
+Per-monitor wallpaper management for **Windows** and **KDE Plasma** (6, Wayland).
 
 The goal is a tray app that runs wallpaper playlists per monitor (or per group
 of mirrored monitors), keeps history and favourites, and browses large
@@ -8,9 +8,9 @@ libraries (10k+ images). See [todo.md](todo.md) for the feature list,
 [docs/plan.md](docs/plan.md) for the phases and
 [docs/architecture.md](docs/architecture.md) for the design.
 
-**Status:** the core, the Windows backend, the playlist service and the tray
-app exist, plus the UI process with its window (Home and Settings). The
-library is next.
+**Status:** the core, the Windows and KDE backends, the playlist service and
+the tray app exist, plus the UI process with its window (Home and
+Settings). The library is next.
 
 ## Install
 
@@ -21,6 +21,16 @@ uv sync                           # creates .venv with the package and dev tools
 uv run wallpaper list             # or activate .venv and run `wallpaper` directly
 uv run python scripts/check.py    # black, mypy, pylint, pytest (as CI does)
 ```
+
+On Linux, PySide6 needs a few system libraries that a desktop install
+usually has already (CI's minimal Ubuntu installs them): Ubuntu / Kubuntu
+`sudo apt install libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3`
+(and `libxcb-cursor0` for X11), Arch `sudo pacman -S --needed libglvnd
+libxkbcommon fontconfig dbus xcb-util-cursor`.
+
+On KDE Plasma the app talks to Plasma through two tools that ship with it:
+`kscreen-doctor` (KScreen; Arch: `libkscreen`) and `busctl` (systemd). A
+monitor's id is its connector (`DP-4`); its name comes from its EDID.
 
 ## CLI
 
@@ -40,7 +50,9 @@ wallpaper set IMAGE --monitor NAME [--mode fill|fit|stretch]
   has one position for all monitors; it is kept at *fill* (switched from
   *tile* or *span*, which tools that set one combined image use, e.g. John's
   Background Switcher). Close such tools first, or they will overwrite the
-  result.
+  result. On KDE each desktop (in every activity) is set to the *Image*
+  wallpaper at *Scaled and Cropped*; a slideshow on that monitor is
+  replaced.
 
 ### Playlists
 
@@ -103,10 +115,12 @@ opens the window on Home. The icon turns
 grey while rotation is paused and shows a red badge if the app has
 stopped (a favourites or to-remove file it can't read; it starts again
 once the file is fixed). Start at login uses the per-user Run key on Windows and
-`~/.config/autostart` on Linux; it starts `pythonw -m wallpaper_py tray`
-from the current environment, so no console window opens. The tray app logs
+`~/.config/autostart` on Linux; it starts `python -m wallpaper_py tray`
+from the current environment (`pythonw` on Windows, so no console window
+opens). The tray app logs
 to `wallpaper.log` in the per-user log directory (on Windows
-`%LOCALAPPDATA%\wallpaper_py\Logs`). Everything it adds to your system
+`%LOCALAPPDATA%\wallpaper_py\Logs`, on Linux
+`~/.local/state/wallpaper_py/log`). Everything it adds to your system
 (start at login, files, sockets, what it changes on the desktop) and how to
 remove it all: [docs/system-integration.md](docs/system-integration.md).
 
@@ -151,8 +165,8 @@ python scripts/check.py            # black --check, mypy (strict), pylint, pytes
 python scripts/check.py black      # format
 ```
 
-CI runs the same on Windows and Ubuntu. Tests marked `windows` read the real
-desktop (never change it) and are skipped elsewhere. Qt tests run offscreen
+CI runs the same on Windows and Ubuntu. Tests marked `windows` or `kde` read
+the real desktop (never change it) and are skipped elsewhere. Qt tests run offscreen
 (`tests/conftest.py`) with per-test data directories, so they never show an
 icon or reach a running app. What only a real desktop can show is checked
 by hand: [docs/desktop-checks.md](docs/desktop-checks.md).

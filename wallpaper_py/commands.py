@@ -275,7 +275,13 @@ def _desktop_monitor(service: PlaylistService, monitor: Monitor) -> DesktopMonit
     geometry = (
         None
         if rect is None
-        else Geometry(x=rect.x1, y=rect.y1, width=rect.width, height=rect.height)
+        else Geometry(
+            x=rect.x1,
+            y=rect.y1,
+            width=rect.width,
+            height=rect.height,
+            pixels=rect.pixels,
+        )
     )
     return DesktopMonitor(
         id=monitor.id,

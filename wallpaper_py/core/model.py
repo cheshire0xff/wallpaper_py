@@ -81,24 +81,35 @@ class MonitorId:
 
 @dataclass(frozen=True)
 class Rectangle:
-    """Monitor area in physical pixels, in desktop coordinates."""
+    """
+    A monitor's area in desktop coordinates, and its size in pixels.
+
+    On Windows (per-monitor DPI aware) desktop coordinates are pixels. On
+    Wayland they are logical: a 4K screen at 150 % spans 2560x1440 of the
+    desktop but has 3840x2160 pixels, so `pixels` gives those (None: the
+    same as the area).
+    """
 
     x1: int
     y1: int
     x2: int
     y2: int
+    pixels: tuple[int, int] | None = None
 
     @property
     def width(self) -> int:
+        """In desktop coordinates."""
         return self.x2 - self.x1
 
     @property
     def height(self) -> int:
+        """In desktop coordinates."""
         return self.y2 - self.y1
 
     @property
     def size(self) -> tuple[int, int]:
-        return self.width, self.height
+        """The screen's size in pixels: what a wallpaper is rendered at."""
+        return self.pixels or (self.width, self.height)
 
 
 class ImageMode(Enum):

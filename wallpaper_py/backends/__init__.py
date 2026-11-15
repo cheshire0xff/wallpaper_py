@@ -40,15 +40,21 @@ def get_backend() -> Backend:
         from .windows.backend import WindowsBackend
 
         return WindowsBackend()
+    if sys.platform == "linux" and _kde():
+        # pylint: disable=import-outside-toplevel
+        from .kde.backend import KdeBackend
+
+        return KdeBackend()
     desktop = os.environ.get("XDG_CURRENT_DESKTOP", "")
-    if "KDE" in desktop.upper().split(":"):
-        raise UnsupportedPlatformError(
-            "KDE Plasma support is planned but not implemented yet"
-        )
     raise UnsupportedPlatformError(
         f"No wallpaper backend for platform={sys.platform!r}, "
-        f"XDG_CURRENT_DESKTOP={desktop!r}. Supported: Windows (KDE Plasma planned)."
+        f"XDG_CURRENT_DESKTOP={desktop!r}. Supported: Windows, KDE Plasma."
     )
+
+
+def _kde() -> bool:
+    desktop = os.environ.get("XDG_CURRENT_DESKTOP", "")
+    return "KDE" in desktop.upper().split(":")
 
 
 def get_presence() -> Presence:
@@ -58,7 +64,12 @@ def get_presence() -> Presence:
         from .windows.presence import WindowsPresence
 
         return WindowsPresence()
-    return NoPresence()  # logind / KDE idle: Phase 6
+    if sys.platform == "linux" and _kde():
+        # pylint: disable=import-outside-toplevel
+        from .kde.presence import KdePresence
+
+        return KdePresence()
+    return NoPresence()
 
 
 def allow_foreground() -> None:

@@ -190,6 +190,24 @@ def test_captions_and_monitors_in_no_playlist() -> None:
     assert caption(ZERO, "fantasy") == ("ZeroMOD", "off · fantasy")
 
 
+def test_a_scaled_screen_is_drawn_by_its_area_and_named_by_its_pixels() -> None:
+    # Wayland at 150 %: the 4K spans 2560 of the desktop, beside a FullHD.
+    scaled = AW.model_copy(
+        update={
+            "geometry": Geometry(
+                x=1920, y=0, width=2560, height=1440, pixels=(3840, 2160)
+            )
+        }
+    )
+    side = PLX.model_copy(
+        update={"geometry": Geometry(x=0, y=0, width=1920, height=1080)}
+    )
+    left, right = (p.box for p in arrange([side, scaled], 900, 300, label_height=0))
+    assert left.right == pytest.approx(right.x)  # touching, not overlapping
+    assert right.width / left.width == pytest.approx(2560 / 1920)
+    assert caption(scaled, "konachan") == ("AW3225QF", "3840×2160 · konachan")
+
+
 def test_monitors_sharing_a_name_are_numbered_left_to_right() -> None:
     left = PLX.model_copy(update={"id": MonitorId("plx-2")})
     right = PLX.model_copy(

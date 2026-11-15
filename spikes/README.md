@@ -63,3 +63,16 @@ bash spikes/kde_probe.sh --snapshot oled-off
 ```
 
 Send the `spikes/kde_probe-*.log` files.
+
+### Findings (Arch, Plasma 6.8.2, Wayland, 2026-11-14)
+
+Same three monitors. `kscreen-doctor -j` lists only connected outputs (no
+EDID in its JSON); sizes are pixels, already rotated (the ZeroMOD's
+480x1920 mode at rotation 8 is 1920x480); positions are logical. Plasma's
+`screenGeometry` is logical too (the 4K at 150 %: 2560x1440). The
+scripting API has `screenForConnector(name)`, so connector -> Plasma screen
+needs no geometry matching. EDIDs are readable in
+`/sys/class/drm/card*-<connector>/edid`. `grabContainmentImage(connector,
+0, 0, path)` saves one desktop without windows: a way to see a wallpaper.
+`ScreenSaver.GetSessionIdleTime` is not supported on Wayland; `GetActive`
+works. With `QT_QPA_PLATFORM` set, `kscreen-doctor` lists no outputs.
