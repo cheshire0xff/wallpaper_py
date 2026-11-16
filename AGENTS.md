@@ -5,10 +5,17 @@ app, a CLI, and an on-demand UI process. Read these first:
 
 - [docs/plan.md](docs/plan.md): phases, what is next, what is decided
   against (the source of truth for scope)
-- [docs/architecture.md](docs/architecture.md): layers and their rules
-- [docs/app-wiring.md](docs/app-wiring.md): processes, threads, every
-  signal connection
+- [docs/architecture.md](docs/architecture.md): layers, and the
+  decisions with their reasons
+- [docs/app-wiring.md](docs/app-wiring.md): processes, threads, and
+  diagrams of the flows
 - [docs/protocol.md](docs/protocol.md): the socket protocol
+
+Each fact is written in one place: what a module does in its docstring,
+why it is built that way in architecture.md, which thread an object lives
+on and how a flow goes in app-wiring.md (a table and diagrams, not every
+`connect()`: the code has those). Don't restate one in another; point to
+it.
 
 ## Commands
 
@@ -64,8 +71,8 @@ report with a few steps to try once instead.
   without a byte order mark, nothing else; a BOM is a `ConfigError` that
   says so (`marks.decode_text`). This is on purpose: don't add BOM
   tolerance (`utf-8-sig`), and don't report it in reviews.
-- When you rename something named in docs/app-wiring.md, update the doc:
-  `tests/test_docs.py` checks it.
+- When you rename something named in docs/app-wiring.md or AGENTS.md,
+  update it: `tests/test_docs.py` checks them.
 
 ## Code reviews
 
@@ -88,8 +95,8 @@ Don't report at all:
 
 ## Qt for Python rules (easy to miss, costly when missed)
 
-Checked by `tests/test_qt_rules.py`; reasons in
-[docs/architecture.md](docs/architecture.md#layers).
+Checked by `tests/test_qt_rules.py`; each with its reason (this is
+their one place).
 
 1. **Never connect a lambda or `partial` that holds `self`** (also not in
    `QTimer.singleShot`). Qt keeps the lambda, and with it the object,
@@ -102,13 +109,18 @@ Checked by `tests/test_qt_rules.py`; reasons in
    connection; any other callable runs in the sender's thread.
 3. **Don't name a method like an inherited Qt method** (`update`, `show`
    on a widget, ...): PySide then connects it as a plain callable without
-   thread affinity (PYSIDE-2990). Overriding `...Event` handlers is fine.
+   thread affinity (PYSIDE-2990). Overriding `...Event` handlers is fine,
+   and so are an item model's `rowCount` / `data` and a delegate's
+   `paint` / `sizeHint` (what they exist for); background work goes
+   through `Jobs` (app/ui/jobs.py), never a `QThread.run` override.
 4. **Load pydantic before Qt.** `app/__init__.py` imports `protocol.py`
    first; PySide6's import hook breaks pydantic if it was only partly
    loaded before Qt.
 5. A QObject lives in its parent's thread; create the worker's objects in
-   `ServiceWorker.start` (on its thread). `sender()` only for same-thread
-   connections. Disconnect only your own connections
+   `ServiceWorker.start` (on its thread), which only sets up and returns,
+   so the thread's event loop runs the timer and the socket. `sender()`
+   only for same-thread connections (invalid for a direct call from
+   another thread). Disconnect only your own connections
    (`signal.disconnect(slot)`, not `signal.disconnect()`).
 6. A blocking `QLocalSocket` client (`waitFor*`) keeps the GIL: never run
    it in the process that serves the socket (tests use child processes,

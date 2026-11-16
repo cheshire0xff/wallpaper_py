@@ -5,12 +5,11 @@ the monitor drawings render their previews from (arrangement.py), a
 playlist row's thumbnail made from it, and the image's details.
 
 `ThumbnailLoader.want(paths)` says which images the window shows now: the
-ones not cached yet are decoded on a small `QThreadPool` of its own,
-`loaded(path)` fires when one is ready, and `get(path)` returns it. A queued
-job for an image that is no longer wanted skips its decode, and a result
-that arrives for one anyway is dropped, so a stale image never lands on a
-card. (Jobs are never taken back out of the pool: the pool deletes a job
-once it has run, so its Python handle may be dead by then.) The cache
+ones not cached yet are decoded on a small thread pool of its own (`Jobs`,
+jobs.py), `loaded(path)` fires when one is ready, and `get(path)` returns
+it. A queued job for an image that is no longer wanted skips its decode,
+and a result that arrives for one anyway is dropped, so a stale image
+never lands on a card. The cache
 never drops a wanted image, and keeps a few others (the image before,
 for *Previous*).
 
@@ -30,14 +29,13 @@ from collections import OrderedDict
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import override
-
 from PIL import Image
-from PySide6.QtCore import QObject, QRunnable, QSize, QThreadPool, Signal, Slot
+from PySide6.QtCore import QObject, QSize, Signal, Slot
 from PySide6.QtGui import QGuiApplication, QImage, QPixmap
 
 from ...core.imaging import image_size, load_small
 from ...core.model import ImageLoadError
+from .jobs import Jobs
 
 log = logging.getLogger(__name__)
 
@@ -62,12 +60,16 @@ class Sizes:
 
     @classmethod
     def sharpest(cls) -> Sizes:
-        """
-        For the screen with the highest scale: the images stay sharp on any
-        screen the window is moved to, whichever it opened on.
-        """
-        screens = QGuiApplication.screens()
-        return cls.at(max((s.devicePixelRatio() for s in screens), default=1.0))
+        """For the screen with the highest scale (`sharpest_ratio`)."""
+        return cls.at(sharpest_ratio())
+
+
+def sharpest_ratio() -> float:
+    """
+    The highest display scale of the screens: images made for it stay sharp
+    on any screen the window is moved to, whichever it opened on.
+    """
+    return max((s.devicePixelRatio() for s in QGuiApplication.screens()), default=1.0)
 
 
 @dataclass(frozen=True)
@@ -138,12 +140,6 @@ def _header_info(path: Path, file_size: int) -> ImageInfo | None:
     return ImageInfo(width, height, file_size)
 
 
-class _Relay(QObject):
-    """Lives on the UI thread; workers emit on it, so delivery is queued."""
-
-    done = Signal(object, object)  # Path, Decoded
-
-
 class _Wanted:
     """
     The paths wanted now, shared with the workers: replaced whole (one
@@ -154,28 +150,23 @@ class _Wanted:
         self.paths: frozenset[Path] = frozenset()
 
 
-class _Job(QRunnable):
-    # pylint: disable=too-many-arguments
-    def __init__(
-        self, path: Path, sizes: Sizes, decode: Decoder, relay: _Relay, wanted: _Wanted
-    ):
-        super().__init__()
-        self.path = path
+class _Read:
+    """A job's work: one image, unless it is no longer wanted (None)."""
+
+    def __init__(self, path: Path, sizes: Sizes, decode: Decoder, wanted: _Wanted):
+        self._path = path
         self._sizes = sizes
         self._decode = decode
-        self._relay = relay
         self._wanted = wanted
 
-    @override
-    def run(self) -> None:
-        if self.path not in self._wanted.paths:
-            return  # no longer wanted while it waited in the queue
+    def __call__(self) -> Decoded | None:
+        if self._path not in self._wanted.paths:
+            return None  # no longer wanted while it waited in the queue
         try:
-            result = self._decode(self.path, self._sizes)
+            return self._decode(self._path, self._sizes)
         except Exception as err:  # pylint: disable=broad-exception-caught
-            log.exception("Reading %s failed", self.path)
-            result = Decoded(None, None, QImage(), str(err))
-        self._relay.done.emit(self.path, result)
+            log.exception("Reading %s failed", self._path)
+            return Decoded(None, None, QImage(), str(err))
 
 
 class ThumbnailLoader(QObject):
@@ -201,12 +192,8 @@ class ThumbnailLoader(QObject):
         self._cache: OrderedDict[Path, Thumbnail] = OrderedDict()
         self._pending: set[Path] = set()  # wanted, queued or running
         self._wanted = _Wanted()
-        # The pool first: as children go in creation order, it is deleted
-        # (waiting for running jobs) before the relay they emit on.
-        self._pool = QThreadPool(self)
-        self._pool.setMaxThreadCount(threads)
-        self._relay = _Relay(self)
-        self._relay.done.connect(self._done)
+        self._jobs = Jobs(threads, parent=self)
+        self._jobs.done.connect(self._done)
         self._closed = False
 
     def sizes(self) -> Sizes:
@@ -234,21 +221,20 @@ class ThumbnailLoader(QObject):
         for path in wanted:
             if path not in self._cache and path not in self._pending:
                 self._pending.add(path)
-                job = _Job(path, self._sizes, self._decode, self._relay, self._wanted)
-                self._pool.start(job)
+                read = _Read(path, self._sizes, self._decode, self._wanted)
+                self._jobs.run(path, read)
 
     def close(self) -> None:
         """Drop queued jobs and wait for running ones (a decode is short)."""
         self._closed = True
         self._pending.clear()
         self._wanted.paths = frozenset()
-        self._pool.clear()
-        self._pool.waitForDone()
+        self._jobs.close()
 
     @Slot(object, object)
-    def _done(self, path: Path, result: Decoded) -> None:
-        if self._closed or path not in self._pending:
-            return  # no longer wanted: a stale result
+    def _done(self, path: Path, result: Decoded | None) -> None:
+        if result is None or self._closed or path not in self._pending:
+            return  # skipped, or no longer wanted: a stale result
         self._pending.discard(path)
         image = result.thumbnail
         pixmap = None if image.isNull() else QPixmap.fromImage(image)

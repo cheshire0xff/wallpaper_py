@@ -115,6 +115,16 @@ class MarkFile:
         self._signature, self._paths, self._busy = signature, paths, False
         return list(paths)
 
+    def stamp(self) -> tuple[int, int] | None:
+        """
+        The file's mtime and size now, read fresh: they change with every
+        edit. None: there is no file, or it can't be looked at.
+        """
+        try:
+            return _signature(self.file)
+        except MarkFileBusyError:
+            return None
+
     def keys(self) -> set[str]:
         """
         path_key of every entry, for membership checks.

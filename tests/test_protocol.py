@@ -40,8 +40,12 @@ def test_every_command_has_a_result() -> None:
 
 def test_events_and_error_kinds_are_published() -> None:
     schema = json_schema()
-    assert mapping(schema, "Event") == {"changed", "overview_changed"}
-    assert len(get_args(get_args(Event)[0])) == 2
+    assert mapping(schema, "Event") == {
+        "changed",
+        "overview_changed",
+        "marks_changed",
+    }
+    assert len(get_args(get_args(Event)[0])) == 3
     kinds = schema["$defs"]["ErrorInfo"]["properties"]["kind"]["enum"]
     assert tuple(kinds) == ERROR_KINDS
     assert str(PROTOCOL) in schema["description"]

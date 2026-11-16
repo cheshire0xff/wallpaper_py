@@ -23,6 +23,7 @@ from wallpaper_py.protocol import (
     StatsRequest,
     StatsResult,
     StatusResult,
+    UpcomingResult,
 )
 
 
@@ -107,6 +108,11 @@ def test_set_by_number_is_refused(
         ["run", "--poll", "nan"],
         ["run", "--poll", "inf"],
         ["run", "--poll", "0"],
+        ["fav", "walls", "--image", "x.jpg"],  # one or the other
+        ["unremove"],  # needs --image
+        ["upcoming", "-n", "0"],
+        ["upcoming", "-n", "1001"],
+        ["upcoming", "-n", "many"],
     ],
 )
 def test_bad_arguments_exit_with_usage_error(
@@ -165,6 +171,34 @@ class TestPlaylistCommands:
         assert "(not deleted)" in out[5] and out[6] == "walls: b.jpg on Main"
         listed = (tmp_path / "data" / "to-remove.txt").read_text(encoding="utf-8")
         assert listed == f"{tmp_path / 'walls' / 'a.jpg'}\n"
+
+    @pytest.mark.usefixtures("settings")
+    def test_marks_by_image_and_upcoming(
+        self,
+        backend: FakeBackend,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        image = tmp_path / "walls" / "b.jpg"
+        to_remove = tmp_path / "data" / "to-remove.txt"
+        assert self.run(backend, "upcoming", "-n", "1") == 0
+        assert capsys.readouterr().out == f"{tmp_path / 'walls' / 'a.jpg'}\n"
+        assert self.run(backend, "fav", "--image", str(image)) == 0
+        assert self.run(backend, "remove", "--image", str(image)) == 0
+        assert to_remove.read_text(encoding="utf-8") == f"{image}\n"
+        assert self.run(backend, "upcoming") == 0
+        assert self.run(backend, "unremove", "--image", str(image)) == 0
+        assert self.run(backend, "unremove", "--image", str(image)) == 0
+        assert to_remove.read_text(encoding="utf-8") == ""
+        assert capsys.readouterr().out.splitlines() == [
+            f"Added {image} to {tmp_path / 'data' / 'favourites.txt'}",
+            f"Listed {image} in {to_remove} (not deleted)",
+            "A playlist showing it moves on once the app runs",  # run here: no tick
+            str(tmp_path / "walls" / "a.jpg"),  # not b.jpg: it is listed
+            str(tmp_path / "walls" / "c.jpg"),
+            f"Removed {image} from {to_remove}",
+            "b.jpg is not listed for removal",
+        ]
 
     @pytest.mark.usefixtures("settings")
     def test_status(
@@ -300,6 +334,7 @@ def test_answers_run_here_say_so() -> None:
 
 def test_status_of_a_manual_playlist() -> None:
     strip = PlaylistDetails(
+        id="strip-id",
         name="strip",
         monitors=(),
         current=None,
@@ -331,14 +366,38 @@ def test_reply_texts() -> None:
 
     assert cli.format_reply(unfav(True)) == cli.Text(0, f"Removed {image} from {file}")
     assert cli.format_reply(unfav(False)) == cli.Text(0, "a.jpg is not a favourite")
-    removed = RemoveResult(playlist="w", image=image, list_file=file, change=None)
-    assert cli.format_reply(removed).out.splitlines() == [
+    unremoved = MarkResult(
+        command="unremove", playlist=None, image=image, list_file=file, changed=False
+    )
+    assert cli.format_reply(unremoved).out == "a.jpg is not listed for removal"
+
+    def removed(
+        playlist: str | None, change: Change | None, changed: bool = True
+    ) -> list[str]:
+        result = RemoveResult(
+            playlist=playlist,
+            image=image,
+            list_file=file,
+            changed=changed,
+            change=change,
+        )
+        return cli.format_reply(result).out.splitlines()
+
+    assert removed("w", None) == [
         f"Listed {image} in {file} (not deleted)",
         "w: changes once a monitor is attached",
     ]
     missed = Change("w", image, "next", ("A",), ("B",))
-    removed = RemoveResult(playlist="w", image=image, list_file=file, change=missed)
-    assert cli.format_reply(removed).out.splitlines()[1] == "w: a.jpg on A (later on B)"
+    assert removed("w", missed)[1] == "w: a.jpg on A (later on B)"
+    assert removed(None, None, changed=False) == [
+        "a.jpg is already listed for removal",
+        "A playlist showing it moves on within a few seconds",
+    ]
+    upcoming = UpcomingResult(playlist="w", images=(image, Path("/p/b.jpg")))
+    assert cli.format_reply(upcoming).out == f"{image}\n{Path('/p/b.jpg')}"
+    assert cli.format_reply(UpcomingResult(playlist="w", images=())).out == (
+        "w: nothing to come"
+    )
     error = ErrorReply.make("not_attached", "None of w's monitors is attached")
     assert cli.format_reply(error) == cli.Text(
         1, err="error: None of w's monitors is attached"

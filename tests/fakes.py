@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import threading
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -11,6 +12,7 @@ import pytest
 from PIL import Image
 
 from wallpaper_py.core.model import (
+    ImageLoadError,
     Monitor,
     MonitorId,
     MonitorNotAttachedError,
@@ -257,3 +259,47 @@ def settled(file: Path) -> Path:
     """
     os.utime(file, ns=(1, 1))
     return file
+
+
+GONE_IMAGE = Path("/p/gone.jpg")  # FakeTileDecoder: the file is gone
+BROKEN_IMAGE = Path("/p/broken.jpg")  # FakeTileDecoder: it doesn't decode
+TILE_RED = (200, 40, 40)
+
+
+class FakeTileDecoder:
+    """
+    A grid's tile decoder (`tiles.TileDecoder`): a red image of `size` for
+    any path but `GONE_IMAGE` and `BROKEN_IMAGE`. Records what it decoded,
+    in order, and on which threads; the paths in `hold` (every one if
+    `hold_all`) wait for `release()`.
+    """
+
+    def __init__(
+        self, size: tuple[int, int], *hold: Path, hold_all: bool = False
+    ) -> None:
+        self.size = size
+        self.hold = set(hold)
+        self.hold_all = hold_all
+        self._gate = threading.Event()
+        self.calls: list[tuple[Path, int]] = []  # path, thread (appends are atomic)
+
+    @property
+    def started(self) -> list[Path]:
+        return [path for path, _ in self.calls]
+
+    @property
+    def threads(self) -> set[int]:
+        return {thread for _, thread in self.calls}
+
+    def __call__(self, path: Path) -> Image.Image:
+        self.calls.append((path, threading.get_ident()))
+        if self.hold_all or path in self.hold:
+            assert self._gate.wait(10)
+        if path == GONE_IMAGE:
+            raise FileNotFoundError(path)
+        if path == BROKEN_IMAGE:
+            raise ImageLoadError(f"Cannot load {path}")
+        return Image.new("RGB", self.size, TILE_RED)
+
+    def release(self) -> None:
+        self._gate.set()

@@ -57,6 +57,45 @@ def generate_checkerboard_image(
     return image
 
 
+def generate_library(
+    directory: Path, count: int, size: tuple[int, int] = (640, 360)
+) -> list[Path]:
+    """
+    A small wallpaper library for the grid's tests: `count` images of
+    `size` (every fifth one portrait), JPEGs with a PNG every seventh, each
+    a gradient in colours of its own, in natural name order.
+
+    Args:
+        directory (Path): Where to write them (created if needed).
+        count (int): How many.
+        size (tuple[int, int]): Width and height of a landscape one.
+
+    Returns:
+        list[Path]: The files written, in name order.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    return [_library_image(directory, index, size) for index in range(count)]
+
+
+def _library_image(directory: Path, index: int, size: tuple[int, int]) -> Path:
+    """`generate_library`'s image number `index` (from 0), written."""
+    width, height = size[::-1] if index % 5 == 4 else size
+    left = ((index * 67) % 256, (index * 131) % 256, (index * 29) % 256)
+    right = (255 - left[0], left[2], left[1])
+    ramp = Image.linear_gradient("L").resize((width, height))  # top to bottom
+    image = Image.merge(
+        "RGB",
+        [
+            ramp.point(lambda v, a=a, b=b: a + (b - a) * v // 255)
+            for a, b in zip(left, right)
+        ],
+    )
+    suffix = ".png" if index % 7 == 6 else ".jpg"
+    path = directory / f"img{index + 1}{suffix}"
+    image.save(path)
+    return path
+
+
 def save_image(image: Image.Image, output_path: Path) -> None:
     """
     Save the given image to the specified path, ensuring the directory exists.

@@ -24,11 +24,14 @@ from wallpaper_py.app.worker import ServiceHost, ServiceSettings
 from wallpaper_py.core.model import MonitorId
 from wallpaper_py.protocol import (
     ErrorReply,
+    MarkRequest,
     MonitorView,
     Overview,
     PlaylistView,
     Reply,
     Request,
+    TargetCommand,
+    target_request,
 )
 
 from .fakes import FakeAutostart, FakeBackend, FakePresence
@@ -39,13 +42,17 @@ def monitor(name: str, attached: bool | None) -> MonitorView:
 
 
 WALLS = PlaylistView(
+    id="walls-id",
     name="walls",
+    directory=Path("D:/pictures"),
     monitors=(monitor("AW3225QF", True), monitor("PLX2783H", False)),
     current=Path("D:/pictures/a & b.jpg"),
     favourite=True,
 )
 STRIP = PlaylistView(
+    id="strip-id",
     name="strip",
+    directory=Path("D:/strip"),
     monitors=(monitor("ZeroMOD", None),),
     current=None,
     favourite=False,
@@ -53,8 +60,8 @@ STRIP = PlaylistView(
 )
 
 
-def queued(command: str, target: str) -> Request:
-    return Request.model_validate({"command": command, "target": target})
+def queued(command: TargetCommand, target: str) -> Request | MarkRequest:
+    return target_request(command, target)
 
 
 class Actions:
@@ -64,7 +71,7 @@ class Actions:
         self.calls: list[object] = []
         self.autostart = False
 
-    def run(self, request: Request) -> None:
+    def run(self, request: Request | MarkRequest) -> None:
         self.calls.append(request)
 
     def open_image(self, image: Path) -> None:
@@ -236,7 +243,12 @@ def test_no_playlists_item_opens_settings(menu: QMenu) -> None:
 
 def test_long_names_are_elided_in_the_middle(menu: QMenu) -> None:
     long = PlaylistView(
-        name="p", monitors=(), current=Path("x" * 100 + ".png"), favourite=False
+        id="p",
+        name="p",
+        directory=Path("."),
+        monitors=(),
+        current=Path("x" * 100 + ".png"),
+        favourite=False,
     )
     fill(menu, Overview(playlists=(long,)), Actions())
     text = items(menu)[1].text()

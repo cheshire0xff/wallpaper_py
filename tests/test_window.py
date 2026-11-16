@@ -61,7 +61,7 @@ def fixture_window(
     qtbot.addWidget(window)
     answer(client, SettingsRequest, SettingsResult(settings=saved, revision=1))
     yield window
-    window.home.shutdown()
+    window.shutdown()
 
 
 # -- pages and the sidebar ---------------------------------------------------------
@@ -241,4 +241,4 @@ def test_tones_come_from_the_palette_and_follow_it(
     assert window.applied_tones() == light
     assert window.palette().color(QPalette.ColorRole.Window) == light.page
     window.grab()  # every page paints with the new tones
-    window.home.shutdown()
+    window.shutdown()

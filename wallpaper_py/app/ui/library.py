@@ -1,15 +1,24 @@
 """
 The Library page: what a playlist picks up, in numbers (the Overview tab)
-and, in later steps, as images (docs/plan.md, Phase 5;
-docs/design/library.png).
+and as images (All images; the other grid tabs come in later steps)
+(docs/plan.md, Phase 5; docs/design/library.png).
 
 The title, a playlist drop-down and the open tab's count, then the tabs.
-The drop-down picks the playlist for Overview (and later All images,
+The drop-down picks the playlist for Overview and All images (and later
 History and Upcoming); the playlist and the tab are remembered in
 `ui-state.json` (ui_state.py), never in the settings.
 
+All images is the playlist's folder in an `ImageGrid` (grid.py), listed
+off the UI thread (`FolderScan`) when the tab is shown and when the
+playlist or its folder changes. The page owns the grids' thumbnails
+(tiles.py): the `TileLoader` and the `Pregenerator`, which fills the disk
+cache while the window is open (the chosen playlist's folder first, then
+the others and the lists, as the overview names them); `shutdown()`
+stops their threads.
+
 Overview asks the app (`stats`) when it is shown, and again on
-`overview_changed` and on a `changed` of its playlist while it is: one
+`overview_changed`, `marks_changed` and a `changed` of its playlist
+while it is: one
 request at a time, asked again if more came meanwhile. *Rescan* asks with
 `rescan`; *Reset cycle…* asks first, then sends `reset_cycle`. Everything
 comes through `Client`; nothing is read here yet.
@@ -34,6 +43,7 @@ from PySide6.QtWidgets import (
 
 from ...core import paths
 from ...core.service import Change
+from ...core.thumbnail_cache import ThumbnailCache
 from ...protocol import (
     ErrorReply,
     Overview,
@@ -44,8 +54,11 @@ from ...protocol import (
 )
 from . import theme
 from .client import Client, ReplyTo
+from .grid import FolderScan, ImageGrid
 from .library_overview import OverviewTab, count
 from .settings_form import combo
+from .thumbnails import sharpest_ratio
+from .tiles import TILE, Pregenerator, Sources, TileLoader, tile_pixels
 from .ui_state import LibraryTab, load_ui_state, save_ui_state
 
 TABS: tuple[tuple[LibraryTab, str], ...] = (
@@ -88,6 +101,7 @@ class LibraryPage(QWidget):
         *,
         confirm: Confirm = confirm_reset,
         state_file: Path | None = None,
+        thumbnails: ThumbnailCache | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -101,6 +115,7 @@ class LibraryPage(QWidget):
         self._ask_again = False
         self._rescan = False  # the next stats request scans again
         self._resetting = False
+        self._grid_folder: Path | None = None  # All images shows its images
 
         self.playlist_combo = combo(self, "Playlist")
         self.playlist_combo.setFixedWidth(COMBO_WIDTH)
@@ -114,6 +129,18 @@ class LibraryPage(QWidget):
         self.tabs = theme.Tabs(self)
         self.stack = QStackedWidget(self)
         self.overview_tab = OverviewTab(self)
+        if thumbnails is None:
+            thumbnails = ThumbnailCache(
+                paths.thumbnail_dir(), tile_pixels(sharpest_ratio())
+            )
+        self.tiles = TileLoader(
+            thumbnails.thumbnail,
+            ratio=thumbnails.size[0] / TILE.width(),
+            parent=self,
+        )
+        self.pregenerator = Pregenerator(thumbnails, self.tiles.idle, parent=self)
+        self.folder_scan = FolderScan(self)
+        self.all_grid = ImageGrid(self.tiles, self)
         self._build()
 
         index = next(
@@ -125,8 +152,10 @@ class LibraryPage(QWidget):
         self.playlist_combo.currentIndexChanged.connect(self._playlist_chosen)
         self.overview_tab.rescan_requested.connect(self._rescan_clicked)
         self.overview_tab.reset_requested.connect(self._reset_clicked)
+        self.folder_scan.scanned.connect(self._folder_scanned)
         client.overview_changed.connect(self.show_overview)
         client.changed.connect(self._changed)
+        client.marks_changed.connect(self._marks_changed)
         client.failed.connect(self.show_error)
         if client.overview is not None:
             self.show_overview(client.overview)
@@ -137,7 +166,14 @@ class LibraryPage(QWidget):
         for _, label in TABS:
             self.tabs.add(label)
         self.stack.addWidget(theme.scrolling(self.overview_tab, self))
-        for _ in TABS[1:]:
+        grid_page = QWidget(self)
+        grid_layout = QVBoxLayout(grid_page)
+        grid_layout.setContentsMargins(
+            theme.PAGE_MARGIN, theme.space(2), theme.PAGE_MARGIN, 0
+        )
+        grid_layout.addWidget(self.all_grid)
+        self.stack.addWidget(grid_page)
+        for _ in TABS[2:]:
             later = theme.muted("This tab comes in a later version.", self)
             later.setAlignment(Qt.AlignmentFlag.AlignTop)
             later.setContentsMargins(theme.PAGE_MARGIN, theme.space(2), 0, 0)
@@ -176,12 +212,21 @@ class LibraryPage(QWidget):
         self.state = self.state.model_copy(update=changes)
         save_ui_state(self._state_file, self.state)
 
+    def directory(self) -> Path | None:
+        """The chosen playlist's folder, as the overview has it."""
+        chosen = self.playlist()
+        overview = self._overview
+        if chosen is None or overview is None:
+            return None
+        return next((p.directory for p in overview.playlists if p.name == chosen), None)
+
     @Slot(int)
     def _tab_chosen(self, index: int) -> None:
         self.stack.setCurrentIndex(index)
         self._remember(library_tab=self.tab())
         self._show_count()
         self._ask_stats()
+        self._list_folder()
 
     @Slot(int)
     def _playlist_chosen(self, index: int) -> None:
@@ -189,6 +234,8 @@ class LibraryPage(QWidget):
         self._remember(library_playlist=self.playlist())
         self._show_stats(None)
         self._ask_stats()
+        self._list_folder()
+        self._pregenerate()
 
     def _fill_playlists(self, names: list[str]) -> None:
         """
@@ -216,6 +263,13 @@ class LibraryPage(QWidget):
     def showEvent(self, event: QShowEvent) -> None:  # pylint: disable=invalid-name
         super().showEvent(event)
         self._ask_stats()
+        self._list_folder()
+
+    def shutdown(self) -> None:
+        """The window closes: stop the thumbnails' threads (waits for them)."""
+        self.pregenerator.close()
+        self.tiles.close()
+        self.folder_scan.close()
 
     # -- from the app ------------------------------------------------------------
 
@@ -229,11 +283,18 @@ class LibraryPage(QWidget):
                 None if overview.error else "No playlists yet: add one in Settings."
             )
         self._ask_stats()
+        if self.directory() not in (self._grid_folder, self.folder_scan.asked()):
+            self._list_folder()  # its folder changed
+        self._pregenerate()
 
     @Slot(object)
     def _changed(self, change: Change) -> None:
         if change.playlist == self.playlist():
             self._ask_stats()
+
+    @Slot()
+    def _marks_changed(self) -> None:
+        self._ask_stats()
 
     @Slot(str)
     def show_error(self, message: str) -> None:
@@ -242,6 +303,42 @@ class LibraryPage(QWidget):
     def _set_banner(self, text: str | None) -> None:
         self.banner.setText(text or "")
         self.banner.setVisible(bool(text))
+
+    # -- images ------------------------------------------------------------------
+
+    def _list_folder(self) -> None:
+        """All images, while shown: the chosen playlist's folder, listed again."""
+        folder = self.directory()
+        if folder != self._grid_folder:
+            self._grid_folder = None
+            self.all_grid.set_images(())
+        if folder is not None and self.isVisible() and self.tab() == "all":
+            self.folder_scan.scan(folder)
+
+    @Slot(object, object)
+    def _folder_scanned(self, folder: Path, images: list[Path]) -> None:
+        if folder == self.directory():
+            self._grid_folder = folder
+            self.all_grid.set_images(images)
+
+    def _pregenerate(self) -> None:
+        """
+        Thumbnails for every playlist's folder, the chosen one first, then
+        for the lists. Not while the app has an error: its overview names
+        no playlists then, and a pass over nothing would prune everything.
+        """
+        overview = self._overview
+        if overview is None or overview.error or not overview.playlists:
+            return
+        chosen = self.playlist()
+        playlists = sorted(overview.playlists, key=lambda p: p.name != chosen)
+        folders = tuple(dict.fromkeys(p.directory for p in playlists))
+        lists = tuple(
+            f
+            for f in (overview.favourites_file, overview.to_remove_file)
+            if f is not None
+        )
+        self.pregenerator.start(Sources(folders, lists))
 
     # -- stats -------------------------------------------------------------------
 

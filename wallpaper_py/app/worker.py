@@ -14,7 +14,8 @@ so that the monitors show the new settings before the reply.
 Nothing on this thread may block waiting for a client or spin a nested
 event loop. Events (a change, a new overview) go to the UI thread as
 signals and to socket subscribers (the UI process) as lines, both from
-here.
+here; so does `marks_changed` (only to subscribers), when the list files'
+mtime or size moved since the last tick or command.
 
 The service stops when it can't go on (a list file went bad, see
 `_failed`); each tick then tries to open it again, so it is back once the
@@ -52,6 +53,7 @@ from ..protocol import (
     CommandRequest,
     ErrorReply,
     Event,
+    MarksChangedEvent,
     Overview,
     OverviewChangedEvent,
     Reply,
@@ -95,6 +97,9 @@ class ServiceWorker(QObject):
         self._timer: QTimer | None = None
         self._server: CommandServer | None = None
         self._overview: Overview | None = None
+        # The list files as last published (_publish_lists). Kept while the
+        # service is down: a list fixed meanwhile is announced once it runs.
+        self._lists_stamp: tuple[object, ...] | None = None
 
     @Slot()
     def start(self) -> None:
@@ -119,6 +124,10 @@ class ServiceWorker(QObject):
 
     @Slot()
     def stop(self) -> None:
+        """
+        At shutdown: the timer, then the socket (ending every subscription,
+        so the UI process quits too), the service, COM; then the thread.
+        """
         if self._timer is not None:
             self._timer.stop()
         if self._server is not None:
@@ -156,7 +165,7 @@ class ServiceWorker(QObject):
                 reply, change = self._failed(f"Command {request.command}", err), None
             if change is not None:
                 self._announce(change)
-        if request.command not in ("status", "stats", "settings"):  # read only
+        if request.command not in ("status", "upcoming", "stats", "settings"):
             target = request.target if isinstance(request, TargetRequest) else None
             log.info("%s %s: %r", request.command, target or "", reply)
         if render:
@@ -255,7 +264,11 @@ class ServiceWorker(QObject):
         self._session.close()
 
     def _publish(self) -> None:
-        """Emit the overview if it changed (the tray redraws its menu)."""
+        """
+        Emit the overview if it changed (the tray redraws its menu), and
+        tell subscribers if the lists changed.
+        """
+        self._publish_lists()
         current: Overview | None = None
         if self._service is not None:
             try:
@@ -270,6 +283,15 @@ class ServiceWorker(QObject):
             self._overview = current
             self.overview_changed.emit(current)
             self._broadcast(OverviewChangedEvent(overview=current))
+
+    def _publish_lists(self) -> None:
+        """`marks_changed` if a list file changed: a command, an edit by hand."""
+        if self._service is None:
+            return
+        stamp = self._service.lists_stamp()
+        if stamp != self._lists_stamp:
+            self._lists_stamp = stamp
+            self._broadcast(MarksChangedEvent())
 
 
 class ServiceHost(QObject):

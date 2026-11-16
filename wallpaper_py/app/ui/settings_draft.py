@@ -638,7 +638,9 @@ def drawing(
     names = {m.id: m.name for m in listed}
     playlists = tuple(
         PlaylistView(
+            id=playlist.id,
             name=playlist.name.strip() or "(no name)",
+            directory=_path(playlist.directory),
             monitors=tuple(
                 MonitorView(id=m, name=names.get(m, str(m)), attached=m in names)
                 for m in draft.members(playlist.id)

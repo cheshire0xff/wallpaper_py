@@ -40,7 +40,6 @@ from PySide6.QtWidgets import (
 from shiboken6 import Shiboken
 
 from ...protocol import (
-    Command,
     ErrorReply,
     MonitorView,
     Overview,
@@ -51,6 +50,8 @@ from ...protocol import (
     Reply,
     Request,
     StatusResult,
+    TargetCommand,
+    target_request,
 )
 from . import theme
 from .arrangement import MonitorsView
@@ -433,7 +434,7 @@ class PlaylistRow(QWidget):
 
     # -- buttons -----------------------------------------------------------------
 
-    def _send(self, command: Command) -> None:
+    def _send(self, command: TargetCommand) -> None:
         self.requested.emit(self._view.name, command)
 
     @Slot()
@@ -665,7 +666,7 @@ class HomePage(QWidget):
         row = self.rows.get(playlist)
         if row is not None:
             row.show_message(None)
-        request = Request(command=cast(Command, command), target=playlist)
+        request = target_request(cast(TargetCommand, command), playlist)
         self._client.run(request, _ReplyTo(self, playlist))
 
     # -- thumbnails --------------------------------------------------------------

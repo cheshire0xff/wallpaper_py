@@ -3,10 +3,11 @@ The app's socket protocol as pydantic models: what goes over the wire, and
 nothing else (no logic, no Qt). See docs/protocol.md.
 
 - In: an `Envelope` holding a `Request` (a playlist command), a
-  `PickRequest` (`pick`, which also carries an image), a `StatsRequest` /
-  `ResetCycleRequest` (count a library / start its shuffle cycle over), a
-  `SettingsRequest` / `SaveSettingsRequest` (read / write the settings) or
-  `Subscribe`.
+  `MarkRequest` (put an image on a list or take it off), a `PickRequest`
+  (`pick`, which also carries an image), an `UpcomingRequest` (the images
+  to come), a `StatsRequest` / `ResetCycleRequest` (count a library /
+  start its shuffle cycle over), a `SettingsRequest` /
+  `SaveSettingsRequest` (read / write the settings) or `Subscribe`.
 - Out: a `Reply`, which is data only: one result model per command, tagged
   on `command`, or an `ErrorReply`. The CLI formats its text from these;
   the tray and the UI process show them.
@@ -31,25 +32,41 @@ from pydantic import (
     ConfigDict,
     Field,
     StrictBool,
+    StrictInt,
     TypeAdapter,
     field_validator,
+    model_validator,
 )
 
 from .core.model import Look, MonitorId
 from .core.service import Change, ListStats, PlaylistStats
-from .core.settings import Order, Settings
+from .core.settings import Order, PlaylistId, Settings
 
 PROTOCOL = 3
 
 # The commands a plain `Request` carries.
-Command = Literal["status", "next", "prev", "fav", "unfav", "remove", "hold", "resume"]
-# Of those, the ones that act on a target (playlist or monitor): all but status.
-TARGET_COMMANDS: tuple[Command, ...] = get_args(Command)[1:]
+Command = Literal["status", "next", "prev", "hold", "resume"]
+# The commands a `MarkRequest` carries: an image on a list, or off it.
+MarkCommand = Literal["fav", "unfav", "remove", "unremove"]
+MARK_COMMANDS: tuple[MarkCommand, ...] = get_args(MarkCommand)
+# The commands on a playlist's state or its current image (the tray's and
+# Home's buttons): a `Request`, or a `MarkRequest` with only a target
+# (`target_request`).
+TargetCommand = Literal["next", "prev", "fav", "unfav", "remove", "hold", "resume"]
+TARGET_COMMANDS: tuple[TargetCommand, ...] = get_args(TargetCommand)
 # Every command: also these, which have request models of their own.
 AnyCommand = Literal[
-    Command, "pick", "stats", "reset_cycle", "settings", "save_settings"
+    Command,
+    MarkCommand,
+    "pick",
+    "upcoming",
+    "stats",
+    "reset_cycle",
+    "settings",
+    "save_settings",
 ]
 COMMANDS: tuple[AnyCommand, ...] = get_args(AnyCommand)
+MAX_UPCOMING = 1000  # images an `upcoming` request may ask for
 
 
 class Message(BaseModel):
@@ -74,19 +91,59 @@ class Request(Strict):
     target: str | None = None  # playlist name, or a monitor it drives
 
 
+class MarkRequest(Strict):
+    """
+    Put an image on a list (`fav`, `remove`) or take it off (`unfav`,
+    `unremove`). Without `image`: the target playlist's current image, and
+    `remove` then shows the next one. With it: that image (any path, no
+    target); `remove` then only lists it (a playlist showing it moves on at
+    its next tick). `unremove` needs an image: the current one is never
+    listed for long.
+    """
+
+    command: MarkCommand
+    target: str | None = None  # playlist name, or a monitor it drives
+    image: Path | None = None  # absolute: the app doesn't know the client's directory
+
+    @field_validator("image")
+    @classmethod
+    def _absolute(cls, image: Path | None) -> Path | None:
+        return None if image is None else _absolute(image)
+
+    @model_validator(mode="after")
+    def _image_or_target(self) -> MarkRequest:
+        if self.image is not None and self.target is not None:
+            raise ValueError("name an image or a target, not both")
+        if self.command == "unremove" and self.image is None:
+            raise ValueError("unremove needs an image")
+        return self
+
+
 class PickRequest(Strict):
     """Show a chosen image on a playlist now (from any directory)."""
 
     command: Literal["pick"] = "pick"
     target: str | None = None  # playlist name, or a monitor it drives
-    image: Path  # absolute: the app doesn't know the sender's directory
+    image: Path  # absolute: the app doesn't know the client's directory
 
     @field_validator("image")
     @classmethod
     def _absolute(cls, image: Path) -> Path:
-        if not image.is_absolute():
-            raise ValueError(f"image must be an absolute path, not {image}")
-        return image
+        return _absolute(image)
+
+
+def _absolute(image: Path) -> Path:
+    if not image.is_absolute():
+        raise ValueError(f"image must be an absolute path, not {image}")
+    return image
+
+
+class UpcomingRequest(Strict):
+    """The images a playlist shows next, in order."""
+
+    command: Literal["upcoming"] = "upcoming"
+    target: str | None = None  # playlist name, or a monitor it drives
+    limit: Annotated[StrictInt, Field(ge=1, le=MAX_UPCOMING)] = 100
 
 
 class StatsRequest(Strict):
@@ -125,14 +182,32 @@ class SaveSettingsRequest(Strict):
 # Every request answered with one reply (what `commands.execute` takes).
 CommandRequest = (
     Request
+    | MarkRequest
     | PickRequest
+    | UpcomingRequest
     | StatsRequest
     | ResetCycleRequest
     | SettingsRequest
     | SaveSettingsRequest
 )
 # Of those, the ones that name a target (playlist or monitor).
-TargetRequest = Request | PickRequest | StatsRequest | ResetCycleRequest
+TargetRequest = (
+    Request
+    | MarkRequest
+    | PickRequest
+    | UpcomingRequest
+    | StatsRequest
+    | ResetCycleRequest
+)
+
+
+def target_request(command: TargetCommand, target: str | None) -> Request | MarkRequest:
+    """A command on a playlist's state or its current image."""
+    match command:
+        case "fav" | "unfav" | "remove":
+            return MarkRequest(command=command, target=target)
+        case _:
+            return Request(command=command, target=target)
 
 
 class Subscribe(Strict):
@@ -215,7 +290,9 @@ class DesktopMonitor(Message):
 
 
 class PlaylistView(Message):
+    id: PlaylistId
     name: str
+    directory: Path
     monitors: tuple[MonitorView, ...]
     current: Path | None
     # The current image is in favourites. None: favourites.txt has not
@@ -237,10 +314,13 @@ class Overview(Message):
     monitors: tuple[DesktopMonitor, ...] = ()  # every listed monitor
     paused: str | None = None  # why rotation is paused, if it is
     error: str | None = None  # the service isn't running (e.g. a bad list file)
+    # favourites.txt and to-remove.txt as the settings name them; None
+    # while the service isn't running.
+    favourites_file: Path | None = None
+    to_remove_file: Path | None = None
 
 
 class PlaylistDetails(PlaylistView):
-    directory: Path
     order: Order
     interval: float | None  # seconds of active time; None: manual
     # Of active time; None: manual. While held, what is left once resumed.
@@ -271,19 +351,29 @@ class PrevResult(Message):
 
 
 class MarkResult(Message):
-    command: Literal["fav", "unfav"]
-    playlist: str
+    command: Literal["fav", "unfav", "unremove"]
+    playlist: str | None  # None: the request named an image
     image: Path
-    list_file: Path  # favourites.txt
-    changed: bool  # False: it already was (fav) / wasn't (unfav) a favourite
+    list_file: Path  # favourites.txt; to-remove.txt for unremove
+    # False: it already was (fav) / wasn't (unfav, unremove) on the list.
+    changed: bool
 
 
 class RemoveResult(Message):
     command: Literal["remove"] = "remove"
-    playlist: str
+    playlist: str | None  # None: the request named an image
     image: Path  # listed for removal (never deleted)
     list_file: Path  # to-remove.txt
-    change: Change | None  # None: no monitor attached, it moves on later
+    changed: bool  # False: it was listed already
+    # The next image shown. None: no monitor attached (it moves on later),
+    # or the request named an image (only listed).
+    change: Change | None
+
+
+class UpcomingResult(Message):
+    command: Literal["upcoming"] = "upcoming"
+    playlist: str
+    images: tuple[Path, ...]  # in order: the next one first
 
 
 class PickResult(Message):
@@ -345,6 +435,7 @@ Result = Annotated[
     | MarkResult
     | RemoveResult
     | PickResult
+    | UpcomingResult
     | HoldResult
     | ResumeResult
     | StatsResult
@@ -360,7 +451,7 @@ ErrorKind = Literal[
     "unknown_target",  # no such playlist or monitor, or several and none named
     "not_attached",  # none of the playlist's monitors is attached
     "no_images",  # nothing to show in the playlist's directory
-    "nothing_shown",  # no current image yet (fav / unfav / remove)
+    "nothing_shown",  # no current image yet (fav / unfav / remove, no image named)
     "bad_image",  # pick: the image is missing or not one Pillow can open
     "invalid_settings",  # save_settings: a value can't be used; nothing saved
     "stale_settings",  # save_settings: changed since they were read; nothing saved
@@ -404,7 +495,19 @@ class OverviewChangedEvent(Message):
     overview: Overview
 
 
-Event = Annotated[ChangedEvent | OverviewChangedEvent, Field(discriminator="event")]
+class MarksChangedEvent(Message):
+    """
+    Favourites or to-remove changed (by a command, by hand, or the settings
+    name other files): read them again.
+    """
+
+    event: Literal["marks_changed"] = "marks_changed"
+
+
+Event = Annotated[
+    ChangedEvent | OverviewChangedEvent | MarksChangedEvent,
+    Field(discriminator="event"),
+]
 
 
 # -- JSON Schema ---------------------------------------------------------------

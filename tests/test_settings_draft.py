@@ -230,7 +230,16 @@ def test_current_images_keep_a_folder_written_another_way(
     saved: Settings, tmp_path: Path
 ) -> None:
     image = tmp_path / "walls" / "one.jpg"
-    shown = [PlaylistView(name="walls", monitors=(), current=image, favourite=False)]
+    shown = [
+        PlaylistView(
+            id="w",
+            name="walls",
+            directory=image.parent,
+            monitors=(),
+            current=image,
+            favourite=False,
+        )
+    ]
     draft = Draft.of(saved)
     assert current_images(saved, draft, shown) == {"w": image}
     same = replace(draft.playlists[0], directory=f" {tmp_path / 'walls' / '.'} ")

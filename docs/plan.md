@@ -142,8 +142,7 @@ Lists (shared by all playlists)
 - CLI: `wallpaper stats [target] [--rescan]`, `wallpaper reset-cycle
   target` (asks first, unless `--yes`), `wallpaper upcoming [target]
   [-n N]`, and `--image PATH` on `fav` / `unfav` / `remove` / `unremove`.
-- docs/protocol.md and docs/app-wiring.md get the new commands, the
-  event and its connections.
+- docs/protocol.md gets the new commands and the event.
 
 ### What the UI process reads itself
 
@@ -171,7 +170,8 @@ images), built from the Phase 0 spike (`spikes/grid_prototype.py`):
 
 - `QListView` in icon mode over a virtual model, uniform item sizes:
   only visible tiles are painted or asked for. Tiles have a fixed size
-  (16:9, the image fitted on the panel tone); the number of columns
+  (16:9, the image filling it, cropped to the middle as Fill does: every
+  tile alike, as in the phone app); the number of columns
   follows the width.
 - Decoded in worker threads with Pillow (draft mode for JPEGs), newest
   request first (LIFO); a request for a tile scrolled out of view is
@@ -296,12 +296,43 @@ no stylesheet.
    can't paint outside a widget), and a switch keeps 4 px around its
    pill for it; *Changes* (Every / Manually) stays a drop-down beside the
    interval field. Mode's icons are our own, drawn like Lucide's.
-3. **Data for the grids**: marks by `image`, `unremove`,
+3. **Data for the grids** (done): marks by `image`, `unremove`,
    `marks_changed`, `upcoming` (and their CLI); the UI-side scan with
-   "added" times; the read-only history reader.
-4. **Thumbnails**: the grid pipeline, the disk cache, pre-generation and
-   pruning; tested offscreen with generated images
-   (`tests/generate_test_images.py`).
+   "added" times (`library.scan_files`); the read-only history reader
+   (`store.read_history`). Decided while building: the list commands are
+   a request model of their own (`MarkRequest`), an `image` or a `target`,
+   never both; `unremove` needs an `image` (the current image is never
+   listed for long); `remove` replies `changed` too; the tray and Home
+   build their buttons' requests with `protocol.target_request`.
+   `marks_changed` carries no fields and goes only to subscribers; the
+   Overview tab asks for its numbers again on it. `scan_files` reads the
+   times from the directory listing (free on Windows, an `lstat` each on
+   Linux) and shares its walk with `scan`. The history reader takes a
+   playlist's id: step 5 gets it from the `settings` command, or adds
+   `id` to the overview's playlists.
+4. **Thumbnails** (done): the grid pipeline, the disk cache,
+   pre-generation and pruning; tested offscreen with generated images
+   (`tests/generate_test_images.py`, `generate_library`). Decided while
+   building: All images already shows its folder in the grid (name order,
+   no toolbar, count or badges yet), so the pipeline can be tried by hand.
+   Tiles are 192 x 108 with 8 px between them; a thumbnail is the image
+   filling the tile (cropped to the middle; chosen by the user over
+   fitting, as the phone app does: every tile alike) at the sharpest
+   screen's scale, a JPEG at quality 88 (`core.thumbnail_cache`,
+   `imaging.load_filled`); the style is part of the file's name.
+   Four tile threads; the grid tells the loader the rows on screen and one
+   more above and below, found by bisection over the item rectangles. The
+   overview now carries each playlist's `id` and `directory` and the two
+   list files, which the pre-generation follows (and step 5's History
+   can use). A pass prunes only after reading every folder and list (a
+   folder not mounted keeps its thumbnails), never from an overview with
+   an error, and keeps files written since it started. Threads are
+   `QRunnable`s on each object's own `QThreadPool` (the pre-generation's:
+   one thread, low priority), as `ThumbnailLoader`'s, all through one
+   helper (`Jobs`: a pool, results on the UI thread); the Qt-rules test
+   now allows an item model's `rowCount` / `data` and a delegate's
+   `paint` / `sizeHint` (AGENTS.md rule 3). The window stops the threads
+   when it closes, and on `aboutToQuit` when the app quits with it open.
 5. **Grid tabs**: the five tabs, toolbars, badges, counts, fast-scroll;
    Overview becomes Stats, last.
 6. **Enlarged view**.

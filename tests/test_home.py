@@ -47,6 +47,7 @@ from wallpaper_py.protocol import (
     DesktopMonitor,
     ErrorReply,
     Geometry,
+    MarkRequest,
     MarkResult,
     MonitorView,
     NextResult,
@@ -80,7 +81,9 @@ TV = DesktopMonitor(
 )
 
 KONACHAN = PlaylistView(
+    id="konachan-id",
     name="konachan",
+    directory=Path("/p/konachan"),
     monitors=(
         MonitorView(id=MonitorId("aw"), name="AW3225QF", attached=True),
         MonitorView(id=MonitorId("plx"), name="PLX2783H", attached=True),
@@ -89,7 +92,9 @@ KONACHAN = PlaylistView(
     favourite=False,
 )
 FANTASY = PlaylistView(
+    id="fantasy-id",
     name="fantasy",
+    directory=Path("/p/fantasy"),
     monitors=(MonitorView(id=MonitorId("zero"), name="ZeroMOD", attached=False),),
     current=Path("/p/fantasy/7.png"),
     favourite=False,
@@ -104,7 +109,6 @@ THUMBNAIL = Thumbnail(INFO, None)
 def details(view: PlaylistView, next_in: float | None = 754.0) -> PlaylistDetails:
     return PlaylistDetails(
         **dict(view),
-        directory=Path("/p") / view.name,
         order=Order.SHUFFLE,
         interval=None if view.manual else 1800.0,
         next_in_seconds=None if view.manual else next_in,
@@ -512,10 +516,10 @@ def test_buttons_send_commands(page: HomePage, client: FakeClient) -> None:
     assert client.commands() == [
         Request(command="prev", target="konachan"),
         Request(command="next", target="konachan"),
-        Request(command="fav", target="konachan"),
-        Request(command="remove", target="konachan"),
+        MarkRequest(command="fav", target="konachan"),
+        MarkRequest(command="remove", target="konachan"),
         Request(command="hold", target="konachan"),
-        Request(command="unfav", target="other"),  # it is a favourite
+        MarkRequest(command="unfav", target="other"),  # it is a favourite
         Request(command="resume", target="other"),  # it is held
     ]
     assert row.prev_button.toolTip() == "Previous"
@@ -531,7 +535,7 @@ def test_toggles_follow_the_overview_not_the_click(
     row.fav_button.click()
     row.hold_button.click()
     request, on_reply = client.calls[-2]
-    assert request == Request(command="fav", target="konachan")
+    assert request == MarkRequest(command="fav", target="konachan")
     on_reply(
         MarkResult(
             command="fav",

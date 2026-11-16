@@ -3,8 +3,8 @@ The playlist service: rotates wallpapers, walks history, marks images.
 
 Driven by `tick()` (every few seconds, from the app's timer) and by user
 commands (`next`, `previous`, `pick`, `favourite`, `remove`, `hold`,
-`resume`, `reset_cycle`). The backend, presence hook, clock and random generator are
-injected, so all of it is tested with fakes.
+`resume`, `reset_cycle`, ...). The backend, presence hook, clock and
+random generator are injected, so all of it is tested with fakes.
 
 Timing: each playlist counts *active* seconds since its last change, i.e.
 time while it has an attached monitor, the session is not locked or idle,
@@ -542,29 +542,38 @@ class PlaylistService:
         entry = self._current(playlist)
         return entry.path if entry else None
 
-    def favourite(self, playlist: PlaylistSettings) -> tuple[Path, bool]:
-        """Mark the current image; returns it and False if already marked."""
-        image = self._require_current(playlist)
-        return image, self.favourites.add(image)
+    def require_current(self, playlist: PlaylistSettings) -> Path:
+        """Raises NothingShownError if the playlist has not shown one yet."""
+        image = self.current(playlist)
+        if image is None:
+            raise NothingShownError(f"{playlist.name} has not shown an image yet")
+        return image
 
-    def unfavourite(self, playlist: PlaylistSettings) -> tuple[Path, bool]:
-        """Unmark the current image; returns it and False if it wasn't marked."""
-        image = self._require_current(playlist)
-        return image, self.favourites.discard(image)
+    # Favourites and to-remove are `self.favourites` / `self.to_remove`; an
+    # image listed to remove by any other way than `remove` (a command naming
+    # it, an edit by hand) is replaced at the next tick.
 
-    def remove(self, playlist: PlaylistSettings) -> tuple[Path, Change | None]:
+    def remove(self, playlist: PlaylistSettings) -> tuple[Path, bool, Change | None]:
         """
-        Put the current image on the to-remove list (it is only listed and
-        hidden from rotation, never deleted) and move on to the next one.
-        The change is None if no monitor is attached; the next tick then
-        moves on.
+        List the current image for removal (only listed and hidden from
+        rotation, never deleted) and move on to the next one now. Returns the
+        image, whether it was newly listed, and the change: None if no
+        monitor is attached (the next tick then moves on).
         """
-        image = self._require_current(playlist)
-        self.to_remove.add(image)
+        image = self.require_current(playlist)
+        listed = self.to_remove.add(image)
         try:
-            return image, self.next(playlist)
+            return image, listed, self.next(playlist)
         except MonitorNotAttachedError:
-            return image, None
+            return image, listed, None
+
+    def lists_stamp(self) -> tuple[object, ...]:
+        """Changes with the list files: their paths, mtimes and sizes."""
+        return tuple(
+            part
+            for marks in (self.favourites, self.to_remove)
+            for part in (marks.file, marks.stamp())
+        )
 
     def reset_cycle(self, playlist: PlaylistSettings) -> int:
         """
@@ -639,6 +648,18 @@ class PlaylistService:
         """
         return _list_stats(self.favourites), _list_stats(self.to_remove)
 
+    def upcoming(self, playlist: PlaylistSettings, limit: int) -> list[Path]:
+        """
+        The next `limit` images in the order they come: forward in the
+        history first (after `previous`), then the rest of the shuffle cycle
+        (not the next one: it isn't shuffled yet) or the sorted walk. Images
+        listed to remove, gone or unreadable are left out.
+
+        Raises:
+            MarkFileBusyError: the to-remove list has never been read.
+        """
+        return self._upcoming(playlist, self._removed(), limit)
+
     def monitors(self) -> list[Monitor]:
         """Every monitor the backend lists, detached ones included."""
         return self._backend.monitors()
@@ -677,12 +698,6 @@ class PlaylistService:
     def _current(self, playlist: PlaylistSettings) -> HistoryEntry | None:
         cursor = self._store.playlist_state(playlist.id).cursor
         return None if cursor is None else self._store.history_entry(cursor)
-
-    def _require_current(self, playlist: PlaylistSettings) -> Path:
-        image = self.current(playlist)
-        if image is None:
-            raise NothingShownError(f"{playlist.name} has not shown an image yet")
-        return image
 
     def _removed(self) -> set[str]:
         """

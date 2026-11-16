@@ -35,17 +35,23 @@ release it may still change in place.)
 ```
 
 - `v`: the protocol version; another one is refused (`protocol`).
-- `request.command`: `status`, `next`, `prev`, `fav`, `unfav`, `remove`,
-  `hold`, `resume`, `pick`, `stats`, `reset_cycle`, `settings`,
-  `save_settings`, or `subscribe`.
-- `request.target` (the playlist commands: `next` to `resume`, `pick`,
-  `reset_cycle`, and `stats`): a playlist name, or a monitor the playlist
-  drives (a name, a unique part of one, or the full id). It may be left
-  out when there is only one playlist; for `stats`, leaving it out means
-  every playlist.
-- `request.image` (`pick` only, and required there): the image to show, an
-  absolute path (the app doesn't know the client's directory). It may be in
-  any directory.
+- `request.command`: `status`, `next`, `prev`, `hold`, `resume`, `fav`,
+  `unfav`, `remove`, `unremove`, `pick`, `upcoming`, `stats`,
+  `reset_cycle`, `settings`, `save_settings`, or `subscribe`.
+- `request.target` (every command but `status`, `unremove`, `settings` and
+  `save_settings`): a playlist name, or a monitor the playlist drives (a
+  name, a unique part of one, or the full id). It may be left out when
+  there is only one playlist; for `stats`, leaving it out means every
+  playlist.
+- `request.image`, an absolute path (the app doesn't know the client's
+  directory), in any directory:
+  - `pick` (required): the image to show.
+  - `fav`, `unfav`, `remove`, `unremove` (required for `unremove`): the
+    image to put on the list or take off it, instead of the target
+    playlist's current one. It need not exist (a list may name a file
+    that is gone). Send an `image` or a `target`, not both.
+- `request.limit` (`upcoming` only, 1 to 1000, default 100): how many
+  images.
 
 ```json
 {"v": 3, "request": {"command": "pick", "target": "fantasy", "image": "D:\\pictures\\other\\7.png"}}
@@ -69,12 +75,13 @@ get the image when they come back).
 
 | Command | Reply fields |
 |---|---|
-| `status` | `playlists` (each: `name`, `monitors`, `current`, `favourite`, `held`, `manual`, `directory`, `order`, `interval` in seconds (null: manual), `next_in_seconds` of active time (null: manual; while held, what is left once resumed), `upcoming` paths), `paused` (why, or null), `warnings` (settings that are valid but probably a mistake) |
+| `status` | `playlists` (each: `id`, `name`, `monitors`, `current`, `favourite`, `held`, `manual`, `directory`, `order`, `interval` in seconds (null: manual), `next_in_seconds` of active time (null: manual; while held, what is left once resumed), `upcoming` paths), `paused` (why, or null), `warnings` (settings that are valid but probably a mistake) |
 | `next` | `playlist`, `change` |
 | `prev` | `playlist`, `change` (null: nothing earlier in the history) |
 | `pick` | `playlist`, `change` (reason `picked`) |
-| `fav` / `unfav` | `playlist`, `image`, `list_file` (favourites.txt), `changed` (false: it already was / wasn't a favourite) |
-| `remove` | `playlist`, `image` (listed for removal, never deleted), `list_file` (to-remove.txt), `change` (null: no monitor attached; it moves on later) |
+| `fav` / `unfav` / `unremove` | `playlist` (the one whose current image it is; null when the request named an `image`), `image`, `list_file` (favourites.txt; to-remove.txt for `unremove`), `changed` (false: it already was / wasn't on the list) |
+| `remove` | `playlist` (as for `fav`), `image` (listed for removal, never deleted), `list_file` (to-remove.txt), `changed` (false: it was listed already), `change` (the next image shown; null: no monitor attached, it moves on later, or the request named an `image`) |
+| `upcoming` | `playlist`, `images` (paths, the next one first) |
 | `hold` / `resume` | `playlist`, `held` (now), `changed` (false: it already was / wasn't held) |
 | `stats` | `playlists` (each: `name`, `directory`, `order`, `scan_age` in seconds, `images`, `seen`, `unseen`, `skipped`, `favourites_here`, `to_remove_here`), `favourites` and `to_remove` (each: `file`, `listed`, `available`) |
 | `reset_cycle` | `playlist`, `unseen` (now: every image but the skipped ones) |
@@ -87,6 +94,16 @@ shown before, and the interval starts again. A held playlist doesn't rotate
 by itself, but `next`, `prev` and `pick` still work; a manual one
 (no interval: `interval` null) never rotates, so `hold` / `resume`
 on it are an error (`failed`).
+
+`remove` of a playlist's current image shows the next one at once. With
+an `image` it only lists it, as an edit by hand would: a playlist showing
+it moves on at its next tick (within 5 s).
+
+`upcoming` lists the images in the order they come: forward in the history
+first (after `prev`), then the rest of the shuffle cycle (not the next
+cycle: it isn't shuffled yet) or the sorted walk, which wraps around.
+Images listed to remove, gone or unreadable are left out. While
+to-remove.txt has never been read it answers `failed`.
 
 `stats` counts what each playlist picks up, from the app's scan of its
 folder, its shuffle deck and the lists; it changes nothing. `images` =
@@ -180,7 +197,7 @@ whether it is attached (`null`: not listed right now), and its look.
 | `unknown_target` | no such playlist or monitor, the monitor is in no playlist, or several playlists and none named |
 | `not_attached` | none of the playlist's monitors is attached |
 | `no_images` | nothing to show in the playlist's directory |
-| `nothing_shown` | the playlist has no current image yet (`fav`, `unfav`, `remove`) |
+| `nothing_shown` | the playlist has no current image yet (`fav`, `unfav`, `remove` without an `image`) |
 | `bad_image` | `pick`: the image is missing, not a file, or not one Pillow can open |
 | `invalid_settings` | `save_settings`: a value can't be used; nothing was saved |
 | `stale_settings` | `save_settings`: the settings changed since they were read; nothing was saved |
@@ -203,11 +220,12 @@ error line instead, then the connection closes.
 
 | Event | Fields | When |
 |---|---|---|
-| `overview_changed` | `overview`: `playlists` (each: `name`, `monitors`, `current`, `favourite` (null: favourites.txt can't be read yet, so it isn't known), `held`, `manual`), `monitors` (every monitor the desktop lists, also those in no playlist: `id`, `name`, `geometry`, `look`), `paused`, `error` (the app is up but its service isn't: e.g. a list file it can't use) | on subscribing, then whenever it changes (also after `hold` / `resume` and `save_settings`, and when a monitor is switched off or moves) |
+| `overview_changed` | `overview`: `playlists` (each: `id`, `name`, `directory`, `monitors`, `current`, `favourite` (null: favourites.txt can't be read yet, so it isn't known), `held`, `manual`), `monitors` (every monitor the desktop lists, also those in no playlist: `id`, `name`, `geometry`, `look`), `paused`, `error` (the app is up but its service isn't: e.g. a list file it can't use), `favourites_file` and `to_remove_file` (the lists' paths; null while `error`) | on subscribing, then whenever it changes (also after `hold` / `resume` and `save_settings`, and when a monitor is switched off or moves) |
 | `changed` | `change` | a wallpaper changed, by a tick or a command |
+| `marks_changed` | none | favourites.txt or to-remove.txt changed (their mtime or size), by a command, by hand (seen on the next tick, within 5 s), a settings save naming other files, or the service running again after a list it couldn't use was fixed: read them again |
 
 ```json
-{"event": "overview_changed", "overview": {"playlists": [{"name": "fantasy", "monitors": [{"id": "\\\\?\\DISPLAY#AUS27B1#...", "name": "ZeroMOD", "attached": false}], "current": "D:\\pictures\\Fantasy\\7.png", "favourite": false, "held": false, "manual": true}], "monitors": [{"id": "\\\\?\\DISPLAY#DELA246#...", "name": "AW3225QF", "geometry": {"x": 0, "y": 0, "width": 3840, "height": 2160}}, {"id": "\\\\?\\DISPLAY#AUS27B1#...", "name": "ZeroMOD", "geometry": null}], "paused": null, "error": null}}
+{"event": "overview_changed", "overview": {"playlists": [{"id": "9b1e4f2a...", "name": "fantasy", "directory": "D:\\pictures\\Fantasy", "monitors": [{"id": "\\\\?\\DISPLAY#AUS27B1#...", "name": "ZeroMOD", "attached": false}], "current": "D:\\pictures\\Fantasy\\7.png", "favourite": false, "held": false, "manual": true}], "monitors": [{"id": "\\\\?\\DISPLAY#DELA246#...", "name": "AW3225QF", "geometry": {"x": 0, "y": 0, "width": 3840, "height": 2160}}, {"id": "\\\\?\\DISPLAY#AUS27B1#...", "name": "ZeroMOD", "geometry": null}], "paused": null, "error": null, "favourites_file": "C:\\Users\\me\\AppData\\Local\\wallpaper_py\\favourites.txt", "to_remove_file": "C:\\Users\\me\\AppData\\Local\\wallpaper_py\\to-remove.txt"}}
 {"event": "changed", "change": {"playlist": "konachan", "image": "D:\\pictures\\KONACHAN\\123.jpg", "reason": "next", "shown_on": ["AW3225QF", "PLX2783H"], "missed": []}}
 ```
 
@@ -223,5 +241,8 @@ Read the events promptly: the app drops a subscriber that falls more than
 4 MB behind. Send commands on separate connections.
 
 Not on the socket (by design): thumbnails and image data (read the files by
-path), and history or folder listings (read the state database read-only,
-scan the folder; see [plan.md](plan.md), Phase 5). Counts are (`stats`).
+path), the lists (read favourites.txt / to-remove.txt, again on
+`marks_changed`), and history or folder listings (read the state database
+read-only, as `core.store.read_history` does; scan the folder, as
+`core.library.scan_files` does). Counts are (`stats`), and so is the order
+to come (`upcoming`): it depends on the shuffle deck and the history.

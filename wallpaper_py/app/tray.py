@@ -49,13 +49,15 @@ from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
 from ..core.autostart import Autostart
 from ..protocol import (
-    Command,
     ErrorReply,
+    MarkRequest,
     MonitorView,
     Overview,
     PlaylistView,
     Reply,
     Request,
+    TargetCommand,
+    target_request,
 )
 from .icon import IconState, app_icon
 from .ui.launcher import PageName
@@ -69,10 +71,14 @@ NO_PLAYLISTS_ITEM = "No playlists yet: add one…"
 NO_PLAYLISTS_NOTE = "No playlists yet. Click here to add one in Settings."
 
 
+# What a playlist's items send (protocol.target_request).
+PlaylistRequest = Request | MarkRequest
+
+
 class MenuActions(Protocol):
     """What the menu's items do."""
 
-    def run(self, request: Request) -> None: ...
+    def run(self, request: PlaylistRequest) -> None: ...
     def open_image(self, image: Path) -> None: ...
     def open_window(self, page: PageName) -> None: ...
     def set_autostart(self, enabled: bool) -> None: ...
@@ -89,14 +95,14 @@ class AppItem(Enum):
 # What an item asks for, stored on its QAction: a command, an image to
 # open, a page to open the window on, or an app item. Items without data do
 # nothing.
-MenuItem = Request | Path | PageName | AppItem
+MenuItem = PlaylistRequest | Path | PageName | AppItem
 
 
 def activate(action: QAction, actions: MenuActions) -> None:
     """Do what a triggered item asks for."""
     item: MenuItem | None = action.data()
     match item:
-        case Request():
+        case Request() | MarkRequest():
             actions.run(item)
         case Path():
             actions.open_image(item)
@@ -147,9 +153,8 @@ def fill_menu(menu: QMenu, overview: Overview | None, autostart: bool) -> QActio
 
 
 def _add_playlist(menu: QMenu, playlist: PlaylistView) -> None:
-    def run(text: str, command: Command) -> QAction:
-        request = Request(command=command, target=playlist.name)
-        return _add(menu, text, request)
+    def run(text: str, command: TargetCommand) -> QAction:
+        return _add(menu, text, target_request(command, playlist.name))
 
     monitors = " + ".join(_monitor_label(m) for m in playlist.monitors)
     header = menu.addAction(_label(f"{_playlist_label(playlist)} · {monitors}"))
@@ -295,7 +300,7 @@ class Tray(QObject):
 
     # -- MenuActions ---------------------------------------------------------
 
-    def run(self, request: Request) -> None:
+    def run(self, request: PlaylistRequest) -> None:
         self._host.submit(request, self._replied)
 
     def open_image(self, image: Path) -> None:

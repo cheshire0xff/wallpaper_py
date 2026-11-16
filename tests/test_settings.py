@@ -380,7 +380,12 @@ def test_the_previews_show_the_edit(
     Image.new("RGB", (900, 900), red).save(image)
     members = tuple(MonitorView(id=m.id, name=m.name, attached=True) for m in (AW, PLX))
     playlist = PlaylistView(
-        name="konachan", monitors=members, current=image, favourite=False
+        id="konachan-id",
+        name="konachan",
+        directory=image.parent,
+        monitors=members,
+        current=image,
+        favourite=False,
     )
     client.publish(Overview(playlists=(playlist,), monitors=LISTED))
     view = window.monitors_view
@@ -413,7 +418,12 @@ def show_square(client: FakeClient, tmp_path: Path, rgb: tuple[int, int, int]) -
     Image.new("RGB", (900, 900), rgb).save(image)
     members = tuple(MonitorView(id=m.id, name=m.name, attached=True) for m in (AW, PLX))
     playlist = PlaylistView(
-        name="konachan", monitors=members, current=image, favourite=False
+        id="konachan-id",
+        name="konachan",
+        directory=image.parent,
+        monitors=members,
+        current=image,
+        favourite=False,
     )
     client.publish(Overview(playlists=(playlist,), monitors=LISTED))
 
