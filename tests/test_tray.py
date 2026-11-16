@@ -151,11 +151,11 @@ def test_hold_toggle(menu: QMenu) -> None:
     hold = find(menu, "Hold")
     assert hold.isChecked() and hold.isEnabled()
     hold.trigger()
-    assert actions.calls == [queued("resume", "walls")]  # held: the toggle resumes
+    assert actions.calls == [queued("resume", "walls-id")]  # held: the toggle resumes
 
     fill(menu, Overview(playlists=(WALLS,)), actions)
     find(menu, "Hold").trigger()
-    assert actions.calls[-1] == queued("hold", "walls")
+    assert actions.calls[-1] == queued("hold", "walls-id")
 
 
 def test_items_queue_commands(menu: QMenu) -> None:
@@ -171,10 +171,10 @@ def test_items_queue_commands(menu: QMenu) -> None:
         find(menu, text).trigger()
     assert actions.calls == [
         WALLS.current,
-        queued("next", "walls"),
-        queued("prev", "walls"),
-        queued("unfav", "walls"),  # already a favourite: the toggle unmarks
-        queued("remove", "walls"),
+        queued("next", "walls-id"),
+        queued("prev", "walls-id"),
+        queued("unfav", "walls-id"),  # already a favourite: the toggle unmarks
+        queued("remove", "walls-id"),
     ]
 
 
@@ -185,7 +185,7 @@ def test_favourite_marks_when_not_marked(menu: QMenu) -> None:
     favourite = find(menu, "Favourite")
     assert not favourite.isChecked()
     favourite.trigger()
-    assert actions.calls == [queued("fav", "walls")]
+    assert actions.calls == [queued("fav", "walls-id")]
 
 
 def test_favourite_is_off_while_the_list_is_unknown(menu: QMenu) -> None:
@@ -360,7 +360,7 @@ def test_tray_notifies_failed_commands(
     tray = Tray(service_thread, FakeAutostart(), [], lambda: None, open_window=print)
     notes: list[str] = []
     monkeypatch.setattr(tray, "notify", notes.append)
-    tray.run(queued("next", "walls"))
+    tray.run(queued("next", "walls-id"))
     assert notes == ["None attached"]
 
 

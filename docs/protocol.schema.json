@@ -27,6 +27,10 @@
     },
     "Change": {
       "properties": {
+        "playlist_id": {
+          "title": "Playlist Id",
+          "type": "string"
+        },
         "playlist": {
           "title": "Playlist",
           "type": "string"
@@ -64,6 +68,7 @@
         }
       },
       "required": [
+        "playlist_id",
         "playlist",
         "image",
         "reason",
@@ -153,7 +158,7 @@
               "save_settings": "#/$defs/SaveSettingsRequest",
               "settings": "#/$defs/SettingsRequest",
               "stats": "#/$defs/StatsRequest",
-              "status": "#/$defs/Request",
+              "status": "#/$defs/StatusRequest",
               "subscribe": "#/$defs/Subscribe",
               "unfav": "#/$defs/MarkRequest",
               "unremove": "#/$defs/MarkRequest",
@@ -162,6 +167,9 @@
             "propertyName": "command"
           },
           "oneOf": [
+            {
+              "$ref": "#/$defs/StatusRequest"
+            },
             {
               "$ref": "#/$defs/Request"
             },
@@ -318,8 +326,10 @@
     "HoldResult": {
       "properties": {
         "command": {
-          "const": "hold",
-          "default": "hold",
+          "enum": [
+            "hold",
+            "resume"
+          ],
           "title": "Command",
           "type": "string"
         },
@@ -337,6 +347,7 @@
         }
       },
       "required": [
+        "command",
         "playlist",
         "held",
         "changed"
@@ -1160,9 +1171,6 @@
               "$ref": "#/$defs/HoldResult"
             },
             {
-              "$ref": "#/$defs/ResumeResult"
-            },
-            {
               "$ref": "#/$defs/StatsResult"
             },
             {
@@ -1188,7 +1196,7 @@
               "pick": "#/$defs/PickResult",
               "upcoming": "#/$defs/UpcomingResult",
               "hold": "#/$defs/HoldResult",
-              "resume": "#/$defs/ResumeResult",
+              "resume": "#/$defs/HoldResult",
               "stats": "#/$defs/StatsResult",
               "reset_cycle": "#/$defs/ResetCycleResult",
               "settings": "#/$defs/SettingsResult",
@@ -1252,35 +1260,6 @@
         "unseen"
       ],
       "title": "ResetCycleResult",
-      "type": "object"
-    },
-    "ResumeResult": {
-      "properties": {
-        "command": {
-          "const": "resume",
-          "default": "resume",
-          "title": "Command",
-          "type": "string"
-        },
-        "playlist": {
-          "title": "Playlist",
-          "type": "string"
-        },
-        "held": {
-          "title": "Held",
-          "type": "boolean"
-        },
-        "changed": {
-          "title": "Changed",
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "playlist",
-        "held",
-        "changed"
-      ],
-      "title": "ResumeResult",
       "type": "object"
     },
     "SaveSettingsRequest": {
@@ -1500,6 +1479,20 @@
         "to_remove"
       ],
       "title": "StatsResult",
+      "type": "object"
+    },
+    "StatusRequest": {
+      "additionalProperties": false,
+      "description": "The playlists with their schedule.",
+      "properties": {
+        "command": {
+          "const": "status",
+          "default": "status",
+          "title": "Command",
+          "type": "string"
+        }
+      },
+      "title": "StatusRequest",
       "type": "object"
     },
     "StatusResult": {

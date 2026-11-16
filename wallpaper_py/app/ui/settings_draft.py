@@ -614,13 +614,13 @@ def current_images(
     for the saved playlists still in `draft` with their folder unchanged:
     a new folder shows an image from it once saved, unknown here.
     """
-    by_name = {p.name.casefold(): p.current for p in shown if p.current is not None}
+    by_id = {p.id: p.current for p in shown if p.current is not None}
     result: dict[str, Path] = {}
     for saved in base.playlists:
         edited = draft.playlist(saved.id)
         if edited is None or not same_path(_path(edited.directory), saved.directory):
             continue
-        if (image := by_name.get(saved.name.casefold())) is not None:
+        if (image := by_id.get(saved.id)) is not None:
             result[saved.id] = image
     return result
 

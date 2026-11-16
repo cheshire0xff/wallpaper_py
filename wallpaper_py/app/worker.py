@@ -57,7 +57,6 @@ from ..protocol import (
     Overview,
     OverviewChangedEvent,
     Reply,
-    TargetRequest,
 )
 from .ipc import CommandServer
 
@@ -165,9 +164,8 @@ class ServiceWorker(QObject):
                 reply, change = self._failed(f"Command {request.command}", err), None
             if change is not None:
                 self._announce(change)
-        if request.command not in ("status", "upcoming", "stats", "settings"):
-            target = request.target if isinstance(request, TargetRequest) else None
-            log.info("%s %s: %r", request.command, target or "", reply)
+        if request.changes:
+            log.info("%s: %r", request.command, reply)
         if render:
             # Renders the monitors whose playlist, look or folder changed,
             # then publishes the overview: both before the reply.

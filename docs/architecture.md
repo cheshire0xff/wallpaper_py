@@ -69,8 +69,9 @@ app/                          PySide6 (Qt only here); two processes
     controls.py  the controls painted in code: FieldCombo (drop-down and its
                  list), Segments, Switch, Button, Slider
     icons/       bundled Lucide SVGs (ISC licence alongside), package data
-commands.py                   runs a Request on the service -> a reply model (+ the
-                              change made); overview(). Qt-free
+commands.py                   runs a request on the service (one `match`, a case per
+                              request model) -> a reply model (+ the change made);
+                              overview(). Qt-free
 protocol.py                   the socket protocol as pydantic models: requests, one
                               result per command, errors, events, Overview. Qt-free
         │

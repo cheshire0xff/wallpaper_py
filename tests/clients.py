@@ -25,9 +25,10 @@ SEND = """
 import sys
 from pathlib import Path
 from wallpaper_py.app import ipc
-from wallpaper_py.protocol import Envelope, Request
+from wallpaper_py.protocol import Envelope, Request, StatusRequest
 name, command, timeout = sys.argv[1:4]
-envelope = Envelope(request=Request(command=command))
+request = StatusRequest() if command == "status" else Request(command=command)
+envelope = Envelope(request=request)
 try:
     reply = ipc.send(name, envelope, timeout=float(timeout))
 except ipc.WallpaperError as err:

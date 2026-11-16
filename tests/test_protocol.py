@@ -5,9 +5,9 @@ from pathlib import Path
 from typing import Any, get_args
 
 from wallpaper_py.protocol import (
-    COMMANDS,
     ERROR_KINDS,
     PROTOCOL,
+    CommandRequest,
     Event,
     json_schema,
 )
@@ -33,9 +33,22 @@ def mapping(schema: dict[str, Any], name: str) -> set[str]:
 
 def test_every_command_has_a_result() -> None:
     schema = json_schema()
-    assert mapping(schema, "Reply") == set(COMMANDS)
     request = schema["$defs"]["Envelope"]["properties"]["request"]
-    assert set(request["discriminator"]["mapping"]) == {*COMMANDS, "subscribe"}
+    commands = set(request["discriminator"]["mapping"]) - {"subscribe"}
+    assert mapping(schema, "Reply") == commands
+
+
+def test_every_request_says_whether_it_changes_anything() -> None:
+    requests = get_args(CommandRequest)
+    assert requests
+    for model in requests:
+        assert isinstance(model.changes, bool), model
+    assert {m.__name__ for m in requests if not m.changes} == {
+        "StatusRequest",
+        "UpcomingRequest",
+        "StatsRequest",
+        "SettingsRequest",
+    }
 
 
 def test_events_and_error_kinds_are_published() -> None:

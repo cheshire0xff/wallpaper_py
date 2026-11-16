@@ -44,7 +44,9 @@ report with a few steps to try once instead.
 - Platform code goes in `backends/`, guarded by
   `assert sys.platform == ...`.
 - Monitors are addressed by id, never by index or position (they change
-  when a monitor is switched off).
+  when a monitor is switched off). Playlists too, by id, never by name, in
+  the tray and the windows (keys, targets, remembered choices): a rename
+  then breaks none of them. The name is for showing, and for the CLI.
 - Only the service thread touches `PlaylistService`; everything goes
   through `ServiceWorker.execute`. Nothing on that thread may block on a
   client or spin a nested event loop.

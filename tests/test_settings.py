@@ -45,7 +45,7 @@ from wallpaper_py.protocol import (
     Overview,
     PlaylistView,
     Reply,
-    Request,
+    StatusRequest,
     SaveSettingsRequest,
     SaveSettingsResult,
     SettingsRequest,
@@ -942,7 +942,7 @@ def test_edits_the_running_daemons_settings(
         window.save_button.click()
         qtbot.waitUntil(lambda: window.status.text() == "No unsaved changes.")
         replies: list[Reply] = []
-        client.run(Request(command="status"), replies.append)
+        client.run(StatusRequest(), replies.append)
         qtbot.waitUntil(lambda: bool(replies))
         status = replies[0]
         assert isinstance(status, StatusResult)

@@ -247,6 +247,10 @@ def test_current_images_keep_a_folder_written_another_way(
     assert current_images(saved, retyped, shown) == {"w": image}
     moved = draft.with_playlist(replace(same, directory=str(tmp_path / "other")))
     assert not current_images(saved, moved, shown)  # unknown until saved
+    # Found by id: a name edited in the draft (or renamed meanwhile) changes
+    # nothing.
+    renamed = [shown[0].model_copy(update={"name": "other name"})]
+    assert current_images(saved, draft, renamed) == {"w": image}
 
 
 def test_the_sliders_steps() -> None:

@@ -56,6 +56,7 @@ from wallpaper_py.protocol import (
     PlaylistView,
     PrevResult,
     Request,
+    StatusRequest,
     StatusResult,
 )
 
@@ -184,13 +185,13 @@ def test_only_detached_monitors() -> None:
 
 def test_captions_and_monitors_in_no_playlist() -> None:
     by_monitor = playlists_by_monitor(OVERVIEW)
-    assert {str(m): p for m, p in by_monitor.items()} == {
+    assert {str(m): p.name for m, p in by_monitor.items()} == {
         "aw": "konachan",
         "plx": "konachan",
         "zero": "fantasy",
     }
     assert caption(AW, "konachan") == ("AW3225QF", "3840×2160 · konachan")
-    assert caption(TV, by_monitor.get(TV.id)) == ("TV", "1920×1080 · no playlist")
+    assert caption(TV, None) == ("TV", "1920×1080 · no playlist")
     assert caption(ZERO, "fantasy") == ("ZeroMOD", "off · fantasy")
 
 
@@ -376,9 +377,9 @@ def test_window_draws_the_overview(
     assert page.banner.text() == "Connecting to wallpaper_py…"
     client.publish(OVERVIEW)
     assert page.banner.isHidden()
-    assert list(page.rows) == ["konachan", "fantasy"]
+    assert list(page.rows) == ["konachan-id", "fantasy-id"]
     assert page.monitors_heading.text() == "Monitors (4)"
-    konachan, fantasy = page.rows["konachan"], page.rows["fantasy"]
+    konachan, fantasy = page.rows["konachan-id"], page.rows["fantasy-id"]
     assert konachan.title.text() == "konachan"
     assert konachan.monitors.text() == "AW3225QF + PLX2783H"
     assert not konachan.link.isHidden()  # a mirrored group
@@ -401,7 +402,7 @@ def test_window_draws_the_overview(
     assert konachan.details.text() == "3840×2160 · 4.2 MB"
     # Then the schedule, from one status request.
     statuses = [r for r, _ in client.calls if r.command == "status"]
-    assert statuses == [Request(command="status")]
+    assert statuses == [StatusRequest()]
     client.answer_status(OVERVIEW)
     assert konachan.details.text().endswith("shuffle, every 30m · next in 13m")
     assert fantasy.details.text().endswith("shuffle · manual")
@@ -446,7 +447,7 @@ def test_the_countdown_runs_only_while_counting(
 ) -> None:
     client.publish(OVERVIEW)
     client.answer_status(OVERVIEW)
-    row = page.rows["konachan"]
+    row = page.rows["konachan-id"]
     assert row.details.text().endswith("next in 13m")
     clock.now += 600
     page.refresh_schedule()
@@ -465,7 +466,7 @@ def test_status_is_asked_once_at_a_time(page: HomePage, client: FakeClient) -> N
     assert len([r for r, _ in client.calls if r.command == "status"]) == 1
     client.answer_status(OVERVIEW)  # then once more, for the newer overview
     assert len([r for r, _ in client.calls if r.command == "status"]) == 1
-    assert page.rows["konachan"].details.text()
+    assert page.rows["konachan-id"].details.text()
 
 
 def test_hover_highlights_a_playlist_in_the_drawing_and_its_row(
@@ -473,11 +474,11 @@ def test_hover_highlights_a_playlist_in_the_drawing_and_its_row(
 ) -> None:
     client.publish(OVERVIEW)
     view = page.monitors_view
-    konachan, fantasy = page.rows["konachan"], page.rows["fantasy"]
+    konachan, fantasy = page.rows["konachan-id"], page.rows["fantasy-id"]
     assert view.highlight() is None and not konachan.highlighted()
     # Pointing at a row outlines its monitors.
-    konachan.hovered.emit("konachan")
-    assert view.highlight() == "konachan"
+    konachan.hovered.emit("konachan-id")
+    assert view.highlight() == "konachan-id"
     assert konachan.highlighted() and not fantasy.highlighted()
     view.grab()  # paints the outline without error
     konachan.hovered.emit(None)
@@ -491,18 +492,28 @@ def test_hover_highlights_a_playlist_in_the_drawing_and_its_row(
 
     QTest.mouseMove(view, centre("plx"))
     qtbot.waitUntil(konachan.highlighted)
-    assert view.highlight() == "konachan" and not fantasy.highlighted()
+    assert view.highlight() == "konachan-id" and not fantasy.highlighted()
     QTest.mouseMove(view, centre("tv"))
     qtbot.waitUntil(lambda: view.highlight() is None)
     assert not konachan.highlighted()
 
 
+def test_a_rename_keeps_the_row(page: HomePage, client: FakeClient) -> None:
+    client.publish(OVERVIEW)
+    row = page.rows["konachan-id"]
+    renamed = KONACHAN.model_copy(update={"name": "wallpapers"})
+    client.publish(OVERVIEW.model_copy(update={"playlists": (renamed, FANTASY)}))
+    assert page.rows["konachan-id"] is row
+    assert row.title.text() == "wallpapers"
+    row.next_button.click()
+    assert client.commands()[-1] == Request(command="next", target="konachan-id")
+
+
 def test_buttons_send_commands(page: HomePage, client: FakeClient) -> None:
     held_fav = KONACHAN.model_copy(update={"favourite": True, "held": True})
-    client.publish(
-        Overview(playlists=(KONACHAN, held_fav.model_copy(update={"name": "other"})))
-    )
-    row, other = page.rows["konachan"], page.rows["other"]
+    other_playlist = held_fav.model_copy(update={"id": "other-id", "name": "other"})
+    client.publish(Overview(playlists=(KONACHAN, other_playlist)))
+    row, other = page.rows["konachan-id"], page.rows["other-id"]
     for button in (
         row.prev_button,
         row.next_button,
@@ -514,13 +525,13 @@ def test_buttons_send_commands(page: HomePage, client: FakeClient) -> None:
     ):
         button.click()
     assert client.commands() == [
-        Request(command="prev", target="konachan"),
-        Request(command="next", target="konachan"),
-        MarkRequest(command="fav", target="konachan"),
-        MarkRequest(command="remove", target="konachan"),
-        Request(command="hold", target="konachan"),
-        MarkRequest(command="unfav", target="other"),  # it is a favourite
-        Request(command="resume", target="other"),  # it is held
+        Request(command="prev", target="konachan-id"),
+        Request(command="next", target="konachan-id"),
+        MarkRequest(command="fav", target="konachan-id"),
+        MarkRequest(command="remove", target="konachan-id"),
+        Request(command="hold", target="konachan-id"),
+        MarkRequest(command="unfav", target="other-id"),  # it is a favourite
+        Request(command="resume", target="other-id"),  # it is held
     ]
     assert row.prev_button.toolTip() == "Previous"
     assert row.prev_button.accessibleName() == "Previous"
@@ -531,11 +542,11 @@ def test_toggles_follow_the_overview_not_the_click(
     page: HomePage, client: FakeClient
 ) -> None:
     client.publish(Overview(playlists=(KONACHAN,)))
-    row = page.rows["konachan"]
+    row = page.rows["konachan-id"]
     row.fav_button.click()
     row.hold_button.click()
     request, on_reply = client.calls[-2]
-    assert request == MarkRequest(command="fav", target="konachan")
+    assert request == MarkRequest(command="fav", target="konachan-id")
     on_reply(
         MarkResult(
             command="fav",
@@ -557,7 +568,7 @@ def test_toggles_follow_the_overview_not_the_click(
 def test_nothing_shown_yet(page: HomePage, client: FakeClient) -> None:
     empty = KONACHAN.model_copy(update={"current": None})
     client.publish(Overview(playlists=(empty,)))
-    row = page.rows["konachan"]
+    row = page.rows["konachan-id"]
     assert row.file.text() == "Nothing shown yet"
     assert not row.fav_button.isEnabled() and not row.remove_button.isEnabled()
     assert row.next_button.isEnabled()
@@ -565,7 +576,7 @@ def test_nothing_shown_yet(page: HomePage, client: FakeClient) -> None:
 
 def test_errors_show_in_the_row(page: HomePage, client: FakeClient) -> None:
     client.publish(OVERVIEW)
-    row = page.rows["fantasy"]
+    row = page.rows["fantasy-id"]
     row.next_button.click()
     _, on_reply = client.calls[-1]
     on_reply(ErrorReply.make("not_attached", "None of fantasy's monitors is attached"))
@@ -579,7 +590,9 @@ def test_errors_show_in_the_row(page: HomePage, client: FakeClient) -> None:
     assert row.message_icon.isHidden()  # a note, not an error
     row.next_button.click()
     _, on_reply = client.calls[-1]
-    change = Change("fantasy", Path("/p/fantasy/8.png"), "next", ("ZeroMOD",))
+    change = Change(
+        "fantasy-id", "fantasy", Path("/p/fantasy/8.png"), "next", ("ZeroMOD",)
+    )
     on_reply(NextResult(playlist="fantasy", change=change))
     assert row.message.isHidden()
 
@@ -608,7 +621,7 @@ def test_service_error_and_unreachable_daemon(
 
 def test_a_reply_after_closing_is_ignored(page: HomePage, client: FakeClient) -> None:
     client.publish(OVERVIEW)
-    page.rows["konachan"].next_button.click()
+    page.rows["konachan-id"].next_button.click()
     page.shutdown()  # the window closed
     for _, on_reply in client.calls:
         on_reply(ErrorReply.make("unreachable", "gone"))  # no error
@@ -618,15 +631,15 @@ def test_a_reply_after_closing_is_ignored(page: HomePage, client: FakeClient) ->
 def test_rows_follow_the_settings_order_with_dividers_between(
     page: HomePage, client: FakeClient
 ) -> None:
-    third = KONACHAN.model_copy(update={"name": "third"})
+    third = KONACHAN.model_copy(update={"id": "third-id", "name": "third"})
     client.publish(
         OVERVIEW.model_copy(update={"playlists": (third, *OVERVIEW.playlists)})
     )
-    assert list(page.rows) == ["third", "konachan", "fantasy"]
+    assert list(page.rows) == ["third-id", "konachan-id", "fantasy-id"]
     assert [r.divider() for r in page.rows.values()] == [False, True, True]
     # A playlist gone from the settings: its row goes too.
     client.publish(OVERVIEW)
-    assert list(page.rows) == ["konachan", "fantasy"]
+    assert list(page.rows) == ["konachan-id", "fantasy-id"]
     assert [r.divider() for r in page.rows.values()] == [False, True]
 
 
@@ -634,7 +647,7 @@ def test_a_highlighted_row_gets_a_faint_fill(
     page: HomePage, client: FakeClient
 ) -> None:
     client.publish(OVERVIEW)
-    row = page.rows["konachan"]
+    row = page.rows["konachan-id"]
     point = (row.width() // 2, 4)  # above the text, beside the image
 
     def colour() -> str:

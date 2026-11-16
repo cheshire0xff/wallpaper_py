@@ -40,7 +40,6 @@ from .protocol import (
     MARK_COMMANDS,
     MAX_UPCOMING,
     TARGET_COMMANDS,
-    Command,
     CommandRequest,
     Envelope,
     ErrorReply,
@@ -51,6 +50,7 @@ from .protocol import (
     NextResult,
     PickRequest,
     PickResult,
+    PlaylistCommand,
     PlaylistDetails,
     PrevResult,
     RemoveResult,
@@ -58,11 +58,11 @@ from .protocol import (
     Request,
     ResetCycleRequest,
     ResetCycleResult,
-    ResumeResult,
     SaveSettingsResult,
     SettingsResult,
     StatsRequest,
     StatsResult,
+    StatusRequest,
     StatusResult,
     UpcomingRequest,
     UpcomingResult,
@@ -221,8 +221,10 @@ def cmd_playlist(ctx: Context, args: argparse.Namespace) -> int:
     elif args.command in MARK_COMMANDS:
         mark: MarkCommand = args.command
         request = MarkRequest(command=mark, target=target, image=args.image)
+    elif args.command == "status":
+        request = StatusRequest()
     else:
-        command: Command = args.command  # a subparser name from Command
+        command: PlaylistCommand = args.command  # a subparser name
         request = Request(command=command, target=target)
     return _print(ctx.daemon_client(request, ctx.run_here))
 
@@ -303,7 +305,7 @@ def format_reply(reply: Reply) -> Text:
             if not reply.images:
                 return Text(0, f"{reply.playlist}: nothing to come")
             return Text(0, "\n".join(str(p) for p in reply.images))
-        case HoldResult() | ResumeResult():
+        case HoldResult():
             return Text(0, _hold_text(reply))
         case StatsResult():
             return Text(0, format_stats(reply))
@@ -419,7 +421,7 @@ def _remove_text(reply: RemoveResult, running: bool = True) -> str:
     return f"{listed}\n{moved}"
 
 
-def _hold_text(reply: HoldResult | ResumeResult) -> str:
+def _hold_text(reply: HoldResult) -> str:
     name = reply.playlist
     if reply.held:
         if reply.changed:

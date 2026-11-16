@@ -39,10 +39,11 @@ release it may still change in place.)
   `unfav`, `remove`, `unremove`, `pick`, `upcoming`, `stats`,
   `reset_cycle`, `settings`, `save_settings`, or `subscribe`.
 - `request.target` (every command but `status`, `unremove`, `settings` and
-  `save_settings`): a playlist name, or a monitor the playlist drives (a
-  name, a unique part of one, or the full id). It may be left out when
-  there is only one playlist; for `stats`, leaving it out means every
-  playlist.
+  `save_settings`; those refuse it): a playlist's `id` (what the tray and
+  the windows send: a rename can't misdirect it) or name (what people
+  type), or a monitor the playlist drives (a name, a unique part of one,
+  or the full id). It may be left out when there is only one playlist;
+  for `stats`, leaving it out means every playlist.
 - `request.image`, an absolute path (the daemon doesn't know the client's
   directory), in any directory:
   - `pick` (required): the image to show.
@@ -68,10 +69,10 @@ Requests are checked strictly: unknown fields are refused.
 ## Replies
 
 Data only, no text: one model per command, tagged on `command`, or an
-error. What a `change` holds: `playlist`, `image` (path), `reason`
-(`scheduled`, `next`, `previous`, `picked`, `restored`), `shown_on`
-(monitor names) and `missed` (members that detached during the change; they
-get the image when they come back).
+error. What a `change` holds: `playlist_id`, `playlist` (its name), `image`
+(path), `reason` (`scheduled`, `next`, `previous`, `picked`, `restored`),
+`shown_on` (monitor names) and `missed` (members that detached during the
+change; they get the image when they come back).
 
 | Command | Reply fields |
 |---|---|
@@ -82,7 +83,7 @@ get the image when they come back).
 | `fav` / `unfav` / `unremove` | `playlist` (the one whose current image it is; null when the request named an `image`), `image`, `list_file` (favourites.txt; to-remove.txt for `unremove`), `changed` (false: it already was / wasn't on the list) |
 | `remove` | `playlist` (as for `fav`), `image` (listed for removal, never deleted), `list_file` (to-remove.txt), `changed` (false: it was listed already), `change` (the next image shown; null: no monitor attached, it moves on later, or the request named an `image`) |
 | `upcoming` | `playlist`, `images` (paths, the next one first) |
-| `hold` / `resume` | `playlist`, `held` (now), `changed` (false: it already was / wasn't held) |
+| `hold` / `resume` | `playlist`, `held` (now: true after `hold`, false after `resume`), `changed` (false: it already was / wasn't held) |
 | `stats` | `playlists` (each: `name`, `directory`, `order`, `scan_age` in seconds, `images`, `seen`, `unseen`, `skipped`, `favourites_here`, `to_remove_here`), `favourites` and `to_remove` (each: `file`, `listed`, `available`) |
 | `reset_cycle` | `playlist`, `unseen` (now: every image but the skipped ones) |
 | `settings` | `settings` (below), `revision` (an integer; send it back with the edit) |
@@ -181,7 +182,7 @@ case-insensitively), the monitor's name (the id if it isn't listed),
 whether it is attached (`null`: not listed right now), and its look.
 
 ```json
-{"command": "next", "playlist": "konachan", "change": {"playlist": "konachan", "image": "D:\\pictures\\KONACHAN\\123.jpg", "reason": "next", "shown_on": ["AW3225QF", "PLX2783H"], "missed": []}}
+{"command": "next", "playlist": "konachan", "change": {"playlist_id": "3f0c9d6e...", "playlist": "konachan", "image": "D:\\pictures\\KONACHAN\\123.jpg", "reason": "next", "shown_on": ["AW3225QF", "PLX2783H"], "missed": []}}
 ```
 
 ## Errors
@@ -226,7 +227,7 @@ error line instead, then the connection closes.
 
 ```json
 {"event": "overview_changed", "overview": {"playlists": [{"id": "9b1e4f2a...", "name": "fantasy", "directory": "D:\\pictures\\Fantasy", "monitors": [{"id": "\\\\?\\DISPLAY#AUS27B1#...", "name": "ZeroMOD", "attached": false}], "current": "D:\\pictures\\Fantasy\\7.png", "favourite": false, "held": false, "manual": true}], "monitors": [{"id": "\\\\?\\DISPLAY#DELA246#...", "name": "AW3225QF", "geometry": {"x": 0, "y": 0, "width": 3840, "height": 2160}}, {"id": "\\\\?\\DISPLAY#AUS27B1#...", "name": "ZeroMOD", "geometry": null}], "paused": null, "error": null, "favourites_file": "C:\\Users\\me\\AppData\\Local\\wallpaper_py\\favourites.txt", "to_remove_file": "C:\\Users\\me\\AppData\\Local\\wallpaper_py\\to-remove.txt"}}
-{"event": "changed", "change": {"playlist": "konachan", "image": "D:\\pictures\\KONACHAN\\123.jpg", "reason": "next", "shown_on": ["AW3225QF", "PLX2783H"], "missed": []}}
+{"event": "changed", "change": {"playlist_id": "3f0c9d6e...", "playlist": "konachan", "image": "D:\\pictures\\KONACHAN\\123.jpg", "reason": "next", "shown_on": ["AW3225QF", "PLX2783H"], "missed": []}}
 ```
 
 A monitor in the overview's `monitors` has a `geometry` in desktop pixels

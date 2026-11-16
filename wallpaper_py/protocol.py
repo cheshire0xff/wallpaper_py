@@ -2,12 +2,13 @@
 The daemon's socket protocol as pydantic models: what goes over the wire, and
 nothing else (no logic, no Qt). See docs/protocol.md.
 
-- In: an `Envelope` holding a `Request` (a playlist command), a
-  `MarkRequest` (put an image on a list or take it off), a `PickRequest`
-  (`pick`, which also carries an image), an `UpcomingRequest` (the images
-  to come), a `StatsRequest` / `ResetCycleRequest` (count a library /
-  start its shuffle cycle over), a `SettingsRequest` /
-  `SaveSettingsRequest` (read / write the settings) or `Subscribe`.
+- In: an `Envelope` holding a `StatusRequest`, a `Request` (a command on a
+  playlist), a `MarkRequest` (put an image on a list or take it off), a
+  `PickRequest` (`pick`, which also carries an image), an `UpcomingRequest`
+  (the images to come), a `StatsRequest` / `ResetCycleRequest` (count a
+  library / start its shuffle cycle over), a `SettingsRequest` /
+  `SaveSettingsRequest` (read / write the settings) or `Subscribe`. Each
+  request model says whether it `changes` anything (a class variable).
 - Out: a `Reply`, which is data only: one result model per command, tagged
   on `command`, or an `ErrorReply`. The CLI formats its text from these;
   the tray and the window process show them.
@@ -25,7 +26,7 @@ docs/protocol.schema.json is generated from these models
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Any, Literal, get_args
+from typing import Annotated, Any, ClassVar, Literal, get_args
 
 from pydantic import (
     BaseModel,
@@ -45,7 +46,7 @@ from .core.settings import Order, PlaylistId, Settings
 PROTOCOL = 3
 
 # The commands a plain `Request` carries.
-Command = Literal["status", "next", "prev", "hold", "resume"]
+PlaylistCommand = Literal["next", "prev", "hold", "resume"]
 # The commands a `MarkRequest` carries: an image on a list, or off it.
 MarkCommand = Literal["fav", "unfav", "remove", "unremove"]
 MARK_COMMANDS: tuple[MarkCommand, ...] = get_args(MarkCommand)
@@ -54,18 +55,6 @@ MARK_COMMANDS: tuple[MarkCommand, ...] = get_args(MarkCommand)
 # (`target_request`).
 TargetCommand = Literal["next", "prev", "fav", "unfav", "remove", "hold", "resume"]
 TARGET_COMMANDS: tuple[TargetCommand, ...] = get_args(TargetCommand)
-# Every command: also these, which have request models of their own.
-AnyCommand = Literal[
-    Command,
-    MarkCommand,
-    "pick",
-    "upcoming",
-    "stats",
-    "reset_cycle",
-    "settings",
-    "save_settings",
-]
-COMMANDS: tuple[AnyCommand, ...] = get_args(AnyCommand)
 MAX_UPCOMING = 1000  # images an `upcoming` request may ask for
 
 
@@ -84,11 +73,19 @@ class Strict(BaseModel):
 # -- requests ------------------------------------------------------------------
 
 
-class Request(Strict):
-    """A playlist command."""
+class StatusRequest(Strict):
+    """The playlists with their schedule."""
 
-    command: Command
-    target: str | None = None  # playlist name, or a monitor it drives
+    changes: ClassVar[bool] = False
+    command: Literal["status"] = "status"
+
+
+class Request(Strict):
+    """A command on a playlist."""
+
+    changes: ClassVar[bool] = True
+    command: PlaylistCommand
+    target: str | None = None  # playlist id or name, or a monitor it drives
 
 
 class MarkRequest(Strict):
@@ -101,8 +98,9 @@ class MarkRequest(Strict):
     listed for long.
     """
 
+    changes: ClassVar[bool] = True
     command: MarkCommand
-    target: str | None = None  # playlist name, or a monitor it drives
+    target: str | None = None  # playlist id or name, or a monitor it drives
     image: Path | None = None  # absolute: the daemon has no client directory
 
     @field_validator("image")
@@ -122,8 +120,9 @@ class MarkRequest(Strict):
 class PickRequest(Strict):
     """Show a chosen image on a playlist now (from any directory)."""
 
+    changes: ClassVar[bool] = True
     command: Literal["pick"] = "pick"
-    target: str | None = None  # playlist name, or a monitor it drives
+    target: str | None = None  # playlist id or name, or a monitor it drives
     image: Path  # absolute: the daemon doesn't know the client's directory
 
     @field_validator("image")
@@ -141,14 +140,16 @@ def _absolute(image: Path) -> Path:
 class UpcomingRequest(Strict):
     """The images a playlist shows next, in order."""
 
+    changes: ClassVar[bool] = False
     command: Literal["upcoming"] = "upcoming"
-    target: str | None = None  # playlist name, or a monitor it drives
+    target: str | None = None  # playlist id or name, or a monitor it drives
     limit: Annotated[StrictInt, Field(ge=1, le=MAX_UPCOMING)] = 100
 
 
 class StatsRequest(Strict):
     """What playlists pick up from their folders, and the lists' counts."""
 
+    changes: ClassVar[bool] = False
     command: Literal["stats"] = "stats"
     target: str | None = None  # one playlist (or a monitor it drives); None: all
     rescan: StrictBool = False  # scan the folders again first
@@ -157,13 +158,15 @@ class StatsRequest(Strict):
 class ResetCycleRequest(Strict):
     """Start a shuffle playlist's cycle over: every image unseen again."""
 
+    changes: ClassVar[bool] = True
     command: Literal["reset_cycle"] = "reset_cycle"
-    target: str | None = None  # playlist name, or a monitor it drives
+    target: str | None = None  # playlist id or name, or a monitor it drives
 
 
 class SettingsRequest(Strict):
     """The stored settings, and their revision (for `save_settings`)."""
 
+    changes: ClassVar[bool] = False
     command: Literal["settings"] = "settings"
 
 
@@ -174,6 +177,7 @@ class SaveSettingsRequest(Strict):
     the one the edit was made on.
     """
 
+    changes: ClassVar[bool] = True
     command: Literal["save_settings"] = "save_settings"
     settings: Settings
     revision: int
@@ -181,7 +185,8 @@ class SaveSettingsRequest(Strict):
 
 # Every request answered with one reply (what `commands.execute` takes).
 CommandRequest = (
-    Request
+    StatusRequest
+    | Request
     | MarkRequest
     | PickRequest
     | UpcomingRequest
@@ -189,15 +194,6 @@ CommandRequest = (
     | ResetCycleRequest
     | SettingsRequest
     | SaveSettingsRequest
-)
-# Of those, the ones that name a target (playlist or monitor).
-TargetRequest = (
-    Request
-    | MarkRequest
-    | PickRequest
-    | UpcomingRequest
-    | StatsRequest
-    | ResetCycleRequest
 )
 
 
@@ -415,17 +411,10 @@ class SaveSettingsResult(Message):
 
 
 class HoldResult(Message):
-    command: Literal["hold"] = "hold"
+    command: Literal["hold", "resume"]
     playlist: str
-    held: bool  # now: always True
-    changed: bool  # False: it was held already
-
-
-class ResumeResult(Message):
-    command: Literal["resume"] = "resume"
-    playlist: str
-    held: bool  # now: always False
-    changed: bool  # False: it wasn't held
+    held: bool  # now: True after `hold`, False after `resume`
+    changed: bool  # False: it was held already (`hold`) / wasn't held (`resume`)
 
 
 Result = Annotated[
@@ -437,7 +426,6 @@ Result = Annotated[
     | PickResult
     | UpcomingResult
     | HoldResult
-    | ResumeResult
     | StatsResult
     | ResetCycleResult
     | SettingsResult

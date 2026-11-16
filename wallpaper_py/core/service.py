@@ -65,6 +65,7 @@ from .selection import resolve_monitor
 from .settings import (
     NO_PLAYLISTS,
     Order,
+    PlaylistId,
     PlaylistSettings,
     Settings,
     SettingsError,
@@ -110,7 +111,8 @@ ChangeReason = Literal["scheduled", "next", "previous", "picked", "restored"]
 
 @dataclass(frozen=True)
 class Change:
-    playlist: str
+    playlist_id: PlaylistId
+    playlist: str  # its name
     image: Path
     reason: ChangeReason
     shown_on: tuple[str, ...]  # monitor names
@@ -436,8 +438,9 @@ class PlaylistService:
 
     def find_playlist(self, selector: str | None) -> PlaylistSettings:
         """
-        A playlist by name, or the one driving a monitor (name, unique part
-        of a name, or id). With one playlist, the selector may be omitted.
+        A playlist by id or by name, or the one driving a monitor (name,
+        unique part of a name, or id). With one playlist, the selector may be
+        omitted.
         """
         playlists = self.settings.playlists
         if selector is None:
@@ -447,6 +450,10 @@ class PlaylistService:
                 raise UnknownTargetError(NO_PLAYLISTS)
             names = ", ".join(p.name for p in playlists)
             raise UnknownTargetError(f"Name a playlist or monitor: {names}")
+        # The id first: generated, so unambiguous; a name is free text.
+        by_id = next((p for p in playlists if p.id == selector), None)
+        if by_id is not None:
+            return by_id
         playlist = self.settings.playlist(selector)
         if playlist is not None:
             return playlist
@@ -509,6 +516,7 @@ class PlaylistService:
             for monitor in shown:
                 self._store.set_applied(monitor.id, playlist.id, image, now)
         return Change(
+            playlist.id,
             playlist.name,
             image,
             "picked",
@@ -866,6 +874,7 @@ class PlaylistService:
                 continue
             self._commit(playlist, candidate, shown)
             return Change(
+                playlist.id,
                 playlist.name,
                 candidate.image,
                 reason,
@@ -945,6 +954,7 @@ class PlaylistService:
             for monitor in shown:
                 self._store.set_applied(monitor.id, playlist.id, current, now)
         return Change(
+            playlist.id,
             playlist.name,
             current,
             "restored",

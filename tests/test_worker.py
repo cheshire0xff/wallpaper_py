@@ -37,6 +37,7 @@ from wallpaper_py.protocol import (
     RemoveResult,
     Reply,
     Request,
+    StatusRequest,
     SaveSettingsRequest,
     SaveSettingsResult,
     SettingsRequest,
@@ -322,7 +323,9 @@ def test_hold_reaches_the_tray_and_subscribers(
     read_lines(qtbot, subscriber, 1)  # the current overview
     with qtbot.waitSignal(service_thread.overview_changed) as blocker:
         reply = submit(qtbot, service_thread, Request(command="hold"))
-    assert reply == HoldResult(playlist="walls", held=True, changed=True)
+    assert reply == HoldResult(
+        command="hold", playlist="walls", held=True, changed=True
+    )
     assert blocker.args[0].playlists[0].held
     [line] = read_lines(qtbot, subscriber, 1)
     event = ipc.decode_event(line)
@@ -456,7 +459,7 @@ def test_a_config_error_from_a_command_stops_the_service(
     assert isinstance(reply, ErrorReply) and reply.error.kind == "config_error"
     assert "byte order mark" in reply.error.message
     assert blocker.args[0].error == reply.error.message
-    assert send(qtbot, name, Request(command="status")) == reply
+    assert send(qtbot, name, StatusRequest()) == reply
     assert not [r for r in caplog.records if r.exc_info]  # no traceback: expected
 
     listed.write_text("", encoding="utf-8")

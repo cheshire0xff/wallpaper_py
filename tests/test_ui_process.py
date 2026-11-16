@@ -105,7 +105,7 @@ def test_ui_shows_the_live_overview_until_its_window_closes(
 
     def close_when_live() -> bool:
         window = main_window()
-        row = window.home.rows.get("walls") if window is not None else None
+        row = window.home.rows.get("walls-id") if window is not None else None
         # The overview, then the schedule from `status` (both over the
         # daemon's socket).
         if window is None or row is None or "sorted" not in row.details.text():

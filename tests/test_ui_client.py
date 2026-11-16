@@ -22,6 +22,7 @@ from wallpaper_py.protocol import (
     Overview,
     Reply,
     Request,
+    StatusRequest,
 )
 
 from wallpaper_py.core.settings import Settings
@@ -172,5 +173,5 @@ def test_commands_without_a_daemon_are_unreachable(
     qtbot: QtBot, clients: list[SocketClient], name: str
 ) -> None:
     client = make_client(clients, name)
-    reply = run(qtbot, client, Request(command="status"))
+    reply = run(qtbot, client, StatusRequest())
     assert reply == ErrorReply.make("unreachable", "wallpaper_py is not running")

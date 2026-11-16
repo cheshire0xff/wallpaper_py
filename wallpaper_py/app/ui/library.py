@@ -43,6 +43,7 @@ from PySide6.QtWidgets import (
 
 from ...core import paths
 from ...core.service import Change
+from ...core.settings import PlaylistId
 from ...core.thumbnail_cache import ThumbnailCache
 from ...protocol import (
     ErrorReply,
@@ -111,7 +112,7 @@ class LibraryPage(QWidget):
         self.state = load_ui_state(self._state_file)
         self._overview: Overview | None = None
         self.stats: StatsResult | None = None  # of the playlist chosen
-        self._asked_for: str | None = None  # a stats request runs for it
+        self._asked_for: PlaylistId | None = None  # a stats request runs for it
         self._ask_again = False
         self._rescan = False  # the next stats request scans again
         self._resetting = False
@@ -199,11 +200,15 @@ class LibraryPage(QWidget):
 
     # -- what is shown -------------------------------------------------------------
 
-    def playlist(self) -> str | None:
-        """The playlist chosen (None: there is none)."""
-        return (
-            self.playlist_combo.currentText() if self.playlist_combo.count() else None
-        )
+    def playlist(self) -> PlaylistId | None:
+        """The id of the playlist chosen (None: there is none)."""
+        data = self.playlist_combo.currentData()
+        return data if isinstance(data, str) else None
+
+    def playlist_name(self, playlist_id: PlaylistId) -> str:
+        """A playlist's name as the overview has it (the id if it is gone)."""
+        playlists = self._overview.playlists if self._overview else ()
+        return next((p.name for p in playlists if p.id == playlist_id), playlist_id)
 
     def tab(self) -> LibraryTab:
         return TABS[self.tabs.current_index()][0]
@@ -218,7 +223,7 @@ class LibraryPage(QWidget):
         overview = self._overview
         if chosen is None or overview is None:
             return None
-        return next((p.directory for p in overview.playlists if p.name == chosen), None)
+        return next((p.directory for p in overview.playlists if p.id == chosen), None)
 
     @Slot(int)
     def _tab_chosen(self, index: int) -> None:
@@ -237,25 +242,28 @@ class LibraryPage(QWidget):
         self._list_folder()
         self._pregenerate()
 
-    def _fill_playlists(self, names: list[str]) -> None:
+    def _fill_playlists(self, playlists: list[tuple[PlaylistId, str]]) -> None:
         """
-        The drop-down's playlists, in the settings' order; the one chosen
-        stays if it still exists, else the remembered one, else the first.
+        The drop-down's playlists (id, name), in the settings' order; the one
+        chosen stays if it still exists, else the remembered one, else the
+        first. A rename keeps the choice.
         """
         box = self.playlist_combo
         before = self.playlist()
-        listed = [box.itemText(i) for i in range(box.count())]
+        listed = [(box.itemData(i), box.itemText(i)) for i in range(box.count())]
+        ids = [i for i, _ in playlists]
         chosen = next(
-            (n for n in (before, self.state.library_playlist) if n in names),
-            names[0] if names else None,
+            (i for i in (before, self.state.library_playlist) if i in ids),
+            ids[0] if ids else None,
         )
         box.blockSignals(True)
-        if listed != names:
+        if listed != playlists:
             box.clear()
-            box.addItems(names)
-        box.setCurrentIndex(names.index(chosen) if chosen is not None else -1)
+            for playlist_id, name in playlists:
+                box.addItem(name, playlist_id)
+        box.setCurrentIndex(ids.index(chosen) if chosen is not None else -1)
         box.blockSignals(False)
-        box.setEnabled(bool(names))
+        box.setEnabled(bool(ids))
         if self.playlist() != before:
             self._show_stats(None)
 
@@ -277,7 +285,7 @@ class LibraryPage(QWidget):
     def show_overview(self, overview: Overview) -> None:
         self._overview = overview
         self._set_banner(f"Error: {overview.error}" if overview.error else None)
-        self._fill_playlists([p.name for p in overview.playlists])
+        self._fill_playlists([(p.id, p.name) for p in overview.playlists])
         if not overview.playlists:
             self.overview_tab.show_message(
                 None if overview.error else "No playlists yet: add one in Settings."
@@ -289,7 +297,7 @@ class LibraryPage(QWidget):
 
     @Slot(object)
     def _changed(self, change: Change) -> None:
-        if change.playlist == self.playlist():
+        if change.playlist_id == self.playlist():
             self._ask_stats()
 
     @Slot()
@@ -331,7 +339,7 @@ class LibraryPage(QWidget):
         if overview is None or overview.error or not overview.playlists:
             return
         chosen = self.playlist()
-        playlists = sorted(overview.playlists, key=lambda p: p.name != chosen)
+        playlists = sorted(overview.playlists, key=lambda p: p.id != chosen)
         folders = tuple(dict.fromkeys(p.directory for p in playlists))
         lists = tuple(
             f
@@ -366,13 +374,14 @@ class LibraryPage(QWidget):
 
     def stats_replied(self, reply: Reply) -> None:
         asked, self._asked_for = self._asked_for, None
-        if asked == self.playlist():  # else another one was chosen meanwhile
+        if asked is not None and asked == self.playlist():  # else another was chosen
             if isinstance(reply, StatsResult) and reply.playlists:
                 self._show_stats(reply)
             elif isinstance(reply, ErrorReply):
                 self._show_stats(None)
                 self.overview_tab.show_message(
-                    f"Can't count {asked}'s images: {reply.error.message}"
+                    f"Can't count {self.playlist_name(asked)}'s images: "
+                    f"{reply.error.message}"
                 )
         if self._ask_again:
             self._ask_again = False
@@ -403,7 +412,8 @@ class LibraryPage(QWidget):
 
     @Slot()
     def _reset_clicked(self) -> None:
-        if self.stats is None or self._resetting:
+        playlist = self.playlist()
+        if self.stats is None or playlist is None or self._resetting:
             return
         stats = self.stats.playlists[0]
         question = (
@@ -415,7 +425,7 @@ class LibraryPage(QWidget):
             return
         self._resetting = True
         self.overview_tab.set_resetting(True)
-        request = ResetCycleRequest(target=stats.name)
+        request = ResetCycleRequest(target=playlist)
         self._client.run(request, ReplyTo(self, LibraryPage.reset_replied))
 
     def reset_replied(self, reply: Reply) -> None:

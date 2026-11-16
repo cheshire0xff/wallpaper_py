@@ -19,13 +19,14 @@ from wallpaper_py.protocol import (
     OverviewChangedEvent,
     PrevResult,
     Request,
+    StatusRequest,
     Subscribe,
 )
 
 from .clients import RAW, SEND, run_python
 from .hosts import connect, read_lines
 
-CHANGE = Change("walls", Path("/p/a.jpg"), "next", ("Main",))
+CHANGE = Change("walls-id", "walls", Path("/p/a.jpg"), "next", ("Main",))
 
 
 @pytest.fixture(name="name")
@@ -119,7 +120,7 @@ def test_bad_reply_is_rejected() -> None:
 
 
 def test_no_daemon_running(name: str) -> None:
-    envelope = Envelope(request=Request(command="status"))
+    envelope = Envelope(request=StatusRequest())
     assert ipc.send(name, envelope) is None
 
 
@@ -230,7 +231,7 @@ def test_line_request_times_out(qtbot: QtBot, name: str, owner: QObject) -> None
     server.listen()
     failures: list[tuple[bool, str]] = []
     try:
-        line = ipc.encode(Envelope(request=Request(command="status")))
+        line = ipc.encode(Envelope(request=StatusRequest()))
         LineRequest(
             name,
             line,

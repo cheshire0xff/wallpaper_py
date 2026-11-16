@@ -17,7 +17,7 @@ from wallpaper_py.protocol import (
     MarkResult,
     PlaylistDetails,
     RemoveResult,
-    Request,
+    StatusRequest,
     ResetCycleRequest,
     ResetCycleResult,
     StatsRequest,
@@ -387,7 +387,7 @@ def test_reply_texts() -> None:
         f"Listed {image} in {file} (not deleted)",
         "w: changes once a monitor is attached",
     ]
-    missed = Change("w", image, "next", ("A",), ("B",))
+    missed = Change("w-id", "w", image, "next", ("A",), ("B",))
     assert removed("w", missed)[1] == "w: a.jpg on A (later on B)"
     assert removed(None, None, changed=False) == [
         "a.jpg is already listed for removal",
@@ -425,7 +425,7 @@ def test_commands_go_to_the_daemon_client(capsys: pytest.CaptureFixture[str]) ->
 
     assert cli.main(["status"], daemon_client=daemon_client) == 0
     assert capsys.readouterr() == ("Rotation active\n", "Warning: w\n")
-    assert sent == [Request(command="status")]
+    assert sent == [StatusRequest()]
 
 
 def test_ui_opens_the_page(monkeypatch: pytest.MonkeyPatch) -> None:

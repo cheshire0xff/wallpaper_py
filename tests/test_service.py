@@ -654,7 +654,9 @@ def test_a_monitor_on_another_port_waits_to_be_assigned(env: Env) -> None:
     env.service.tick()
     old = env.backend.unlist("ZeroMOD")
     env.backend.relist(replace(old, rect=None))  # the old port, detached
-    env.backend.relist(make_monitor("ZeroMOD", x=384, size=(192, 48), pnp="ZEROMOD-DP2"))
+    env.backend.relist(
+        make_monitor("ZeroMOD", x=384, size=(192, 48), pnp="ZEROMOD-DP2")
+    )
     shown = len(env.backend.set_calls)
     env.tick_for(INTERVAL)
     assert all(

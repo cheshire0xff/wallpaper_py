@@ -30,7 +30,7 @@ class UiState(BaseModel):
     # Lenient: a field dropped later is ignored, not a reason to lose the rest.
     model_config = ConfigDict(frozen=True, extra="ignore")
 
-    library_playlist: str | None = None  # by name; None: the first one
+    library_playlist: str | None = None  # a playlist's id; None: the first one
     library_tab: LibraryTab = "overview"
 
 

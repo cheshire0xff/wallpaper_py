@@ -154,7 +154,7 @@ def fill_menu(menu: QMenu, overview: Overview | None, autostart: bool) -> QActio
 
 def _add_playlist(menu: QMenu, playlist: PlaylistView) -> None:
     def run(text: str, command: TargetCommand) -> QAction:
-        return _add(menu, text, target_request(command, playlist.name))
+        return _add(menu, text, target_request(command, playlist.id))
 
     monitors = " + ".join(_monitor_label(m) for m in playlist.monitors)
     header = menu.addAction(_label(f"{_playlist_label(playlist)} · {monitors}"))

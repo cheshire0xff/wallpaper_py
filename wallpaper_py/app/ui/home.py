@@ -39,6 +39,7 @@ from PySide6.QtWidgets import (
 )
 from shiboken6 import Shiboken
 
+from ...core.settings import PlaylistId
 from ...protocol import (
     ErrorReply,
     MonitorView,
@@ -48,7 +49,7 @@ from ...protocol import (
     PrevResult,
     RemoveResult,
     Reply,
-    Request,
+    StatusRequest,
     StatusResult,
     TargetCommand,
     target_request,
@@ -194,8 +195,9 @@ class PlaylistRow(QWidget):
 
     # pylint: disable=too-many-instance-attributes
 
-    requested = Signal(str, str)  # playlist, command
-    hovered = Signal(object)  # this playlist when the pointer enters, None on leave
+    requested = Signal(str, str)  # playlist id, command
+    # This playlist's id when the pointer enters, None on leave.
+    hovered = Signal(object)
 
     def __init__(self, view: PlaylistView, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -296,8 +298,8 @@ class PlaylistRow(QWidget):
     # -- state -------------------------------------------------------------------
 
     @property
-    def name(self) -> str:
-        return self._view.name
+    def playlist_id(self) -> PlaylistId:
+        return self._view.id
 
     def view(self) -> PlaylistView:
         return self._view
@@ -404,7 +406,7 @@ class PlaylistRow(QWidget):
     @override
     def enterEvent(self, event: QEnterEvent) -> None:  # pylint: disable=invalid-name
         super().enterEvent(event)
-        self.hovered.emit(self._view.name)
+        self.hovered.emit(self._view.id)
 
     @override
     def leaveEvent(self, event: QEvent) -> None:  # pylint: disable=invalid-name
@@ -435,7 +437,7 @@ class PlaylistRow(QWidget):
     # -- buttons -----------------------------------------------------------------
 
     def _send(self, command: TargetCommand) -> None:
-        self.requested.emit(self._view.name, command)
+        self.requested.emit(self._view.id, command)
 
     @Slot()
     def _prev(self) -> None:
@@ -496,12 +498,12 @@ class HomePage(QWidget):
         self._client = client
         self._clock = clock
         self._overview: Overview | None = None
-        self._details: dict[str, PlaylistDetails] = {}
+        self._details: dict[PlaylistId, PlaylistDetails] = {}
         self._details_at = 0.0
         self._status_running = False
         self._status_again = False
         self._closed = False
-        self.rows: dict[str, PlaylistRow] = {}
+        self.rows: dict[PlaylistId, PlaylistRow] = {}
 
         self.loader = loader  # the window's, shared with Settings; it closes it
         self.loader.loaded.connect(self._thumbnail_loaded)
@@ -597,8 +599,8 @@ class HomePage(QWidget):
     def show_error(self, message: str) -> None:
         self._set_banner(f"Error: {message}")
 
-    def replied(self, playlist: str | None, reply: Reply) -> None:
-        """A command's reply (`playlist` None: the status request)."""
+    def replied(self, playlist: PlaylistId | None, reply: Reply) -> None:
+        """A command's reply (`playlist`: its id; None: the status request)."""
         if self._closed:
             return
         if playlist is None:
@@ -627,42 +629,42 @@ class HomePage(QWidget):
     # -- rows --------------------------------------------------------------------
 
     def _update_rows(self, overview: Overview) -> None:
-        names = [p.name for p in overview.playlists]
-        for name in [n for n in self.rows if n not in names]:
-            gone = self.rows.pop(name)
+        ids = [p.id for p in overview.playlists]
+        for gone_id in [i for i in self.rows if i not in ids]:
+            gone = self.rows.pop(gone_id)
             self._rows_box.removeWidget(gone)
             gone.hide()
             gone.deleteLater()
         for view in overview.playlists:
-            row = self.rows.get(view.name)
+            row = self.rows.get(view.id)
             if row is None:
                 new = PlaylistRow(view, self)
                 new.requested.connect(self._send)
                 new.hovered.connect(self._hover)
-                self.rows[view.name] = new
+                self.rows[view.id] = new
             else:
                 row.show_view(view)
         # In the overview's (the settings') order.
-        self.rows = {name: self.rows[name] for name in names}
+        self.rows = {playlist_id: self.rows[playlist_id] for playlist_id in ids}
         for index, row in enumerate(self.rows.values()):
             self._rows_box.removeWidget(row)
             self._rows_box.insertWidget(index, row)
             row.set_divider(index > 0)
-        self.empty.setVisible(not names and not overview.error)
+        self.empty.setVisible(not ids and not overview.error)
 
     @Slot()
     def _open_settings(self) -> None:
         self.page_wanted.emit("settings")
 
     @Slot(object)
-    def _hover(self, playlist: str | None) -> None:
+    def _hover(self, playlist: PlaylistId | None) -> None:
         """A row or a monitor is pointed at: highlight its playlist in both."""
         self.monitors_view.set_highlight(playlist)
-        for name, row in self.rows.items():
-            row.set_highlighted(name == playlist)
+        for playlist_id, row in self.rows.items():
+            row.set_highlighted(playlist_id == playlist)
 
     @Slot(str, str)
-    def _send(self, playlist: str, command: str) -> None:
+    def _send(self, playlist: PlaylistId, command: str) -> None:
         row = self.rows.get(playlist)
         if row is not None:
             row.show_message(None)
@@ -694,7 +696,7 @@ class HomePage(QWidget):
             self._status_again = True
             return
         self._status_running = True
-        self._client.run(Request(command="status"), _ReplyTo(self, None))
+        self._client.run(StatusRequest(), _ReplyTo(self, None))
 
     def _status_replied(self, reply: Reply) -> None:
         self._status_running = False
@@ -702,14 +704,14 @@ class HomePage(QWidget):
             self._status_again = False
             self._ask_status()
         if isinstance(reply, StatusResult):
-            self._details = {p.name: p for p in reply.playlists}
+            self._details = {p.id: p for p in reply.playlists}
             self._details_at = self._clock()
             self._refresh_details()
         elif isinstance(reply, ErrorReply) and reply.error.kind == "unreachable":
             self.show_error(reply.error.message)
 
     def _left(self, view: PlaylistView) -> float | None:
-        details = self._details.get(view.name)
+        details = self._details.get(view.id)
         if details is None or details.next_in_seconds is None:
             return None
         left = details.next_in_seconds
@@ -723,8 +725,8 @@ class HomePage(QWidget):
         any_counting = False
         for row in self.rows.values():
             view = row.view()
-            row.set_details(self._details.get(view.name), self._left(view))
-            any_counting |= counting(view, paused) and view.name in self._details
+            row.set_details(self._details.get(view.id), self._left(view))
+            any_counting |= counting(view, paused) and view.id in self._details
         if any_counting and not self._countdown.isActive():
             self._countdown.start()
         elif not any_counting:
