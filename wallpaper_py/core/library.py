@@ -1,5 +1,5 @@
 """
-Find the images in a playlist directory, and compare paths. The app scans
+Find the images in a playlist directory, and compare paths. The daemon scans
 with `scan` (cached by `Library`); the library window with `scan_files`,
 which also says when each image was added, and its thumbnail
 pre-generation with `walk` (stopped at any image).

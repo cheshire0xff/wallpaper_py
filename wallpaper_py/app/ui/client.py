@@ -1,16 +1,16 @@
 """
-How windows talk to the app: `Client`, the only thing they may use.
+How windows talk to the daemon: `Client`, the only thing they may use.
 
     client.run(request, on_reply)   a command; its Reply comes back later
     client.overview_changed         the latest Overview (also client.overview)
     client.changed                  a wallpaper changed (a Change)
     client.marks_changed            favourites or to-remove changed
-    client.failed                   the app can't be reached; nothing more comes
+    client.failed                   the daemon can't be reached; nothing more comes
 
-Windows never see the service, `ServiceWorker` or a socket. `SocketClient`
-implements it over the app's socket for the UI process: it subscribes (and
-starts the app first if none runs, which the CLI never does), and runs each command on
-a connection of its own. Everything is event driven: the UI thread never
+Windows never see `PlaylistService`, `ServiceWorker` or a socket. `SocketClient`
+implements it over the daemon's socket for the window process: it subscribes (and
+starts the daemon first if none runs, which the CLI never does), and runs each
+command on a connection of its own. Everything is event driven: the main thread never
 waits.
 """
 
@@ -77,7 +77,7 @@ class Client(QObject):
         self.overview: Overview | None = None  # None until the first arrives
 
     def run(self, request: CommandRequest, on_reply: ReplyCallback) -> None:
-        """Run `request` in the app; `on_reply` gets the reply (this thread)."""
+        """Run `request` in the daemon; `on_reply` gets the reply (this thread)."""
         raise NotImplementedError
 
     def _set_overview(self, overview: Overview) -> None:
@@ -87,9 +87,9 @@ class Client(QObject):
 
 class SocketClient(Client):
     """
-    `Client` over the app's socket. `start()` subscribes; if no app runs,
-    it calls `start_app` once and retries for START_TIMEOUT_S. `ended`
-    fires when an established subscription closes (the app quit). `idle`
+    `Client` over the daemon's socket. `start()` subscribes; if no daemon runs,
+    it calls `start_daemon` once and retries for START_TIMEOUT_S. `ended`
+    fires when an established subscription closes (the daemon quit). `idle`
     fires when the last command in flight has its reply (see `busy`).
     """
 
@@ -101,16 +101,16 @@ class SocketClient(Client):
     def __init__(
         self,
         name: str,
-        start_app: Callable[[], None] | None,
+        start_daemon: Callable[[], None] | None,
         *,
         start_timeout_s: float = START_TIMEOUT_S,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
         self._name = name
-        self._start_app = start_app
+        self._start_daemon = start_daemon
         self._start_timeout_s = start_timeout_s
-        self._deadline: float | None = None  # set once the app was started
+        self._deadline: float | None = None  # set once the daemon was started
         self._socket: QLocalSocket | None = None
         self._buffer = bytearray()
         self._subscribed = False
@@ -218,14 +218,14 @@ class SocketClient(Client):
             try:
                 message = ipc.decode_event(bytes(line))
             except ipc.ProtocolError as err:  # e.g. an event added later
-                log.info("Skipping a line from the app: %s", err)
+                log.info("Skipping a line from the daemon: %s", err)
                 continue
-            if isinstance(message, ErrorReply):  # the app refused
+            if isinstance(message, ErrorReply):  # the daemon refused
                 self._fail(message.error.message)
                 return
             if not self._subscribed:
                 self._subscribed = True
-                log.info("Connected to the app")
+                log.info("Connected to the daemon")
             if isinstance(message, OverviewChangedEvent):
                 self._set_overview(message.overview)
             elif isinstance(message, ChangedEvent):
@@ -253,17 +253,17 @@ class SocketClient(Client):
         if self._over or not self._subscribed:
             return
         self._read(socket)
-        log.info("The app closed the connection")
+        log.info("The daemon closed the connection")
         self.close()
         self.ended.emit()
 
     def _retry(self) -> None:
         if self._deadline is None:
-            if self._start_app is None:
+            if self._start_daemon is None:
                 self._fail("wallpaper_py is not running")
                 return
             try:
-                self._start_app()
+                self._start_daemon()
             except OSError as err:
                 self._fail(f"Cannot start wallpaper_py: {err}")
                 return

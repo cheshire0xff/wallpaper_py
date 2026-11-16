@@ -3,11 +3,11 @@ Home, the main window's first page: the monitors to scale on a panel, then
 one row per playlist with its current wallpaper (docs/design/README.md,
 "The look"; docs/design/home.png).
 
-Everything it shows comes from the app through `Client`: it redraws from
+Everything it shows comes from the daemon through `Client`: it redraws from
 `overview_changed` (never polls), and after each new overview asks once
 for `status` for the schedule (order, interval, time left), which it counts
 down locally until the next overview. Buttons send the playlist commands;
-their toggles (favourite, hold) show the app's state from the overview,
+their toggles (favourite, hold) show the daemon's state from the overview,
 never the click. A command's error shows in its row, not as a dialog.
 Pointing at a row (or at a monitor) highlights the playlist in both: a
 faint fill on the row, an accent outline on its monitors. Without
@@ -15,7 +15,7 @@ playlists, it says so, with a button to Settings (`page_wanted`).
 
 Image details (dimensions, file size), thumbnails and the small copies the
 monitor previews are rendered from are read from the files by
-`ThumbnailLoader`, off the UI thread (the window's, shared with Settings).
+`ThumbnailLoader`, off the main thread (the window's, shared with Settings).
 """
 
 from __future__ import annotations
@@ -115,7 +115,7 @@ def chip_text(view: PlaylistView) -> str | None:
 
 
 def counting(view: PlaylistView, paused: str | None) -> bool:
-    """Whether its time left runs down right now (as the app counts it)."""
+    """Whether its time left runs down right now (as the daemon counts it)."""
     return not view.manual and not view.held and view.attached and paused is None
 
 
@@ -575,7 +575,7 @@ class HomePage(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(self._scroll)
 
-    # -- from the app ------------------------------------------------------------
+    # -- from the daemon ------------------------------------------------------------
 
     @Slot(object)
     def show_overview(self, overview: Overview) -> None:

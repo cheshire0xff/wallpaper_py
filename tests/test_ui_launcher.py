@@ -1,4 +1,4 @@
-"""Opening the window on a page: the UI process's own socket, starting one."""
+"""Opening the window on a page: the window process's own socket, starting one."""
 
 from collections.abc import Iterator, Sequence
 from pathlib import Path
@@ -63,7 +63,7 @@ def ui_command(page: PageName) -> list[str]:
     return ["wallpaper", "ui", page]
 
 
-def test_name_is_next_to_the_apps(tmp_path: Path) -> None:
+def test_name_is_next_to_the_daemons(tmp_path: Path) -> None:
     assert ui_server_name(tmp_path) == ipc.server_name(tmp_path) + "-ui"
 
 

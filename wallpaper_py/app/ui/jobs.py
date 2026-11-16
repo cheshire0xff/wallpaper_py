@@ -1,15 +1,15 @@
 """
 Background work for the windows: a `QThreadPool` of its own, and the
-results delivered on the UI thread.
+results delivered on the main thread.
 
 `Jobs.run(key, work)` runs `work()` on a pool thread; `done(key, result)`
-fires on the UI thread with what it returned. `run_loop(work)` is for a job
+fires on the main thread with what it returned. `run_loop(work)` is for a job
 that delivers any number of results (`work(deliver)`, `deliver(key,
 result)` per result) until it returns: the grid's tile workers. `close()`
 drops the jobs not started yet, waits for the running ones and delivers
 nothing after; the owner calls it before it goes away.
 
-Workers emit on a relay that lives on the UI thread, so delivery is queued
+Workers emit on a relay that lives on the main thread, so delivery is queued
 (AGENTS.md, Qt rules). The pool is made before the relay: children go in
 creation order, so a pool deleted without `close()` still waits for its
 jobs before the relay they emit on is gone. A job is never taken back out
@@ -28,12 +28,12 @@ from PySide6.QtCore import QObject, QRunnable, QThread, QThreadPool, Signal, Slo
 
 log = logging.getLogger(__name__)
 
-# Hands one result to the UI thread: (key, result).
+# Hands one result to the main thread: (key, result).
 Deliver = Callable[[object, object], None]
 
 
 class _Relay(QObject):
-    """Lives on the UI thread; jobs emit on it."""
+    """Lives on the main thread; jobs emit on it."""
 
     done = Signal(object, object)  # key, result
 
@@ -66,7 +66,7 @@ class _Single:
 class Jobs(QObject):
     """See the module docstring."""
 
-    done = Signal(object, object)  # key, result: on the UI thread
+    done = Signal(object, object)  # key, result: on the main thread
 
     def __init__(
         self,

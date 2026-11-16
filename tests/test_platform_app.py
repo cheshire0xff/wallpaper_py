@@ -24,8 +24,8 @@ def test_screen_changes_are_debounced(qtbot: QtBot, qapp: QApplication) -> None:
 
 
 def test_instance_lock(tmp_path: Path) -> None:
-    first = InstanceLock(tmp_path / "data" / "app.lock")
-    second = InstanceLock(tmp_path / "data" / "app.lock")
+    first = InstanceLock(tmp_path / "data" / "daemon.lock")
+    second = InstanceLock(tmp_path / "data" / "daemon.lock")
     assert first.acquire()
     assert not second.acquire()
     first.release()

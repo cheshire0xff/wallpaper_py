@@ -31,7 +31,7 @@ class MonitorId:
     read and written.
 
     The one place an id is normalized: surrounding whitespace goes, so every
-    reader of the settings (the app, the settings window) gets the same id.
+    reader of the settings (the daemon, the settings window) gets the same id.
     """
 
     text: str

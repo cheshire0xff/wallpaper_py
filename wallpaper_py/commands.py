@@ -3,9 +3,9 @@ Playlist commands run on the service: a `Request` in, a result (or an
 error) out, as the data models of `protocol.py`; no text. The CLI formats
 its output from them, the tray and the windows show them.
 
-`execute()` runs a command on the app's service thread, whether it came over
-the socket (CLI, UI process) or from the tray. Besides the reply it returns
-the wallpaper change the command made, if any, so the app announces it like
+`execute()` runs a command on the daemon's service thread, whether it came over
+the socket (CLI, window process) or from the tray. Besides the reply it returns
+the wallpaper change the command made, if any, so the daemon announces it like
 a tick's. Qt-free, like the core.
 
 `open_service()` runs the service on the settings in the state database;
@@ -87,7 +87,7 @@ class Outcome(NamedTuple):
     """
     What a command did: its reply, the wallpaper change it made, and
     whether monitors wait to be rendered again (their playlist, look or
-    folder changed): the app then ticks before it replies.
+    folder changed): the daemon then ticks before it replies.
     """
 
     reply: Reply

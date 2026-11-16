@@ -1,11 +1,11 @@
 """
-The app: the one process that rotates the wallpapers and serves commands.
+The daemon: the one process that rotates the wallpapers and serves commands.
 
 `wallpaper tray` runs it with the tray icon (that is what starts at login);
-`wallpaper run` runs it headless in a terminal; the UI process starts it
+`wallpaper run` runs it headless in a terminal; the window process starts it
 (as `tray`) when it finds none running. Either way it holds the instance
 lock and runs the playlist service on its own thread, together
-with the command socket, so commands and ticks never overlap. The UI thread
+with the command socket, so commands and ticks never overlap. The main thread
 holds only the tray; the windows run in a process of their own
 (app/ui/process.py), which the tray starts on demand.
 """
@@ -36,18 +36,18 @@ from .processes import autostart_command, quit_on_interrupt, ui_command
 from .screens import ScreenWatcher
 from .tray import Tray
 from .ui.launcher import WindowOpener, ui_server_name
-from .worker import ServiceHost, ServiceSettings
+from .worker import ServiceSettings, ServiceThread
 
 log = logging.getLogger(__name__)
 
 SHUTDOWN_TIMEOUT_MS = 10_000
-# A CLI command run while no app was running holds the lock for a moment
+# A CLI command run while no daemon was running holds the lock for a moment
 # (cli.py): wait it out, or login's start could find it held and give up.
 LOCK_WAIT_S = 5.0
 
 
 @dataclass(frozen=True)
-class AppOptions:
+class DaemonOptions:
     tray: bool
     tick_period: float = 5.0
     quit_after_ticks: int | None = None  # for tests
@@ -56,7 +56,7 @@ class AppOptions:
 
 @dataclass(frozen=True)
 class Platform:
-    """The platform pieces the app uses; injectable for tests."""
+    """The platform pieces the daemon uses; injectable for tests."""
 
     backend_factory: Callable[[], Backend]
     presence_factory: Callable[[], Presence]
@@ -64,7 +64,7 @@ class Platform:
     thread_scope: Callable[[], AbstractContextManager[None]] = backends.thread_scope
 
 
-def run_app(options: AppOptions, platform: Platform) -> int:
+def run_daemon(options: DaemonOptions, platform: Platform) -> int:
     """Run until quit (tray menu, Ctrl+C, or `quit_after_ticks`)."""
     app = _application(options.tray)
     lock = InstanceLock(paths.instance_lock())
@@ -78,9 +78,11 @@ def run_app(options: AppOptions, platform: Platform) -> int:
         lock.release()
 
 
-def _run_locked(app: QCoreApplication, options: AppOptions, platform: Platform) -> int:
+def _run_locked(
+    app: QCoreApplication, options: DaemonOptions, platform: Platform
+) -> int:
     socket_name = server_name(paths.data_dir())
-    host = ServiceHost(
+    service_thread = ServiceThread(
         ServiceSettings(
             backend_factory=platform.backend_factory,
             presence_factory=platform.presence_factory,
@@ -95,13 +97,13 @@ def _run_locked(app: QCoreApplication, options: AppOptions, platform: Platform) 
         failures.append(error)
         app.exit(1)
 
-    host.failed.connect(failed)
+    service_thread.failed.connect(failed)
 
     tray: Tray | None = None
     if options.tray:
         opener = WindowOpener(ui_server_name(paths.data_dir()), ui_command)
         tray = Tray(
-            host,
+            service_thread,
             platform.autostart_factory(),
             autostart_command(),
             app.quit,
@@ -110,13 +112,13 @@ def _run_locked(app: QCoreApplication, options: AppOptions, platform: Platform) 
         opener.failed.connect(tray.notify)
     watcher = ScreenWatcher(app) if isinstance(app, QGuiApplication) else None
     if watcher is not None:
-        watcher.settled.connect(host.request_tick)
+        watcher.settled.connect(service_thread.request_tick)
     if options.quit_after_ticks is not None:
-        host.ticked.connect(_countdown(options.quit_after_ticks, app.quit))
+        service_thread.ticked.connect(_countdown(options.quit_after_ticks, app.quit))
 
     log.info("Started (data: %s, socket: %s)", paths.data_dir(), socket_name)
     with quit_on_interrupt(app):
-        host.start()
+        service_thread.start()
         if tray is not None:
             tray.show()
         try:
@@ -125,7 +127,7 @@ def _run_locked(app: QCoreApplication, options: AppOptions, platform: Platform) 
             if tray is not None:
                 tray.hide()
             log.info("Stopping the playlist service")
-            stopped = host.shutdown(SHUTDOWN_TIMEOUT_MS)
+            stopped = service_thread.shutdown(SHUTDOWN_TIMEOUT_MS)
     if not stopped:
         # Destroying a running QThread aborts the process anyway; say why.
         log.error("The playlist service did not stop in time; exiting")

@@ -24,7 +24,7 @@ from wallpaper_py.app.ui.settings_look import LookEditor
 from wallpaper_py.app.ui.thumbnails import ThumbnailLoader
 from wallpaper_py.app.ui.tiles import Pregenerator, TileLoader
 from wallpaper_py.app.ui.window import MainWindow, Sidebar
-from wallpaper_py.app.worker import ServiceHost, ServiceWorker
+from wallpaper_py.app.worker import ServiceThread, ServiceWorker
 from wallpaper_py.core import paths
 from wallpaper_py.core.thumbnail_cache import ThumbnailCache
 
@@ -50,7 +50,7 @@ OWNERS: dict[str, type | ModuleType] = {
     "PlaylistEditor": PlaylistEditor,
     "Pregenerator": Pregenerator,
     "ScreenWatcher": ScreenWatcher,
-    "ServiceHost": ServiceHost,
+    "ServiceThread": ServiceThread,
     "ServiceWorker": ServiceWorker,
     "SettingsPage": SettingsPage,
     "Sidebar": Sidebar,

@@ -1,4 +1,4 @@
-"""A `Client` for window tests: records requests, never reaches an app."""
+"""A `Client` for window tests: records requests, never reaches a daemon."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ class FakeClient(Client):
         self.calls.append((request, on_reply))
 
     def publish(self, overview: Overview) -> None:
-        """As if the app sent a new overview."""
+        """As if the daemon sent a new overview."""
         self._set_overview(overview)
 
     def commands(self) -> list[CommandRequest]:

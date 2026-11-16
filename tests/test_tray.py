@@ -20,7 +20,7 @@ from wallpaper_py.app.tray import (
     tooltip,
 )
 from wallpaper_py.app.ui.launcher import PageName
-from wallpaper_py.app.worker import ServiceHost, ServiceSettings
+from wallpaper_py.app.worker import ServiceSettings, ServiceThread
 from wallpaper_py.core.model import MonitorId
 from wallpaper_py.protocol import (
     ErrorReply,
@@ -299,14 +299,14 @@ def test_app_icon_keeps_transparency_and_tray_states() -> None:
 
 
 def test_tray_follows_the_overview() -> None:
-    host = ServiceHost(  # never started: requests just queue up
+    service_thread = ServiceThread(  # never started: requests just queue up
         ServiceSettings(lambda: FakeBackend([]), FakePresence, nullcontext)
     )
     autostart = FakeAutostart()
     quits: list[bool] = []
     pages: list[PageName] = []
     tray = Tray(
-        host,
+        service_thread,
         autostart,
         ["py", "tray"],
         lambda: quits.append(True),
@@ -314,7 +314,7 @@ def test_tray_follows_the_overview() -> None:
     )
     assert items(tray.menu)[0].text() == "Starting..."
 
-    host.overview_changed.emit(Overview(playlists=(WALLS,)))
+    service_thread.overview_changed.emit(Overview(playlists=(WALLS,)))
     assert items(tray.menu)[0].text() == "walls · AW3225QF + PLX2783H (off)"
 
     find(tray.menu, "Start at login").trigger()
@@ -330,11 +330,13 @@ def test_tray_follows_the_overview() -> None:
 
 
 def test_left_click_opens_home_window() -> None:
-    host = ServiceHost(
+    service_thread = ServiceThread(
         ServiceSettings(lambda: FakeBackend([]), FakePresence, nullcontext)
     )
     pages: list[PageName] = []
-    tray = Tray(host, FakeAutostart(), [], lambda: None, open_window=pages.append)
+    tray = Tray(
+        service_thread, FakeAutostart(), [], lambda: None, open_window=pages.append
+    )
 
     tray._activated(  # pylint: disable=protected-access
         QSystemTrayIcon.ActivationReason.Trigger
@@ -346,7 +348,7 @@ def test_left_click_opens_home_window() -> None:
 def test_tray_notifies_failed_commands(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    host = ServiceHost(
+    service_thread = ServiceThread(
         ServiceSettings(lambda: FakeBackend([]), FakePresence, nullcontext)
     )
     error = ErrorReply.make("not_attached", "None attached")
@@ -354,8 +356,8 @@ def test_tray_notifies_failed_commands(
     def submit(_: Request, callback: Callable[[Reply], None]) -> None:
         callback(error)  # as the service thread would answer
 
-    monkeypatch.setattr(host, "submit", submit)
-    tray = Tray(host, FakeAutostart(), [], lambda: None, open_window=print)
+    monkeypatch.setattr(service_thread, "submit", submit)
+    tray = Tray(service_thread, FakeAutostart(), [], lambda: None, open_window=print)
     notes: list[str] = []
     monkeypatch.setattr(tray, "notify", notes.append)
     tray.run(queued("next", "walls"))
@@ -365,30 +367,34 @@ def test_tray_notifies_failed_commands(
 def test_starting_without_playlists_notifies_once_and_opens_settings(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    host = ServiceHost(
+    service_thread = ServiceThread(
         ServiceSettings(lambda: FakeBackend([]), FakePresence, nullcontext)
     )
     pages: list[PageName] = []
-    tray = Tray(host, FakeAutostart(), [], lambda: None, open_window=pages.append)
+    tray = Tray(
+        service_thread, FakeAutostart(), [], lambda: None, open_window=pages.append
+    )
     shown: list[str] = []
     monkeypatch.setattr(tray, "_show_message", lambda m, _: shown.append(m))
-    host.overview_changed.emit(
+    service_thread.overview_changed.emit(
         Overview(error="favourites.txt is not UTF-8 text")
     )  # not started yet
-    host.overview_changed.emit(Overview())
-    host.overview_changed.emit(Overview())
+    service_thread.overview_changed.emit(Overview())
+    service_thread.overview_changed.emit(Overview())
     assert shown == ["favourites.txt is not UTF-8 text", NO_PLAYLISTS_NOTE]  # once
     tray._message_clicked()  # pylint: disable=protected-access
     assert pages == ["settings"]
 
 
 def test_other_notifications_open_nothing_when_clicked() -> None:
-    host = ServiceHost(
+    service_thread = ServiceThread(
         ServiceSettings(lambda: FakeBackend([]), FakePresence, nullcontext)
     )
     pages: list[PageName] = []
-    tray = Tray(host, FakeAutostart(), [], lambda: None, open_window=pages.append)
-    host.overview_changed.emit(Overview())  # the no-playlists note
+    tray = Tray(
+        service_thread, FakeAutostart(), [], lambda: None, open_window=pages.append
+    )
+    service_thread.overview_changed.emit(Overview())  # the no-playlists note
     tray.notify("None attached")  # shown over it
     tray._message_clicked()  # pylint: disable=protected-access
     assert not pages
@@ -397,12 +403,12 @@ def test_other_notifications_open_nothing_when_clicked() -> None:
 def test_starting_with_playlists_does_not_notify(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    host = ServiceHost(
+    service_thread = ServiceThread(
         ServiceSettings(lambda: FakeBackend([]), FakePresence, nullcontext)
     )
-    tray = Tray(host, FakeAutostart(), [], lambda: None, open_window=print)
+    tray = Tray(service_thread, FakeAutostart(), [], lambda: None, open_window=print)
     shown: list[str] = []
     monkeypatch.setattr(tray, "_show_message", lambda m, _: shown.append(m))
-    host.overview_changed.emit(Overview(playlists=(WALLS,)))
-    host.overview_changed.emit(Overview())  # the playlists deleted later
+    service_thread.overview_changed.emit(Overview(playlists=(WALLS,)))
+    service_thread.overview_changed.emit(Overview())  # the playlists deleted later
     assert not shown

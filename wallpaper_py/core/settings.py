@@ -2,7 +2,7 @@
 The settings: playlists, the monitors they drive and how each monitor
 shows its images, and the general settings (pausing, the list files).
 
-They live in the state database (core.store), written only by the app: the
+They live in the state database (core.store), written only by the daemon: the
 settings window reads them with the `settings` command and writes them with
 `save_settings` (docs/architecture.md). `Settings` is that whole edit, as
 stored and as sent; its fields are typed by pydantic, and what the values

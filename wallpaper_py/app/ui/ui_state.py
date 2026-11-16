@@ -1,7 +1,7 @@
 """
 The window's view state: what it shows, remembered between openings (the
 Library's playlist and tab). Not settings: no revision, never on the
-socket, nothing the app reads. Written only by the UI process, to
+socket, nothing the daemon reads. Written only by the window process, to
 `paths.ui_state()` (in the data directory, which About lists; not
 `QSettings`, which is the registry on Windows).
 

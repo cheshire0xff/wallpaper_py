@@ -5,7 +5,7 @@ The Settings page's edit, without widgets (settings.py shows it).
 folders, list files) and the monitors' rows as chosen. `Draft.of` reads
 saved `Settings`, `Draft.settings` turns a draft without problems back
 into `Settings` for `save_settings`. `problems` says what keeps a draft
-from being saved, per field, for the form to show next to it; the app
+from being saved, per field, for the form to show next to it; the daemon
 checks again when it saves (core.settings.check_settings).
 
 Also what the page derives from a draft: monitor labels for the
@@ -610,7 +610,7 @@ def current_images(
     base: Settings, draft: Draft, shown: Sequence[PlaylistView]
 ) -> dict[str, Path]:
     """
-    Playlist id -> the image it shows now (`shown`: the app's overview),
+    Playlist id -> the image it shows now (`shown`: the daemon's overview),
     for the saved playlists still in `draft` with their folder unchanged:
     a new folder shows an image from it once saved, unknown here.
     """

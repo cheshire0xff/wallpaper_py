@@ -395,7 +395,7 @@ def test_window_draws_the_overview(
         "zero",
         "tv",
     }
-    # Thumbnails arrive off the UI thread; details follow.
+    # Thumbnails arrive off the main thread; details follow.
     qtbot.waitUntil(lambda: konachan.thumbnail() is not None)
     assert konachan.image.pixmap() is not None
     assert konachan.details.text() == "3840×2160 · 4.2 MB"
@@ -595,7 +595,9 @@ def test_no_playlists_offers_settings(page: HomePage, client: FakeClient) -> Non
     assert page.empty.isHidden()
 
 
-def test_service_error_and_unreachable_app(page: HomePage, client: FakeClient) -> None:
+def test_service_error_and_unreachable_daemon(
+    page: HomePage, client: FakeClient
+) -> None:
     client.publish(Overview(error="favourites.txt is not UTF-8 text"))
     assert page.banner.text() == "Error: favourites.txt is not UTF-8 text"
     assert not page.rows and page.empty.isHidden()

@@ -1,5 +1,5 @@
 """
-The main window: the sidebar (its selected page and the app's status),
+The main window: the sidebar (its selected page and the daemon's status),
 opening and switching pages (unsaved settings stay), closing with unsaved
 settings (Save / Discard / Cancel), and the tones from the palette, derived
 again when it changes. Through a fake Client (never a real app).
@@ -130,7 +130,7 @@ def dot(window: MainWindow) -> str:
     return window.sidebar.dot.kind
 
 
-def test_the_sidebar_status_follows_the_app(
+def test_the_sidebar_status_follows_the_daemon(
     window: MainWindow, client: FakeClient
 ) -> None:
     sidebar = window.sidebar
@@ -185,7 +185,7 @@ def test_closing_with_unsaved_settings_asks(
     dialogs.unsaved_answer = choice
     closed: list[bool] = []
     window.closed.connect(lambda: closed.append(True))
-    # Discard closes; Save closes once the app has saved.
+    # Discard closes; Save closes once the daemon has saved.
     assert window.close() == (choice == "discard")
     assert dialogs.asked == 1
     assert bool(requests(client, SaveSettingsRequest)) == (choice == "save")

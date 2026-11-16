@@ -1,8 +1,8 @@
 """
-Opening the window on a page: in the UI process that runs, else start one.
+Opening the window on a page: in the window process that runs, else start one.
 
-The UI process listens on its own small socket (`UiServer`, next to the
-app's, name from `ipc.server_name(data_dir, "ui")`) for one kind of
+The window process listens on its own small socket (`UiServer`, next to the
+daemon's, name from `ipc.server_name(data_dir, "ui")`) for one kind of
 request, "show the window on this page":
 
     -> {"v": 3, "page": "home"}
@@ -10,8 +10,8 @@ request, "show the window on this page":
 
 `WindowOpener` asks it from the tray without blocking, and starts
 `wallpaper ui <page>` if nothing answers; `show_in_running_ui` asks it
-from a starting UI process (blocking, before its event loop runs), which
-exits if another one answered. At most one UI process runs: it holds
+from a starting window process (blocking, before its event loop runs), which
+exits if another one answered. At most one window process runs: it holds
 `paths.ui_lock()` while it listens.
 """
 
@@ -57,7 +57,7 @@ def ui_server_name(data_dir: Path) -> str:
 
 
 class UiServer(ipc.LineServer):
-    """In the UI process: `show_requested(page)` for each valid request."""
+    """In the window process: `show_requested(page)` for each valid request."""
 
     show_requested = Signal(str)  # PageName
 
@@ -81,7 +81,7 @@ class UiServer(ipc.LineServer):
 
 def show_in_running_ui(name: str, request: ShowRequest) -> bool:
     """
-    Blocking: True if a running UI process showed the page, False if
+    Blocking: True if a running window process showed the page, False if
     none runs. Raises WallpaperError if it refused or did not answer.
     """
     allow_foreground()
@@ -105,7 +105,7 @@ def _decode(line: bytes) -> ShowReply:
 
 class WindowOpener(QObject):
     """
-    For the tray: `open(page)` asks the running UI process to show the
+    For the tray: `open(page)` asks the running window process to show the
     window on that page, or starts one (`command(page)`) if none answers.
     Never blocks; problems are reported through `failed`.
     """

@@ -177,7 +177,7 @@ def test_asks_one_at_a_time_and_again_on_its_playlists_changes(
     assert len(asked(client)) == 3
 
 
-def test_nothing_is_asked_while_the_app_has_an_error(
+def test_nothing_is_asked_while_the_daemon_has_an_error(
     page: LibraryPage, client: FakeClient
 ) -> None:
     client.publish(overview("konachan", error="favourites.txt has a BOM"))
@@ -387,7 +387,7 @@ def test_thumbnails_are_made_for_every_playlist_and_list(
     assert page.pregenerator.sources() == Sources(folders, lists)
     page.playlist_combo.setCurrentIndex(1)  # fantasy's first now
     assert page.pregenerator.sources() == Sources(folders[::-1], lists)
-    # The app's service stopped: its overview names no playlists, which is
+    # The daemon's service stopped: its overview names no playlists, which is
     # no reason to stop (or to prune everything).
     client.publish(overview(error="favourites.txt is not UTF-8"))
     assert page.pregenerator.sources() == Sources(folders[::-1], lists)

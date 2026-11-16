@@ -1,7 +1,7 @@
 """
 The playlist service: rotates wallpapers, walks history, marks images.
 
-Driven by `tick()` (every few seconds, from the app's timer) and by user
+Driven by `tick()` (every few seconds, from the daemon's timer) and by user
 commands (`next`, `previous`, `pick`, `favourite`, `remove`, `hold`,
 `resume`, `reset_cycle`, ...). The backend, presence hook, clock and
 random generator are injected, so all of it is tested with fakes.

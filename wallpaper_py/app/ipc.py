@@ -1,6 +1,6 @@
 """
-Local sockets: the running app's command socket, and the line framing it
-shares with the UI process's own small socket (app/ui/launcher.py).
+Local sockets: the running daemon's command socket, and the line framing it
+shares with the window process's own small socket (app/ui/launcher.py).
 
 `QLocalServer` is a named pipe on Windows and a Unix socket elsewhere,
 readable only by the current user. One line of JSON each way per
@@ -9,13 +9,13 @@ connection (protocol.py, docs/protocol.md):
     -> {"v": 3, "request": {"command": "next", "target": "konachan"}}
     <- {"command": "next", "playlist": "konachan", "change": {...}}
 
-except `subscribe`, which keeps the connection open: the app then writes
+except `subscribe`, which keeps the connection open: the daemon then writes
 one event per line until it quits.
 
-Clients: `send()` blocks (the CLI; `None` means no app is running, and the
+Clients: `send()` blocks (the CLI; `None` means no daemon is running, and the
 CLI then runs the command itself); `LineRequest` is event driven (the tray and the UI
 process, which must not block their event loop). The command server lives
-on the app's service thread and runs each request there as it arrives.
+on the daemon's service thread and runs each request there as it arrives.
 """
 
 from __future__ import annotations
@@ -70,8 +70,8 @@ class ProtocolError(WallpaperError):
 def server_name(data_dir: Path, role: str = "") -> str:
     """
     Per user and per state directory, so two users (Windows pipe names are
-    machine-wide) or two test runs never meet. `role` tells the app's
-    socket ("") from the UI process's ("ui").
+    machine-wide) or two test runs never meet. `role` tells the daemon's
+    socket ("") from the window process's ("ui").
     """
     key = os.path.normcase(os.path.abspath(data_dir))
     name = f"wallpaper_py-{hashlib.sha1(key.encode()).hexdigest()[:16]}"
@@ -81,7 +81,7 @@ def server_name(data_dir: Path, role: str = "") -> str:
 # -- messages --------------------------------------------------------------------
 
 _REPLY: TypeAdapter[Reply] = TypeAdapter(Reply)
-# What a subscriber reads: events, or one error if the app refused.
+# What a subscriber reads: events, or one error if the daemon refused.
 _STREAMED: TypeAdapter[Event | ErrorReply] = TypeAdapter(Event | ErrorReply)
 
 
@@ -109,7 +109,7 @@ def _decode[T](adapter: TypeAdapter[T], line: bytes, what: str) -> T:
     try:
         return adapter.validate_json(line)
     except ValidationError as err:
-        raise ProtocolError(f"Malformed {what} from the app: {brief(err)}") from err
+        raise ProtocolError(f"Malformed {what} from the daemon: {brief(err)}") from err
 
 
 def brief(err: ValidationError) -> str:
@@ -126,9 +126,9 @@ def send(
     name: str, envelope: Envelope, timeout: float = REPLY_TIMEOUT_S
 ) -> Reply | None:
     """
-    Run a command in the running app and return its reply; None if no app
-    is running. Raises WallpaperError if an app is there but doesn't answer
-    (the caller must then *not* act on its own: the app may be mid-change).
+    Run a command in the running daemon and return its reply; None if no daemon
+    is running. Raises WallpaperError if a daemon is there but doesn't answer
+    (the caller must then *not* act on its own: the daemon may be mid-change).
 
     Call it from a process that is not serving the socket itself: PySide
     keeps the GIL while it waits, which would starve the server's thread.
@@ -401,7 +401,7 @@ class LineServer(QObject):
 
 class CommandServer(LineServer):
     """
-    The app's socket. Emits `received(connection_id, CommandRequest)`; the owner
+    The daemon's socket. Emits `received(connection_id, CommandRequest)`; the owner
     answers with `reply(connection_id, Reply)`. A `subscribe` request is
     announced with `subscribed(connection_id)` and the connection stays
     open for `send_event()` / `broadcast()`. Malformed requests and other

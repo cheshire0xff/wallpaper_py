@@ -9,7 +9,7 @@ libraries (10k+ images). See [todo.md](todo.md) for the feature list,
 [docs/architecture.md](docs/architecture.md) for the design.
 
 **Status:** the core, the Windows and KDE backends, the playlist service and
-the tray app exist, plus the UI process with its window (Home and
+the tray app exist, plus the window process with its window (Home and
 Settings). The library is next.
 
 ## Install

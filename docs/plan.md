@@ -11,7 +11,7 @@ thin. See [architecture.md](architecture.md) for the layers.
 | 1 | Core model, safe setter, Windows backend, CLI `list`/`set`, tooling, CI | done |
 | 2 | Playlists, mirrored groups, scheduler, history, favourites, to-remove | done |
 | 3 | App shell: tray, single instance, IPC, autostart | done |
-| 4 | UI process, one window (Home, Library, Settings), pick / hold / manual | done |
+| 4 | Window process, one window (Home, Library, Settings), pick / hold / manual | done |
 | 4b | Settings in the database, per-monitor looks, previews, backgrounds | done |
 | 4c | More backgrounds for Fit: dominant, blur | done |
 | 4d | Blur strength and darkening per monitor; the look stored as one value | done |
@@ -143,7 +143,7 @@ window process).
        emits one `event` signal and broadcasts to the subscribers. It
        replaces the `changed` and `overview_changed` signals.
      - `LocalClient(Client)` on the main thread: `run` is today's
-       `ServiceHost.submit` with its callbacks (queued to the service
+       `ServiceThread.submit` with its callbacks (queued to the service
        thread, the reply back through `replied`); events go through
        `Client._dispatch(event)`, moved out of `SocketClient._read` and
        shared by both. The models travel as they are (frozen, so safe to
@@ -158,7 +158,7 @@ window process).
    - **b. The CLI as a plain client.** Playlist commands need the daemon:
      without one, the CLI says so (`NOT_RUNNING`: "`wallpaper tray`
      starts it") and exits non-zero. It still never starts the daemon,
-     and no longer runs the command itself: `send_to_app`'s
+     and no longer runs the command itself: `send_to_daemon`'s
      lock-and-retry loop, `Context.run_here`, `Answer.here` and its texts
      go, and so does the daemon's wait for a CLI holding its lock
      (`LOCK_WAIT_S`, `lock_wait_s`): the instance lock has one kind of
@@ -240,7 +240,7 @@ say they come later).
   app: their tabs show the whole list, with an *Only <playlist>* toggle
   (off by default) for the entries in the playlist's folder.
 - Remembered: the playlist, the tab, each tab's sort, the toggles. In
-  `ui-state.json` in the data directory, written only by the UI process
+  `ui-state.json` in the data directory, written only by the window process
   (a pydantic model; missing or unreadable: the defaults, logged, never
   an error shown). It is view state, not settings: no revision, no
   socket, nothing the app reads. Not `QSettings`: that is the registry on
@@ -310,10 +310,10 @@ Lists (shared by all playlists)
   [-n N]`, and `--image PATH` on `fav` / `unfav` / `remove` / `unremove`.
 - docs/protocol.md gets the new commands and the event.
 
-### What the UI process reads itself
+### What the window process reads itself
 
 Writes are always commands: the service stays the only writer. For the
-grids, the UI process reads these itself, off the UI thread:
+grids, the window process reads these itself, off the main thread:
 
 - The playlist's folder: `core.library.scan`, plus each file's "added"
   time for sorting: the creation time on Windows (of the link itself for
@@ -344,7 +344,7 @@ images), built from the Phase 0 spike (`spikes/grid_prototype.py`):
   dropped before decoding. A tile fades in from the panel tone when its
   thumbnail arrives (as in the phone app).
 - In memory: an LRU with a byte budget, built in and generous (~1.5 GB,
-  no setting). The thumbnails live only in the UI process: closing the
+  no setting). The thumbnails live only in the window process: closing the
   window ends it and gives everything back, so no "Free memory" button;
   the always-running app never holds or makes thumbnails.
 - On disk: `paths.thumbnail_dir()`, one JPEG per image at tile size x
@@ -389,7 +389,7 @@ Over the page (not a window of its own), on the panel tone:
 
 - Fitted at first; the wheel zooms at the pointer (up to ~5x), a
   double-click toggles zoom / fit, dragging pans. Decoded at full size
-  off the UI thread; the thumbnail stands in until then.
+  off the main thread; the thumbnail stands in until then.
 - An info overlay (a click hides / shows it): the full path (selectable,
   with *Copy path*), dimensions, file size.
 - Toggles for favourite and to remove (by path, so un-favourite and
@@ -495,7 +495,7 @@ no stylesheet.
    an error, and keeps files written since it started. Threads are
    `QRunnable`s on each object's own `QThreadPool` (the pre-generation's:
    one thread, low priority), as `ThumbnailLoader`'s, all through one
-   helper (`Jobs`: a pool, results on the UI thread); the Qt-rules test
+   helper (`Jobs`: a pool, results on the main thread); the Qt-rules test
    now allows an item model's `rowCount` / `data` and a delegate's
    `paint` / `sizeHint` (AGENTS.md rule 3). The window stops the threads
    when it closes, and on `aboutToQuit` when the app quits with it open.
@@ -555,7 +555,7 @@ process may not), on any change the playlist makes: scheduled, next / prev
 custom sound file per playlist only if missed.
 
 Sizes on disk of the render and thumbnail caches in About: never worked
-out on the UI thread (walking a 20k-image thumbnail cache would stall
+out on the main thread (walking a 20k-image thumbnail cache would stall
 it). (The library stats moved to Phase 5's Overview tab.)
 
 Virtual backend and page renders (nice to have, for testing; not needed
@@ -567,7 +567,7 @@ before anything else):
   or not) and "sets" wallpapers by recording them, never touching the
   desktop. It runs with its own data dir and socket names, so it never
   meets a real running app. Much of it exists in `tests/fakes.py`.
-- End-to-end tests on it: the real app process, the real UI process
+- End-to-end tests on it: the real app process, the real window process
   and the CLI over real sockets (today each process is tested alone
   against fakes; the wiring between them only by hand). Monitor
   scenarios become data: the OLED switched off and back, 4K + a

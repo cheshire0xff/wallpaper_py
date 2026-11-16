@@ -74,7 +74,7 @@ per-user log directory: `%LOCALAPPDATA%\wallpaper_py\Logs` on Windows).
 11. **One window, to the front.** With the window behind another app or
     minimised, tray *Open wallpaper_py*, *Settings…* and `wallpaper ui
     library`: the same window comes to the front on that page, never a
-    second one. Closing it ends the UI process (Task Manager); tray *Quit*
+    second one. Closing it ends the window process (Task Manager); tray *Quit*
     closes the window too.
 12. **CLI without the app.** Quit the app: `wallpaper --verbose next` runs
     the command itself, the wallpaper changes, and no process is left

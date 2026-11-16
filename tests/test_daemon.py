@@ -1,7 +1,7 @@
 """
 The whole app in-process (fake backend), with the CLI as a separate process
 like in real use: single instance, commands through the socket, or run by
-the CLI itself (under the app's lock) when no app is running.
+the CLI itself (under the daemon's lock) when no daemon is running.
 """
 
 import logging
@@ -20,11 +20,11 @@ from PySide6.QtWidgets import QApplication
 from pytestqt.qtbot import QtBot
 
 from wallpaper_py import cli as cli_module
-from wallpaper_py.app import runtime as app_runtime
+from wallpaper_py.app import runtime as daemon_runtime
 from wallpaper_py.app.instance import InstanceLock
 from wallpaper_py.app.ipc import CommandServer
 from wallpaper_py.app.processes import autostart_command
-from wallpaper_py.app.runtime import AppOptions, Platform, run_app
+from wallpaper_py.app.runtime import DaemonOptions, Platform, run_daemon
 from wallpaper_py.app.ui import process as ui_process
 from wallpaper_py.core import paths
 from wallpaper_py.core.model import WallpaperError
@@ -64,7 +64,7 @@ def test_tray_and_ui_set_the_application_icon(
     try:
         qt_application.setWindowIcon(QIcon())
         assert qt_application.windowIcon().isNull()
-        app_runtime._application(tray=True)  # pylint: disable=protected-access
+        daemon_runtime._application(tray=True)  # pylint: disable=protected-access
         assert not qt_application.windowIcon().isNull()
 
         qt_application.setWindowIcon(QIcon())
@@ -82,8 +82,8 @@ def test_runs_and_quits_after_ticks(
     tmp_path: Path, platform: Platform, backend: FakeBackend, tray: bool
 ) -> None:
     write_settings(tmp_path)
-    options = AppOptions(tray=tray, quit_after_ticks=1)
-    assert run_app(options, platform) == 0
+    options = DaemonOptions(tray=tray, quit_after_ticks=1)
+    assert run_daemon(options, platform) == 0
     assert [c.source and c.source.name for c in backend.set_calls] == ["a.jpg"]
     assert InstanceLock(paths.instance_lock()).acquire()  # released
 
@@ -92,14 +92,14 @@ def test_second_instance_is_refused(platform: Platform) -> None:
     lock = InstanceLock(paths.instance_lock())
     assert lock.acquire()
     try:
-        options = AppOptions(tray=False, lock_wait_s=0.2)
+        options = DaemonOptions(tray=False, lock_wait_s=0.2)
         with pytest.raises(WallpaperError, match="already running"):
-            run_app(options, platform)
+            run_daemon(options, platform)
     finally:
         lock.release()
 
 
-def test_cli_commands_go_through_the_running_app(
+def test_cli_commands_go_through_the_running_daemon(
     qtbot: QtBot, tmp_path: Path, platform: Platform, backend: FakeBackend
 ) -> None:
     write_settings(tmp_path)
@@ -107,18 +107,18 @@ def test_cli_commands_go_through_the_running_app(
     results: dict[str, subprocess.CompletedProcess[str]] = {}
 
     def terminal() -> None:
-        """Commands from another process, while the app's loop keeps serving."""
+        """Commands from another process, while the daemon's loop keeps serving."""
         for name in ("next", "prev"):
             results[name] = run_python(qtbot, CLI, *cli, name)
         QCoreApplication.quit()
 
     QTimer.singleShot(0, terminal)  # runs once exec() started: the socket is up
-    assert run_app(AppOptions(tray=False), platform) == 0
+    assert run_daemon(DaemonOptions(tray=False), platform) == 0
 
     assert results["next"].returncode == 0, results["next"].stderr
     assert results["next"].stdout.strip() == "walls: b.jpg on Main"
     assert results["prev"].stdout.strip() == "walls: a.jpg on Main"
-    # Every change was made by the app (the CLI's backend factory fails).
+    # Every change was made by the daemon (the CLI's backend factory fails).
     assert [c.source and c.source.name for c in backend.set_calls] == [
         "a.jpg",
         "b.jpg",
@@ -126,7 +126,7 @@ def test_cli_commands_go_through_the_running_app(
     ]
 
 
-def app_running() -> bool:
+def daemon_running() -> bool:
     lock = InstanceLock(paths.instance_lock())
     if lock.acquire():
         lock.release()
@@ -136,7 +136,7 @@ def app_running() -> bool:
 
 @contextmanager
 def lock_held(seconds: float) -> Iterator[subprocess.Popen[str]]:
-    """The app's lock, held by another process for `seconds` from now."""
+    """The daemon's lock, held by another process for `seconds` from now."""
     argv = [sys.executable, "-c", HOLD_LOCK, str(paths.data_dir()), str(seconds)]
     with subprocess.Popen(
         argv, stdout=subprocess.PIPE, text=True, creationflags=NO_WINDOW
@@ -147,13 +147,13 @@ def lock_held(seconds: float) -> Iterator[subprocess.Popen[str]]:
         holder.wait(timeout=30)
 
 
-def test_cli_runs_here_when_no_app_runs(qtbot: QtBot, tmp_path: Path) -> None:
+def test_cli_runs_here_when_no_daemon_runs(qtbot: QtBot, tmp_path: Path) -> None:
     write_settings(tmp_path)
     cli = [str(paths.data_dir())]
     first = run_python(qtbot, CLI_HERE, *cli, "next")
     assert first.returncode == 0, first.stderr
     assert first.stdout.strip() == "walls: a.jpg on Main"  # no tick first
-    assert not app_running()  # nothing left behind
+    assert not daemon_running()  # nothing left behind
     assert run_python(qtbot, CLI_HERE, *cli, "next").stdout.strip() == (
         "walls: b.jpg on Main"  # the state was kept
     )
@@ -162,7 +162,7 @@ def test_cli_runs_here_when_no_app_runs(qtbot: QtBot, tmp_path: Path) -> None:
     assert status.rstrip().endswith(cli_module.NOT_RUNNING)
 
 
-def test_two_clis_without_an_app_take_turns(tmp_path: Path) -> None:
+def test_two_clis_without_a_daemon_take_turns(tmp_path: Path) -> None:
     write_settings(tmp_path)
     argv = [sys.executable, "-c", CLI_HERE, str(paths.data_dir()), "next"]
     with ExitStack() as stack:
@@ -188,7 +188,7 @@ def test_two_clis_without_an_app_take_turns(tmp_path: Path) -> None:
 
 
 def test_cli_waits_while_the_lock_is_held(qtbot: QtBot, tmp_path: Path) -> None:
-    """An app starting (lock taken, socket not up yet), or a command here."""
+    """A daemon starting (lock taken, socket not up yet), or a command here."""
     write_settings(tmp_path)
     with lock_held(1.0):
         started = time.monotonic()
@@ -198,18 +198,18 @@ def test_cli_waits_while_the_lock_is_held(qtbot: QtBot, tmp_path: Path) -> None:
     assert time.monotonic() - started > 0.5
 
 
-def test_app_waits_for_a_command_run_here(
+def test_daemon_waits_for_a_command_run_here(
     tmp_path: Path, platform: Platform, backend: FakeBackend
 ) -> None:
-    """Login starting the app while a CLI command holds the lock."""
+    """Login starting the daemon while a CLI command holds the lock."""
     write_settings(tmp_path)
-    options = AppOptions(tray=False, quit_after_ticks=1)
+    options = DaemonOptions(tray=False, quit_after_ticks=1)
     with lock_held(1.0):
-        assert run_app(options, platform) == 0
+        assert run_daemon(options, platform) == 0
     assert [c.source and c.source.name for c in backend.set_calls] == ["a.jpg"]
 
 
-def test_socket_failure_stops_the_app(
+def test_socket_failure_stops_the_daemon(
     tmp_path: Path, platform: Platform, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     def cannot_listen(self: CommandServer) -> None:
@@ -218,8 +218,8 @@ def test_socket_failure_stops_the_app(
     monkeypatch.setattr(CommandServer, "listen", cannot_listen)
     write_settings(tmp_path)
     with pytest.raises(WallpaperError, match="Cannot open the command socket"):
-        run_app(AppOptions(tray=False), platform)
-    assert not app_running()
+        run_daemon(DaemonOptions(tray=False), platform)
+    assert not daemon_running()
 
 
 def test_autostart_command_starts_the_tray_without_a_console() -> None:
@@ -237,7 +237,7 @@ def test_ctrl_c_stops_cleanly(
     caplog.set_level(logging.INFO)
     write_settings(tmp_path)
     QTimer.singleShot(200, lambda: signal.raise_signal(signal.SIGINT))
-    assert run_app(AppOptions(tray=False), platform) == 0
+    assert run_daemon(DaemonOptions(tray=False), platform) == 0
     messages = [r.getMessage() for r in caplog.records]
     assert "Ctrl+C: stopping (press it again to exit at once)" in messages
     assert messages[-1] == "Stopped"

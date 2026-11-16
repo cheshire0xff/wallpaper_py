@@ -511,7 +511,7 @@ def test_settings_and_save_settings(service: PlaylistService) -> None:
     )
     saved = outcome.reply
     assert isinstance(saved, SaveSettingsResult)
-    assert outcome.render  # the app ticks before replying
+    assert outcome.render  # the daemon ticks before replying
     assert saved.revision == reply.revision + 1
     assert len(saved.warnings) == 2  # 10m is shorter than the idle pause
     assert service.settings == edit

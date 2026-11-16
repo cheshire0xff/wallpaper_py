@@ -1,6 +1,6 @@
 # Socket protocol
 
-How to talk to the running app: the CLI, the tray's UI process and any
+How to talk to the running daemon: the CLI, the tray's window process and any
 other program use the same socket and the same messages. The models live in
 [`wallpaper_py/protocol.py`](../wallpaper_py/protocol.py); the generated
 [JSON Schema](protocol.schema.json) describes every message
@@ -19,12 +19,12 @@ release it may still change in place.)
   digits of the SHA-1 of the per-user data directory (normalized, absolute
   path); see `ipc.server_name`.
 - One JSON object per line (UTF-8, `\n`), one request per connection: send
-  one line, read one line, and the app closes the connection. The exception
+  one line, read one line, and the daemon closes the connection. The exception
   is `subscribe` (below).
-- No app listening means it isn't running. The CLI then runs the command
-  itself (holding the app's lock) instead; the UI process starts the app
+- No daemon listening means it isn't running. The CLI then runs the command
+  itself (holding the daemon's lock) instead; the window process starts the daemon
   (`pythonw -m wallpaper_py tray`) and retries for up to 10 s.
-- A command runs on the app's service thread between ticks, so the reply
+- A command runs on the daemon's service thread between ticks, so the reply
   can take a while (a 4K render, or a first scan of a big directory): the
   CLI waits up to 120 s.
 
@@ -43,7 +43,7 @@ release it may still change in place.)
   name, a unique part of one, or the full id). It may be left out when
   there is only one playlist; for `stats`, leaving it out means every
   playlist.
-- `request.image`, an absolute path (the app doesn't know the client's
+- `request.image`, an absolute path (the daemon doesn't know the client's
   directory), in any directory:
   - `pick` (required): the image to show.
   - `fav`, `unfav`, `remove`, `unremove` (required for `unremove`): the
@@ -58,7 +58,7 @@ release it may still change in place.)
 ```
 
 - `request.rescan` (`stats` only, default `false`): scan the folders
-  again first (the app's scan is up to 5 min old).
+  again first (the daemon's scan is up to 5 min old).
 - `request.settings` and `request.revision` (`save_settings` only, and
   required there): the whole edited settings (below), and the `revision`
   of the ones the edit was made on (from `settings`).
@@ -105,7 +105,7 @@ cycle: it isn't shuffled yet) or the sorted walk, which wraps around.
 Images listed to remove, gone or unreadable are left out. While
 to-remove.txt has never been read it answers `failed`.
 
-`stats` counts what each playlist picks up, from the app's scan of its
+`stats` counts what each playlist picks up, from the daemon's scan of its
 folder, its shuffle deck and the lists; it changes nothing. `images` =
 `seen` + `unseen` + `skipped`, always: `skipped` are the images listed to
 remove or that failed to load; `seen`, of the rest, the ones drawn in this
@@ -125,7 +125,7 @@ asks first.
 
 ## Settings
 
-The settings live in the app's state database; only the app writes them.
+The settings live in the daemon's state database; only the daemon writes them.
 `settings` reads them, with their `revision`; `save_settings` replaces
 them as a whole and uses them at once: every monitor whose playlist or
 look changed shows its image rendered again before the reply, and the new
@@ -164,13 +164,13 @@ one.
   app's data directory).
 
 A list file (favourites, to-remove) that can't be used (e.g. saved with a
-byte order mark) stops the service, whether at start, on a tick or in a
+byte order mark) stops `PlaylistService`, whether at start, on a tick or in a
 command: every command then answers `config_error`, and the overview's
-`error` says why, until the file is fixed (the app tries again on every
+`error` says why, until the file is fixed (the daemon tries again on every
 tick).
 
 While to-remove.txt has never been read (another program holds it open
-since the app started), no image is chosen: ticks wait, and `next`,
+since the daemon started), no image is chosen: ticks wait, and `next`,
 `prev` and `pick` answer `failed` until it can be read. Once read, the last
 list read stands in while the file is busy.
 
@@ -193,7 +193,7 @@ whether it is attached (`null`: not listed right now), and its look.
 | Kind | Meaning |
 |---|---|
 | `protocol` | malformed request, or another protocol version |
-| `config_error` | a list file can't be used; the app waits for a fix |
+| `config_error` | a list file can't be used; the daemon waits for a fix |
 | `unknown_target` | no such playlist or monitor, the monitor is in no playlist, or several playlists and none named |
 | `not_attached` | none of the playlist's monitors is attached |
 | `no_images` | nothing to show in the playlist's directory |
@@ -202,8 +202,8 @@ whether it is attached (`null`: not listed right now), and its look.
 | `invalid_settings` | `save_settings`: a value can't be used; nothing was saved |
 | `stale_settings` | `save_settings`: the settings changed since they were read; nothing was saved |
 | `failed` | any other expected failure; the message says what |
-| `internal` | a bug; the app logged the details |
-| `unreachable` | never sent by the app: a client's own "no app, or it did not answer" |
+| `internal` | a bug; the daemon logged the details |
+| `unreachable` | never sent by the daemon: a client's own "no daemon, or it did not answer" |
 
 The message is meant for people; programs decide by `kind`.
 
@@ -213,14 +213,14 @@ The message is meant for people; programs decide by `kind`.
 {"v": 3, "request": {"command": "subscribe"}}
 ```
 
-The connection stays open and the app writes one event per line, tagged on
+The connection stays open and the daemon writes one event per line, tagged on
 `event`, until it quits (the connection then closes). The first event is
 always the current `overview_changed`. A refused subscription gets one
 error line instead, then the connection closes.
 
 | Event | Fields | When |
 |---|---|---|
-| `overview_changed` | `overview`: `playlists` (each: `id`, `name`, `directory`, `monitors`, `current`, `favourite` (null: favourites.txt can't be read yet, so it isn't known), `held`, `manual`), `monitors` (every monitor the desktop lists, also those in no playlist: `id`, `name`, `geometry`, `look`), `paused`, `error` (the app is up but its service isn't: e.g. a list file it can't use), `favourites_file` and `to_remove_file` (the lists' paths; null while `error`) | on subscribing, then whenever it changes (also after `hold` / `resume` and `save_settings`, and when a monitor is switched off or moves) |
+| `overview_changed` | `overview`: `playlists` (each: `id`, `name`, `directory`, `monitors`, `current`, `favourite` (null: favourites.txt can't be read yet, so it isn't known), `held`, `manual`), `monitors` (every monitor the desktop lists, also those in no playlist: `id`, `name`, `geometry`, `look`), `paused`, `error` (the daemon is up but `PlaylistService` isn't: e.g. a list file it can't use), `favourites_file` and `to_remove_file` (the lists' paths; null while `error`) | on subscribing, then whenever it changes (also after `hold` / `resume` and `save_settings`, and when a monitor is switched off or moves) |
 | `changed` | `change` | a wallpaper changed, by a tick or a command |
 | `marks_changed` | none | favourites.txt or to-remove.txt changed (their mtime or size), by a command, by hand (seen on the next tick, within 5 s), a settings save naming other files, or the service running again after a list it couldn't use was fixed: read them again |
 
@@ -237,7 +237,7 @@ switched off. The overview is kept small on purpose (it goes to every
 subscriber on every change), so it has no schedule (order, interval, time
 left, which changes with every tick): ask `status` for that.
 
-Read the events promptly: the app drops a subscriber that falls more than
+Read the events promptly: the daemon drops a subscriber that falls more than
 4 MB behind. Send commands on separate connections.
 
 Not on the socket (by design): thumbnails and image data (read the files by

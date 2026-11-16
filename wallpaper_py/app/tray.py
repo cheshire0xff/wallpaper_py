@@ -16,7 +16,7 @@ actions.
     ───
     No playlists yet: add one…  (only without playlists; opens Settings)
     Paused: idle              (only while paused)
-    Open wallpaper_py         (the window on Home, in the UI process,
+    Open wallpaper_py         (the window on Home, in the window process,
     Library                    started if needed; on Library)
     Settings…                 (on Settings)
     [ ] Start at login
@@ -24,7 +24,7 @@ actions.
 
 The menu is drawn from the service's latest `Overview` and never waits on
 the service: actions are queued to it, and the menu redraws when the next
-overview arrives. Errors from actions show as a notification. If the app
+overview arrives. Errors from actions show as a notification. If the daemon
 starts without playlists, a notification says so once, and clicking it
 opens Settings.
 
@@ -61,7 +61,7 @@ from ..protocol import (
 )
 from .icon import IconState, app_icon
 from .ui.launcher import PageName
-from .worker import ServiceHost
+from .worker import ServiceThread
 
 log = logging.getLogger(__name__)
 
@@ -86,14 +86,14 @@ class MenuActions(Protocol):
 
 
 class AppItem(Enum):
-    """Menu items about the app rather than a playlist."""
+    """Menu items about the daemon rather than a playlist."""
 
     AUTOSTART = "autostart"
     QUIT = "quit"
 
 
 # What an item asks for, stored on its QAction: a command, an image to
-# open, a page to open the window on, or an app item. Items without data do
+# open, a page to open the window on, or a daemon item. Items without data do
 # nothing.
 MenuItem = PlaylistRequest | Path | PageName | AppItem
 
@@ -239,19 +239,19 @@ class Tray(QObject):
     # pylint: disable=too-many-instance-attributes,too-many-arguments
     def __init__(
         self,
-        host: ServiceHost,
+        service_thread: ServiceThread,
         autostart: Autostart,
         autostart_command: Sequence[str],
-        quit_app: Callable[[], None],
+        quit_daemon: Callable[[], None],
         *,
         open_window: Callable[[PageName], None],
     ) -> None:
         super().__init__()
-        self._host = host
+        self._service_thread = service_thread
         self._open_window = open_window
         self._autostart = autostart
         self._autostart_command = list(autostart_command)
-        self._quit_app = quit_app
+        self._quit_daemon = quit_daemon
         self._icons: dict[IconState, QIcon] = {}
         self._overview: Overview | None = None
         self._error_shown: str | None = None
@@ -269,7 +269,7 @@ class Tray(QObject):
         self._icon.messageClicked.connect(self._message_clicked)
         self._autostart_action = fill_menu(self.menu, None, self.autostart_enabled())
         self._update_icon()
-        host.overview_changed.connect(self.show_overview)
+        service_thread.overview_changed.connect(self.show_overview)
 
     def show(self) -> None:
         if not QSystemTrayIcon.isSystemTrayAvailable():
@@ -301,7 +301,7 @@ class Tray(QObject):
     # -- MenuActions ---------------------------------------------------------
 
     def run(self, request: PlaylistRequest) -> None:
-        self._host.submit(request, self._replied)
+        self._service_thread.submit(request, self._replied)
 
     def open_image(self, image: Path) -> None:
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(image)))
@@ -329,7 +329,7 @@ class Tray(QObject):
         self._refresh_autostart()
 
     def quit(self) -> None:
-        self._quit_app()
+        self._quit_daemon()
 
     # -- internals -------------------------------------------------------------
 

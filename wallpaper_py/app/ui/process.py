@@ -1,12 +1,12 @@
 """
-The UI process: `wallpaper ui [home|library|settings]`.
+The window process: `wallpaper ui [home|library|settings]`.
 
 Started on demand (by the tray or the CLI) and gone when its window
 closes, so the window's memory (the grids' thumbnails) is given back. At most
 one runs: a start first asks a running one to show its window on the page
 and exits.
-It is a client of the app's socket like the CLI, starting the app if none
-runs, and it quits when the app does (its subscription ends).
+It is a client of the daemon's socket like the CLI, starting the daemon if none
+runs, and it quits when the daemon does (its subscription ends).
 """
 
 from __future__ import annotations
@@ -44,12 +44,12 @@ log = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class UiOptions:
     page: PageName = "home"
-    # How to start the app if it isn't running; injectable for tests.
-    app_command: Callable[[], list[str]] = autostart_command
+    # How to start the daemon if it isn't running; injectable for tests.
+    daemon_command: Callable[[], list[str]] = autostart_command
 
 
 def run_ui(options: UiOptions) -> int:
-    """Show the window on the page here, or in the UI process that runs."""
+    """Show the window on the page here, or in the window process that runs."""
     name = ui_server_name(paths.data_dir())
     request = ShowRequest(page=options.page)
     if show_in_running_ui(name, request):
@@ -57,10 +57,10 @@ def run_ui(options: UiOptions) -> int:
     app = _application()
     lock = InstanceLock(paths.ui_lock())
     if not lock.acquire():
-        # Another UI process is starting right now: let it show the page.
+        # Another window process is starting right now: let it show the page.
         if _wait_for_running_ui(name, request):
             return 0
-        raise WallpaperError("Another UI process is starting but does not answer")
+        raise WallpaperError("Another window process is starting but does not answer")
     try:
         return _run_locked(app, options, name)
     finally:
@@ -83,7 +83,7 @@ class _Closer(QObject):
     def window_closed(self) -> None:
         self._server.close()  # the window is gone: nothing left to show
         if self._client.busy():
-            log.info("Window closed; quitting once the app has answered")
+            log.info("Window closed; quitting once the daemon has answered")
             self._client.idle.connect(self._app.quit)
         else:
             self._app.quit()
@@ -103,14 +103,14 @@ def _run_locked(app: QApplication, options: UiOptions, name: str) -> int:
     server.listen()
     client = SocketClient(
         server_name(paths.data_dir()),
-        start_app=lambda: start_detached(options.app_command()),
+        start_daemon=lambda: start_detached(options.daemon_command()),
     )
     window = MainWindow(client)
     window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
     server.show_requested.connect(window.open_page)
     closer = _Closer(app, client, server)
     window.closed.connect(closer.window_closed)
-    client.ended.connect(app.quit)  # the app quit: so does its window
+    client.ended.connect(app.quit)  # the daemon quit: so does its window
     app.aboutToQuit.connect(window.shutdown)  # its threads, if still open
 
     log.info("UI started")

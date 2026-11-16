@@ -12,8 +12,8 @@ then renamed), so a reader never sees half a thumbnail; two threads making
 the same one at once is harmless (the second rename loses, or wins with
 the same content).
 
-Written and read only by the UI process (the grid's threads and the
-pre-generation thread); the app never makes thumbnails. Qt-free.
+Written and read only by the window process (the grid's threads and the
+pre-generation thread); the daemon never makes thumbnails. Qt-free.
 """
 
 from __future__ import annotations

@@ -9,7 +9,7 @@ request first (LIFO: what was just scrolled to), and a request for a tile
 no longer on screen is dropped before it is decoded. Each worker reads
 the thumbnail from the disk cache, or decodes the image (draft mode for
 JPEGs) and saves it there (core.thumbnail_cache); the `QPixmap` is made on
-the UI thread when the result arrives, kept in memory (an LRU with a byte
+the main thread when the result arrives, kept in memory (an LRU with a byte
 budget that never drops a tile on screen), and `loaded(path)` fires.
 
 `Pregenerator`: while the window is open, one low-priority thread fills
@@ -22,8 +22,8 @@ can't read (a drive not mounted) keeps its thumbnails, as no pass then
 prunes. A change of what it should cover starts a new pass, which begins
 once the old one has stopped at its next image (one thread).
 
-Everything here lives only in the UI process: closing the window ends it
-and gives the memory back; the app never makes thumbnails. The threads
+Everything here lives only in the window process: closing the window ends it
+and gives the memory back; the daemon never makes thumbnails. The threads
 are each object's own pool (`Jobs`, jobs.py, as `ThumbnailLoader`'s): the
 tile workers loop until `close()`, which the owner calls before it goes
 away.
@@ -69,7 +69,7 @@ TileDecoder = Callable[[Path], Image.Image]
 
 @dataclass(frozen=True)
 class Tile:
-    """A tile's image on the UI thread, or why there is none."""
+    """A tile's image on the main thread, or why there is none."""
 
     pixmap: QPixmap | None
     missing: bool = False  # the file is gone (a list's entry, say)
@@ -105,9 +105,9 @@ def _decode(decode: TileDecoder, path: Path) -> _Decoded:
 
 class _Queue:
     """
-    The requests, shared by the UI thread and the workers; every field is
+    The requests, shared by the main thread and the workers; every field is
     read and written under `lock`. A path is `queued` from its request
-    until the UI thread has its result (or it is dropped).
+    until the main thread has its result (or it is dropped).
     """
 
     def __init__(self) -> None:
@@ -302,7 +302,7 @@ class PassResult:
 
 
 class _PassControl:
-    """A pass's state shared with the UI thread (the job is the pool's)."""
+    """A pass's state shared with the main thread (the job is the pool's)."""
 
     def __init__(self, sources: Sources) -> None:
         self.sources = sources

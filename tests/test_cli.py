@@ -132,7 +132,7 @@ class TestPlaylistCommands:
         return write_settings(tmp_path)
 
     def run(self, backend: FakeBackend, *argv: str) -> int:
-        """No app is running: playlist commands run here, as in real use."""
+        """No daemon is running: playlist commands run here, as in real use."""
         return cli.main(
             list(argv),
             backend_factory=lambda: backend,
@@ -212,7 +212,7 @@ class TestPlaylistCommands:
         assert "walls  (sorted, every 10m)" in out
         assert "monitors:  Main (attached, fill)" in out
         assert "upcoming:  b.jpg, c.jpg, a.jpg" in out
-        assert out.rstrip().endswith(cli.NOT_RUNNING)  # run here: no app
+        assert out.rstrip().endswith(cli.NOT_RUNNING)  # run here: no daemon
 
     @pytest.mark.usefixtures("settings")
     def test_pick_hold_resume(
@@ -284,7 +284,7 @@ class TestPlaylistCommands:
             f"to remove: {tmp_path / 'data' / 'to-remove.txt'}: 0 listed, "
             "0 available",
         ]
-        # Sorted: nothing to ask, and the app refuses.
+        # Sorted: nothing to ask, and the daemon refuses.
         assert self.run(backend, "reset-cycle", "walls") == 1
         assert "walls is sorted" in capsys.readouterr().err
 
@@ -300,7 +300,7 @@ class TestPlaylistCommands:
 def test_playlist_command_gives_up_while_the_lock_stays_held(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """No app answers, yet the lock is held (a stuck app or command)."""
+    """No daemon answers, yet the lock is held (a stuck daemon or command)."""
     monkeypatch.setattr(cli, "WAIT_TIMEOUT_S", 0.5)
     lock = InstanceLock(paths.instance_lock())
     assert lock.acquire()
@@ -321,8 +321,8 @@ def test_verbose_tells_how_the_command_ran(
         # No playlists yet: the command fails, but only after it ran here.
         assert cli.main(["--verbose", "next"], backend_factory=lambda: backend) == 1
     messages = [record.getMessage() for record in caplog.records]
-    assert messages[0].startswith("Asking the running app (socket wallpaper_py-")
-    assert messages[1] == "No app is running: running the command here"
+    assert messages[0].startswith("Asking the running daemon (socket wallpaper_py-")
+    assert messages[1] == "No daemon is running: running the command here"
 
 
 def test_answers_run_here_say_so() -> None:
@@ -415,15 +415,15 @@ def test_ui_pages_match_the_launcher() -> None:
     assert cli.build_parser().parse_args(["ui", "library"]).page == "library"
 
 
-def test_commands_go_to_the_app_client(capsys: pytest.CaptureFixture[str]) -> None:
+def test_commands_go_to_the_daemon_client(capsys: pytest.CaptureFixture[str]) -> None:
     sent: list[CommandRequest] = []
 
-    def app_client(request: CommandRequest, _: cli.RunHere) -> cli.Answer:
+    def daemon_client(request: CommandRequest, _: cli.RunHere) -> cli.Answer:
         sent.append(request)
         status = StatusResult(playlists=(), paused=None, warnings=("w",))
         return cli.Answer(status)
 
-    assert cli.main(["status"], app_client=app_client) == 0
+    assert cli.main(["status"], daemon_client=daemon_client) == 0
     assert capsys.readouterr() == ("Rotation active\n", "Warning: w\n")
     assert sent == [Request(command="status")]
 
@@ -445,8 +445,8 @@ def test_ui_opens_the_page(monkeypatch: pytest.MonkeyPatch) -> None:
     assert options == [process.UiOptions("settings")]
 
 
-class FakeApp:
-    """An app that knows one shuffle playlist, "konachan"; records requests."""
+class FakeDaemon:
+    """A daemon that knows one shuffle playlist, "konachan"; records requests."""
 
     def __init__(self) -> None:
         self.sent: list[CommandRequest] = []
@@ -474,9 +474,9 @@ class FakeApp:
 
 
 def test_stats_text(capsys: pytest.CaptureFixture[str]) -> None:
-    app = FakeApp()
-    assert cli.main(["stats", "konachan"], app_client=app) == 0
-    assert app.sent == [StatsRequest(target="konachan")]
+    daemon = FakeDaemon()
+    assert cli.main(["stats", "konachan"], daemon_client=daemon) == 0
+    assert daemon.sent == [StatsRequest(target="konachan")]
     out = capsys.readouterr().out.splitlines()
     assert out[:6] == [
         "konachan  (shuffle; this cycle: 6 % seen)",
@@ -515,9 +515,9 @@ def test_reset_cycle_asks_first(  # pylint: disable=too-many-arguments,too-many-
         return answer
 
     monkeypatch.setattr("builtins.input", fake_input)
-    app = FakeApp()
-    assert cli.main(["reset-cycle", *argv], app_client=app) == code
-    assert [type(r) for r in app.sent] == sent
+    daemon = FakeDaemon()
+    assert cli.main(["reset-cycle", *argv], daemon_client=daemon) == code
+    assert [type(r) for r in daemon.sent] == sent
     out = capsys.readouterr().out
     if "--yes" in argv:
         assert not asked

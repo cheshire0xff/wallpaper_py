@@ -9,14 +9,14 @@ History and Upcoming); the playlist and the tab are remembered in
 `ui-state.json` (ui_state.py), never in the settings.
 
 All images is the playlist's folder in an `ImageGrid` (grid.py), listed
-off the UI thread (`FolderScan`) when the tab is shown and when the
+off the main thread (`FolderScan`) when the tab is shown and when the
 playlist or its folder changes. The page owns the grids' thumbnails
 (tiles.py): the `TileLoader` and the `Pregenerator`, which fills the disk
 cache while the window is open (the chosen playlist's folder first, then
 the others and the lists, as the overview names them); `shutdown()`
 stops their threads.
 
-Overview asks the app (`stats`) when it is shown, and again on
+Overview asks the daemon (`stats`) when it is shown, and again on
 `overview_changed`, `marks_changed` and a `changed` of its playlist
 while it is: one
 request at a time, asked again if more came meanwhile. *Rescan* asks with
@@ -271,7 +271,7 @@ class LibraryPage(QWidget):
         self.tiles.close()
         self.folder_scan.close()
 
-    # -- from the app ------------------------------------------------------------
+    # -- from the daemon ------------------------------------------------------------
 
     @Slot(object)
     def show_overview(self, overview: Overview) -> None:
@@ -324,7 +324,7 @@ class LibraryPage(QWidget):
     def _pregenerate(self) -> None:
         """
         Thumbnails for every playlist's folder, the chosen one first, then
-        for the lists. Not while the app has an error: its overview names
+        for the lists. Not while the daemon has an error: its overview names
         no playlists then, and a pass over nothing would prune everything.
         """
         overview = self._overview

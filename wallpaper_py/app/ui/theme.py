@@ -311,7 +311,7 @@ def window_palette(derived: Tones) -> QPalette:
 
 def body_font(system: QFont) -> QFont:
     """
-    The UI process's font: the system's, at least BODY_POINTS (Qt takes
+    The window process's font: the system's, at least BODY_POINTS (Qt takes
     9 pt on Windows, smaller than Windows 11's own body text).
     """
     font = QFont(system)
@@ -496,7 +496,7 @@ class IconButton(QToolButton):
     """
     A borderless button showing one icon, with a tooltip and an accessible
     name. It may be *on* (a toggle that is on): its icon then turns accent
-    and filled, on a faint accent fill. The owner sets that from the app's
+    and filled, on a faint accent fill. The owner sets that from the daemon's
     state, never the click.
     """
 

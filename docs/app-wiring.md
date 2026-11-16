@@ -16,10 +16,10 @@ the receiving thread's event loop, so the sender never waits.
 
 | Process / thread | Objects |
 |---|---|
-| **app**, UI thread (main thread, Qt event loop) | `QApplication`, `Tray`, `WindowOpener`, `ScreenWatcher`, and `ServiceHost`, the thin proxy to the service thread |
-| **app**, service thread (`QThread` "playlist-service") | `ServiceWorker` and everything it creates on that thread: the `CommandServer` (socket), the tick `QTimer`, COM (`backends.thread_scope`), the backend, the SQLite `Store`, the `PlaylistService` |
-| **UI process** (`wallpaper ui`, on demand), UI thread | `QApplication`, `UiServer` (its own socket), `SocketClient` (the app's socket), and the one `MainWindow`: its `ThumbnailLoader` (shared by Home and Settings), its `Sidebar` and its pages, `HomePage` (with its `PlaylistRow`s and `MonitorsView`), `LibraryPage` (with its `OverviewTab`, the All images `ImageGrid`, and the grids' `TileLoader`, `Pregenerator` and `FolderScan`), `SettingsPage` (with its `PlaylistEditor`s, `LookEditor`, a `MonitorsView` and the About tab) |
-| **UI process**, pool threads (a `Jobs` each: `ThumbnailLoader` 2, `TileLoader` 4, `Pregenerator` 1 at low priority, `FolderScan` 1) | nothing lives there: jobs read files (images, thumbnails, folders) and hand their results to `Jobs.done` on the UI thread |
+| **daemon**, main thread (Qt event loop) | `QApplication`, `Tray`, `WindowOpener`, `ScreenWatcher`, and `ServiceThread`, the thin proxy to the service thread |
+| **daemon**, service thread (`QThread` "playlist-service") | `ServiceWorker` and everything it creates on that thread: the `CommandServer` (socket), the tick `QTimer`, COM (`backends.thread_scope`), the backend, the SQLite `Store`, the `PlaylistService` |
+| **window process** (`wallpaper ui`, on demand), main thread | `QApplication`, `UiServer` (its own socket), `SocketClient` (the daemon's socket), and the one `MainWindow`: its `ThumbnailLoader` (shared by Home and Settings), its `Sidebar` and its pages, `HomePage` (with its `PlaylistRow`s and `MonitorsView`), `LibraryPage` (with its `OverviewTab`, the All images `ImageGrid`, and the grids' `TileLoader`, `Pregenerator` and `FolderScan`), `SettingsPage` (with its `PlaylistEditor`s, `LookEditor`, a `MonitorsView` and the About tab) |
+| **window process**, pool threads (a `Jobs` each: `ThumbnailLoader` 2, `TileLoader` 4, `Pregenerator` 1 at low priority, `FolderScan` 1) | nothing lives there: jobs read files (images, thumbnails, folders) and hand their results to `Jobs.done` on the main thread |
 | **CLI** (a separate process) | `ipc.send`: blocking client, no event loop |
 
 ## Overview
@@ -33,20 +33,20 @@ flowchart LR
     subgraph CLI["CLI process"]
         send["ipc.send<br/>blocking client"]
     end
-    subgraph UIP["UI process"]
+    subgraph UIP["window process"]
         uiserver["UiServer<br/>its own socket"]
         client["SocketClient"]
         windows["MainWindow<br/>HomePage, LibraryPage,<br/>SettingsPage"]
         thumbs["ThumbnailLoader<br/>thread pool"]
         tiles["TileLoader, Pregenerator,<br/>FolderScan: thread pools"]
     end
-    subgraph UI["app: UI thread"]
+    subgraph UI["daemon: main thread"]
         tray["Tray"]
         opener["WindowOpener"]
         screens["ScreenWatcher"]
-        host["ServiceHost"]
+        host["ServiceThread"]
     end
-    subgraph SVC["app: service thread"]
+    subgraph SVC["daemon: service thread"]
         server["CommandServer<br/>socket"]
         timer["tick QTimer<br/>every 5 s"]
         worker["ServiceWorker"]
@@ -78,15 +78,15 @@ flowchart LR
 
 ## Flows
 
-A command from the CLI (`wallpaper next konachan` while the app runs; if
-none answers, the CLI runs it itself: `cli.send_to_app`):
+A command from the CLI (`wallpaper next konachan` while the daemon runs; if
+none answers, the CLI runs it itself: `cli.send_to_daemon`):
 
 ```mermaid
 sequenceDiagram
     participant CLI as CLI process<br/>ipc.send
     participant S as CommandServer<br/>service thread
     participant W as ServiceWorker<br/>service thread
-    participant H as ServiceHost<br/>UI thread
+    participant H as ServiceThread<br/>main thread
 
     CLI->>S: connect, write one JSON line, then block
     S->>S: CommandServer._received: validate
@@ -101,43 +101,43 @@ sequenceDiagram
     Note over CLI: ipc.send returns, then cli.format_reply makes the text
 ```
 
-A tray click goes through `ServiceHost`, so the reply comes back to the UI
+A tray click goes through `ServiceThread`, so the reply comes back to the UI
 thread. The worker never sees who asked: the socket's `connection_id`
 stays in `CommandServer`, the tray's callback (by `request_id`) in
-`ServiceHost`.
+`ServiceThread`.
 
 ```mermaid
 sequenceDiagram
-    participant Tr as Tray<br/>UI thread
-    participant H as ServiceHost<br/>UI thread
+    participant Tr as Tray<br/>main thread
+    participant H as ServiceThread<br/>main thread
     participant W as ServiceWorker<br/>service thread
 
-    Tr->>H: Tray.run: ServiceHost.submit(request, Tray._replied)
+    Tr->>H: Tray.run: ServiceThread.submit(request, Tray._replied)
     Note over H: callbacks[request_id] = Tray._replied
-    H--)W: ServiceHost._submit(request_id, request)
+    H--)W: ServiceThread._submit(request_id, request)
     W->>W: ServiceWorker.submit: ServiceWorker.execute(request)
     W--)H: ServiceWorker.changed / overview_changed, as above
     W--)H: ServiceWorker.replied(request_id, reply)
-    H->>Tr: ServiceHost._on_replied: pop the callback, call it
+    H->>Tr: ServiceThread._on_replied: pop the callback, call it
     Note over Tr: Tray._replied shows a notification on an ErrorReply
 ```
 
 A tick (every 5 s, or extra after a screen change: `ScreenWatcher.settled`
--> `ServiceHost.request_tick`). Each change and new overview also goes to
+-> `ServiceThread.request_tick`). Each change and new overview also goes to
 subscribers, as in the CLI flow.
 
 ```mermaid
 sequenceDiagram
     participant T as tick QTimer<br/>service thread
     participant W as ServiceWorker<br/>service thread
-    participant H as ServiceHost<br/>UI thread
-    participant Tr as Tray<br/>UI thread
+    participant H as ServiceThread<br/>main thread
+    participant Tr as Tray<br/>main thread
 
     T->>W: timeout, every 5 s
     W->>W: ServiceWorker.tick: service.tick()
     W--)H: ServiceWorker.changed(change), once per wallpaper change
     W--)H: ServiceWorker.overview_changed(overview), only if it changed
-    H->>Tr: ServiceHost.overview_changed: Tray.show_overview
+    H->>Tr: ServiceThread.overview_changed: Tray.show_overview
     Note over Tr: redraw the menu and the icon
     W--)H: ServiceWorker.ticked
 ```
@@ -147,13 +147,13 @@ Opening the window on a page (tray *Open wallpaper_py*, *Library* or
 
 ```mermaid
 sequenceDiagram
-    participant O as WindowOpener<br/>app, UI thread
-    participant U as UI process<br/>UiServer, MainWindow
-    participant C as SocketClient<br/>UI process
-    participant S as CommandServer<br/>app, service thread
+    participant O as WindowOpener<br/>daemon, main thread
+    participant U as window process<br/>UiServer, MainWindow
+    participant C as SocketClient<br/>window process
+    participant S as CommandServer<br/>daemon, service thread
 
     O->>U: connect to the UI socket, write {"page": "home"}
-    alt a UI process runs
+    alt a window process runs
         U->>U: UiServer.show_requested: MainWindow.open_page("home")
         U->>O: {"error": null}, then close
     else nothing listens
@@ -166,7 +166,7 @@ sequenceDiagram
     end
 ```
 
-Home, from an overview to a click (all on the UI process's UI thread
+Home, from an overview to a click (all on the window process's main thread
 except the thumbnail jobs):
 
 ```mermaid
@@ -189,14 +189,14 @@ sequenceDiagram
     C->>L: overview_changed: the star is now on
 ```
 
-The Settings page (the app keeps the settings; the page reads and writes
+The Settings page (the daemon keeps the settings; the page reads and writes
 them only through its commands):
 
 ```mermaid
 sequenceDiagram
     participant C as SocketClient
     participant S as SettingsPage
-    participant W as ServiceWorker<br/>app, service thread
+    participant W as ServiceWorker<br/>daemon, service thread
 
     C->>S: overview_changed: SettingsPage.show_overview (the monitors)
     S->>C: SettingsPage.load: Client.run(settings), reply to SettingsPage.loaded
@@ -208,13 +208,13 @@ sequenceDiagram
     C->>S: SettingsPage.saved: the new revision, and the warnings if any
 ```
 
-The Library page's Overview tab (the numbers come from the app):
+The Library page's Overview tab (the numbers come from the daemon):
 
 ```mermaid
 sequenceDiagram
     participant C as SocketClient
     participant L as LibraryPage
-    participant W as ServiceWorker<br/>app, service thread
+    participant W as ServiceWorker<br/>daemon, service thread
 
     Note over L: shown (LibraryPage.showEvent), or its tab or playlist chosen
     L->>C: Client.run(stats: its playlist), reply to LibraryPage.stats_replied
@@ -225,7 +225,7 @@ sequenceDiagram
 ```
 
 The Library page's All images tab (the page reads the folder and the
-images itself, off the UI thread; nothing goes through the app):
+images itself, off the main thread; nothing goes through the daemon):
 
 ```mermaid
 sequenceDiagram
@@ -245,19 +245,19 @@ sequenceDiagram
     P->>P: waits on TileLoader.idle, then ThumbnailCache.ensure per image, and at the end prunes
 ```
 
-Shutdown. The app (tray *Quit* or Ctrl+C) stops its service thread, and
-the closed subscription ends the UI process too; the UI process alone
-ends when its window closes, and the app runs on:
+Shutdown. The daemon (tray *Quit* or Ctrl+C) stops its service thread, and
+the closed subscription ends the window process too; the window process alone
+ends when its window closes, and the daemon runs on:
 
 ```mermaid
 sequenceDiagram
-    participant H as ServiceHost<br/>app, UI thread
-    participant W as ServiceWorker<br/>app, service thread
-    participant C as SocketClient<br/>UI process
-    participant M as MainWindow<br/>UI process
+    participant H as ServiceThread<br/>daemon, main thread
+    participant W as ServiceWorker<br/>daemon, service thread
+    participant C as SocketClient<br/>window process
+    participant M as MainWindow<br/>window process
 
     Note over H: app.quit() ends the UI event loop
-    H--)W: ServiceHost.shutdown: _stop, then wait for the thread
+    H--)W: ServiceThread.shutdown: _stop, then wait for the thread
     W->>W: ServiceWorker.stop: timer, socket (every subscription ends), service, COM
     W--)C: the subscription closes: SocketClient.ended, QApplication.quit
     Note over M: QApplication.aboutToQuit: MainWindow.shutdown

@@ -1,7 +1,7 @@
 # Notes for coding agents
 
 Per-monitor wallpaper playlists for Windows and KDE Plasma: a PySide6 tray
-app, a CLI, and an on-demand UI process. Read these first:
+daemon, a CLI, and an on-demand window process. Read these first:
 
 - [docs/plan.md](docs/plan.md): phases, what is next, what is decided
   against (the source of truth for scope)
@@ -29,7 +29,7 @@ uv run python scripts/protocol_schema.py     # after changing protocol.py
 ```
 
 CI runs the checks on Windows and Ubuntu; keep both green. Tests marked
-`windows` read the real desktop; tests never change it, and the app is never
+`windows` read the real desktop; tests never change it, and the daemon is never
 started for real from a test (fakes in `tests/fakes.py`). What only a real
 desktop shows is in [docs/desktop-checks.md](docs/desktop-checks.md), a
 short list the user runs before a release and on a new platform. Don't
@@ -60,7 +60,7 @@ report with a few steps to try once instead.
   uniqueness). Use `StrictInt` / `StrictStr` / `StrictBool` and
   `Field(strict=True)` for values a client sends: lax pydantic takes
   `true` as an int and `0` as `Literal[False]`.
-- The settings are written only by the app, through `save_settings`
+- The settings are written only by the daemon, through `save_settings`
   (the Settings page); there is no settings file. They hold monitors by
   id only (never names: two monitors of one model share one) and
   generated playlist ids. No playlists is valid settings that rotate
@@ -84,7 +84,7 @@ After them, list the rest under one heading, "Low severity", grouped by
 kind, one line each, nothing to fix by default:
 
 - clock skew, timestamps in the future, and other environment faults the
-  app can't see;
+  daemon can't see;
 - a repeated cheap check or query, a log line twice, a local variable or
   other style-only changes.
 

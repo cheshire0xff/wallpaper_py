@@ -4,7 +4,7 @@ Single instance: a lock file next to the state database.
 The command socket alone can't guarantee this: on Windows a second
 `QLocalServer` can listen on the same pipe name. The lock is per state
 directory, which is exactly the scope that needs one writer. A CLI
-command run while no app is running holds it too, for that command.
+command run while no daemon is running holds it too, for that command.
 """
 
 from __future__ import annotations

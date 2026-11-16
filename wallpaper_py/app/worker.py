@@ -4,16 +4,16 @@ The playlist service on its own thread.
 `ServiceWorker` lives on a worker `QThread` and creates everything it uses
 there: the command socket, the backend (COM on Windows), the SQLite
 connection, the tick timer. A change renders for ~200 ms, which must never
-happen on the UI thread. The core stays synchronous and lock-free: only
+happen on the main thread. The core stays synchronous and lock-free: only
 this thread touches it.
 
 Everything reaches the service through `ServiceWorker.execute`, one at a
 time, between ticks: socket requests directly (the socket lives on this
-thread), the tray through `ServiceHost`. After `save_settings` it ticks,
+thread), the tray through `ServiceThread`. After `save_settings` it ticks,
 so that the monitors show the new settings before the reply.
 Nothing on this thread may block waiting for a client or spin a nested
-event loop. Events (a change, a new overview) go to the UI thread as
-signals and to socket subscribers (the UI process) as lines, both from
+event loop. Events (a change, a new overview) go to the main thread as
+signals and to socket subscribers (the window process) as lines, both from
 here; so does `marks_changed` (only to subscribers), when the list files'
 mtime or size moved since the last tick or command.
 
@@ -22,7 +22,7 @@ The service stops when it can't go on (a list file went bad, see
 file is fixed. Meanwhile commands answer with the error, and the overview
 shows it.
 
-`ServiceHost` is the UI thread's handle. It reaches the worker only through
+`ServiceThread` is the main thread's handle. It reaches the worker only through
 queued signals (requests, extra ticks, stop) and gets results back the
 same way (replies, the overview, changes); it never waits on the worker,
 except once at shutdown.
@@ -105,7 +105,7 @@ class ServiceWorker(QObject):
     def start(self) -> None:
         self._thread_scope.enter_context(self._settings.thread_scope())
         if self._settings.server_name is not None:
-            # Once for the app's life: it keeps answering while the service
+            # Once for the daemon's life: it keeps answering while the service
             # is down (with the error).
             self._server = CommandServer(self._settings.server_name, self)
             self._server.received.connect(self._answer)
@@ -126,7 +126,7 @@ class ServiceWorker(QObject):
     def stop(self) -> None:
         """
         At shutdown: the timer, then the socket (ending every subscription,
-        so the UI process quits too), the service, COM; then the thread.
+        so the window process quits too), the service, COM; then the thread.
         """
         if self._timer is not None:
             self._timer.stop()
@@ -200,7 +200,7 @@ class ServiceWorker(QObject):
 
     @Slot(int, object)
     def submit(self, request_id: int, request: CommandRequest) -> None:
-        """A request queued by `ServiceHost.submit`; answered by `replied`."""
+        """A request queued by `ServiceThread.submit`; answered by `replied`."""
         self.replied.emit(request_id, self.execute(request))
 
     @Slot(int, object)
@@ -294,8 +294,8 @@ class ServiceWorker(QObject):
             self._broadcast(MarksChangedEvent())
 
 
-class ServiceHost(QObject):
-    """The UI thread's handle on the worker thread."""
+class ServiceThread(QObject):
+    """The main thread's handle on the worker thread."""
 
     ticked = Signal()
     changed = Signal(object)  # core.service.Change
@@ -333,7 +333,7 @@ class ServiceHost(QObject):
         self._thread.start()
 
     def submit(self, request: CommandRequest, callback: ReplyCallback) -> None:
-        """Run `request` on the service; `callback` gets the reply (UI thread)."""
+        """Run `request` on the service; `callback` gets the reply (main thread)."""
         request_id = self._next_id
         self._next_id += 1
         self._callbacks[request_id] = callback

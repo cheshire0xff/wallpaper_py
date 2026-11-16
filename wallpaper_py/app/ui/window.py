@@ -4,7 +4,7 @@ status at its bottom) and the selected page (docs/design/README.md,
 "The look").
 
 `open_page` shows the window on a page and brings it to the front: the
-UI process calls it at start and for each "show" request on its socket
+window process calls it at start and for each "show" request on its socket
 (`wallpaper ui <page>`, the tray's entries). Pages stay alive while the
 window is open, so switching pages keeps unsaved settings; closing with
 unsaved settings asks Save / Discard / Cancel on the Settings page.
@@ -337,7 +337,7 @@ class MainWindow(QWidget):
     def shutdown(self) -> None:
         """
         Stop the pages' work and the image threads (waits for them): when
-        the window closes, or the process quits with it open (the app quit).
+        the window closes, or the process quits with it open (the daemon quit).
         """
         if self._shut_down:
             return

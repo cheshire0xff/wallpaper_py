@@ -1,6 +1,6 @@
 """
 Background jobs for the windows: work runs on the pool's threads, results
-come back on the UI thread under their keys, and nothing comes after
+come back on the main thread under their keys, and nothing comes after
 `close()`.
 """
 

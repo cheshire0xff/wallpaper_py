@@ -35,7 +35,7 @@ class Location:
 
 def data_locations(settings: Settings | None) -> list[Location]:
     """
-    What the app and the windows keep where. The lists come from the saved
+    What the daemon and the windows keep where. The lists come from the saved
     settings (the defaults until they are loaded); the rest are per-user
     locations.
     """

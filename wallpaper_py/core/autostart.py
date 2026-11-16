@@ -1,5 +1,5 @@
 """
-Start the app at login: the Autostart protocol. Platforms implement it in
+Start the daemon at login: the Autostart protocol. Platforms implement it in
 `backends` (Windows: the Run registry key; Linux: an XDG autostart entry).
 """
 

@@ -1,5 +1,5 @@
 """
-The app's socket protocol as pydantic models: what goes over the wire, and
+The daemon's socket protocol as pydantic models: what goes over the wire, and
 nothing else (no logic, no Qt). See docs/protocol.md.
 
 - In: an `Envelope` holding a `Request` (a playlist command), a
@@ -10,7 +10,7 @@ nothing else (no logic, no Qt). See docs/protocol.md.
   `SaveSettingsRequest` (read / write the settings) or `Subscribe`.
 - Out: a `Reply`, which is data only: one result model per command, tagged
   on `command`, or an `ErrorReply`. The CLI formats its text from these;
-  the tray and the UI process show them.
+  the tray and the window process show them.
 - Out, on a subscription: one `Event` per line, tagged on `event`.
 
 `commands.py` runs requests, `app/ipc.py` carries the lines. The protocol
@@ -70,13 +70,13 @@ MAX_UPCOMING = 1000  # images an `upcoming` request may ask for
 
 
 class Message(BaseModel):
-    """Sent by the app; read leniently, so newer fields are ignored."""
+    """Sent by the daemon; read leniently, so newer fields are ignored."""
 
     model_config = ConfigDict(frozen=True, extra="ignore")
 
 
 class Strict(BaseModel):
-    """Sent to the app; checked strictly."""
+    """Sent to the daemon; checked strictly."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -103,7 +103,7 @@ class MarkRequest(Strict):
 
     command: MarkCommand
     target: str | None = None  # playlist name, or a monitor it drives
-    image: Path | None = None  # absolute: the app doesn't know the client's directory
+    image: Path | None = None  # absolute: the daemon has no client directory
 
     @field_validator("image")
     @classmethod
@@ -124,7 +124,7 @@ class PickRequest(Strict):
 
     command: Literal["pick"] = "pick"
     target: str | None = None  # playlist name, or a monitor it drives
-    image: Path  # absolute: the app doesn't know the client's directory
+    image: Path  # absolute: the daemon doesn't know the client's directory
 
     @field_validator("image")
     @classmethod
@@ -241,7 +241,7 @@ def check_protocol(version: int, receiver: str) -> int:
     return version
 
 
-# -- what the app reports ------------------------------------------------------
+# -- what the daemon reports ---------------------------------------------------
 
 
 class MonitorView(Message):
@@ -447,7 +447,7 @@ Result = Annotated[
 
 ErrorKind = Literal[
     "protocol",  # malformed request, or another protocol version
-    "config_error",  # a list file can't be used; the app waits for a fix
+    "config_error",  # a list file can't be used; the daemon waits for a fix
     "unknown_target",  # no such playlist or monitor, or several and none named
     "not_attached",  # none of the playlist's monitors is attached
     "no_images",  # nothing to show in the playlist's directory
@@ -456,8 +456,8 @@ ErrorKind = Literal[
     "invalid_settings",  # save_settings: a value can't be used; nothing saved
     "stale_settings",  # save_settings: changed since they were read; nothing saved
     "failed",  # any other expected failure; see the message
-    "internal",  # a bug; the app logged it
-    "unreachable",  # client side only: no app, or it did not answer
+    "internal",  # a bug; the daemon logged it
+    "unreachable",  # client side only: no daemon, or it did not answer
 ]
 ERROR_KINDS: tuple[ErrorKind, ...] = get_args(ErrorKind)
 
@@ -515,7 +515,7 @@ Event = Annotated[
 
 def json_schema() -> dict[str, Any]:
     """
-    One document for the whole protocol: `Request` (what the app reads),
+    One document for the whole protocol: `Request` (what the daemon reads),
     `Reply` and `Event` (what it writes), with shared definitions.
     """
     roots: dict[str, TypeAdapter[Any]] = {

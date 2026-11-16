@@ -118,7 +118,7 @@ def test_bad_reply_is_rejected() -> None:
         ipc.decode_event(b'{"event": "later_added"}')
 
 
-def test_no_app_running(name: str) -> None:
+def test_no_daemon_running(name: str) -> None:
     envelope = Envelope(request=Request(command="status"))
     assert ipc.send(name, envelope) is None
 

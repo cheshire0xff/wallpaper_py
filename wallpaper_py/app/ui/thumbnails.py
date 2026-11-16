@@ -1,6 +1,6 @@
 """
 Images for the windows, read from the files (never over the socket), off
-the UI thread: per image one small copy (core.imaging.load_small), which
+the main thread: per image one small copy (core.imaging.load_small), which
 the monitor drawings render their previews from (arrangement.py), a
 playlist row's thumbnail made from it, and the image's details.
 
@@ -17,7 +17,7 @@ Each job decodes once with Pillow, at a reduced size (JPEGs decode scaled
 down directly), so a 4K image never stalls the window: the small copy
 covers a square of the preview's longer side (`Sizes.side`), enough for a
 preview of any screen shape and look. Workers make a `QImage` of the
-thumbnail (safe off the UI thread); the `QPixmap` is made on the UI thread
+thumbnail (safe off the main thread); the `QPixmap` is made on the main thread
 when the result arrives. The window's pages share one loader (they show
 the same images: each playlist's current one).
 """
@@ -91,7 +91,7 @@ class Decoded:
 
 @dataclass(frozen=True)
 class Thumbnail:
-    """A loaded image, on the UI thread."""
+    """A loaded image, on the main thread."""
 
     info: ImageInfo | None
     pixmap: QPixmap | None  # the row's; None: could not be decoded (see error)

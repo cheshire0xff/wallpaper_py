@@ -16,36 +16,36 @@ def data_dir() -> Path:
 def state_db() -> Path:
     """
     SQLite: the settings and the state (history, shuffle decks, holds, what
-    each monitor shows). Written only by the app (core.store).
+    each monitor shows). Written only by the daemon (core.store).
     """
     return data_dir() / "state.sqlite3"
 
 
 def instance_lock() -> Path:
-    """Held by the running app: one process rotates (and writes the state)."""
-    return data_dir() / "app.lock"
+    """Held by the running daemon: one process rotates (and writes the state)."""
+    return data_dir() / "daemon.lock"
 
 
 def ui_lock() -> Path:
-    """Held by the UI process (the windows): at most one runs."""
+    """Held by the window process (the windows): at most one runs."""
     return data_dir() / "ui.lock"
 
 
 def ui_state() -> Path:
     """
     The windows' view state (the Library's playlist, tab, ...): written only
-    by the UI process; not settings.
+    by the window process; not settings.
     """
     return data_dir() / "ui-state.json"
 
 
 def log_file() -> Path:
-    """The app's log (the tray app has no terminal)."""
+    """The daemon's log (the tray daemon has no terminal)."""
     return user_log_path(APP_NAME, appauthor=False) / "wallpaper.log"
 
 
 def ui_log_file() -> Path:
-    """The UI process's log, next to the app's (each rotates its own file)."""
+    """The window process's log, next to the daemon's (each rotates its own file)."""
     return log_file().with_name("ui.log")
 
 

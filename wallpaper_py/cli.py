@@ -2,11 +2,11 @@
 Command-line interface.
 
 Monitor commands (`list`, `set`) work on their own. Playlist commands
-(`status`, `next`, ...) run in the app if it is running, so they never
-overlap its ticks. If it isn't, they run here, holding the app's lock (an
-app starting meanwhile waits for it), and nothing is left running after:
-only the app rotates. Replies are data (protocol.py); the text printed here
-is made here. `run` and `tray` start the app, `ui` the windows (see
+(`status`, `next`, ...) run in the daemon if it is running, so they never
+overlap its ticks. If it isn't, they run here, holding the daemon's lock (a
+daemon starting meanwhile waits for it), and nothing is left running after:
+only the daemon rotates. Replies are data (protocol.py); the text printed here
+is made here. `run` and `tray` start the daemon, `ui` the windows (see
 wallpaper_py.app). The settings are edited in the window (`ui settings`).
 `reset-cycle` asks first (it can't be undone), unless `--yes`. The list
 commands (`fav`, `unfav`, `remove`, `unremove`) take the playlist's
@@ -76,32 +76,32 @@ PAGES = ("home", "library", "settings")
 
 BackendFactory = Callable[[], Backend]
 PresenceFactory = Callable[[], Presence]
-# Runs a request in this process: no app is running, and this process holds
+# Runs a request in this process: no daemon is running, and this process holds
 # its lock.
 RunHere = Callable[[CommandRequest], Reply]
 
 
 class Answer(NamedTuple):
     reply: Reply
-    here: bool = False  # run in this process: no app was running
+    here: bool = False  # run in this process: no daemon was running
 
 
-# Runs a request in the running app, else with `RunHere`.
-AppClient = Callable[[CommandRequest, RunHere], Answer]
+# Runs a request in the running daemon, else with `RunHere`.
+DaemonClient = Callable[[CommandRequest, RunHere], Answer]
 
 log = logging.getLogger(__name__)
 
-WAIT_TIMEOUT_S = 10.0  # for a starting app, or a command running elsewhere
+WAIT_TIMEOUT_S = 10.0  # for a starting daemon, or a command running elsewhere
 RETRY_INTERVAL_S = 0.2
 NOT_RUNNING = (
     "wallpaper_py isn't running, so nothing rotates; `wallpaper tray` starts it"
 )
 
 
-def send_to_app(request: CommandRequest, run_here: RunHere) -> Answer:
+def send_to_daemon(request: CommandRequest, run_here: RunHere) -> Answer:
     """
-    Run `request` in the running app; if none is running, take its lock and
-    run it here. The lock held but nobody answering: an app is starting, or
+    Run `request` in the running daemon; if none is running, take its lock and
+    run it here. The lock held but nobody answering: a daemon is starting, or
     another command runs here; wait for either.
     """
     # pylint: disable=import-outside-toplevel
@@ -111,17 +111,17 @@ def send_to_app(request: CommandRequest, run_here: RunHere) -> Answer:
     name = ipc.server_name(paths.data_dir())
     envelope = Envelope(request=request)
     lock = InstanceLock(paths.instance_lock())
-    log.info("Asking the running app (socket %s)", name)
+    log.info("Asking the running daemon (socket %s)", name)
     deadline = time.monotonic() + WAIT_TIMEOUT_S
     waiting = False
     while True:
         reply = ipc.send(name, envelope)
         if reply is not None:
-            log.info("The running app answered")
+            log.info("The running daemon answered")
             return Answer(reply)
         if lock.acquire():
             try:
-                log.info("No app is running: running the command here")
+                log.info("No daemon is running: running the command here")
                 return Answer(run_here(request), here=True)
             finally:
                 lock.release()
@@ -131,7 +131,7 @@ def send_to_app(request: CommandRequest, run_here: RunHere) -> Answer:
                 f"(see {paths.log_file()})"
             )
         if not waiting:
-            log.info("The app is starting, or a command runs elsewhere: waiting")
+            log.info("The daemon is starting, or a command runs elsewhere: waiting")
             waiting = True
         time.sleep(RETRY_INTERVAL_S)
 
@@ -140,18 +140,18 @@ def send_to_app(request: CommandRequest, run_here: RunHere) -> Answer:
 class Context:
     backend_factory: BackendFactory
     presence_factory: PresenceFactory
-    app_client: AppClient
+    daemon_client: DaemonClient
     _backend: Backend | None = field(default=None, init=False)
 
     @property
     def backend(self) -> Backend:
-        """Created on first use: commands sent to the app don't need one."""
+        """Created on first use: commands sent to the daemon don't need one."""
         if self._backend is None:
             self._backend = self.backend_factory()
         return self._backend
 
     def run_here(self, request: CommandRequest) -> Reply:
-        """`request` in this process, as the app runs it (but no tick first)."""
+        """`request` in this process, as the daemon runs it (but no tick first)."""
         try:
             with open_service(self.backend, self.presence_factory()) as service:
                 return execute(service, request).reply
@@ -224,18 +224,18 @@ def cmd_playlist(ctx: Context, args: argparse.Namespace) -> int:
     else:
         command: Command = args.command  # a subparser name from Command
         request = Request(command=command, target=target)
-    return _print(ctx.app_client(request, ctx.run_here))
+    return _print(ctx.daemon_client(request, ctx.run_here))
 
 
 def cmd_reset_cycle(ctx: Context, args: argparse.Namespace) -> int:
     """Asks first, with the playlist's count, unless --yes."""
     if not args.yes:
-        answer = ctx.app_client(StatsRequest(target=args.target), ctx.run_here)
+        answer = ctx.daemon_client(StatsRequest(target=args.target), ctx.run_here)
         reply = answer.reply
         if not isinstance(reply, StatsResult):
             return _print(answer)
         stats = reply.playlists[0]
-        # A sorted one has no cycle: nothing to ask, the app says so.
+        # A sorted one has no cycle: nothing to ask, the daemon says so.
         if stats.order is Order.SHUFFLE and not _confirm(
             f"Start {stats.name}'s shuffle cycle over? All "
             f"{stats.seen + stats.unseen:,} images become unseen. [y/N] "
@@ -243,7 +243,7 @@ def cmd_reset_cycle(ctx: Context, args: argparse.Namespace) -> int:
             print("Nothing changed")
             return 1
     request = ResetCycleRequest(target=args.target)
-    return _print(ctx.app_client(request, ctx.run_here))
+    return _print(ctx.daemon_client(request, ctx.run_here))
 
 
 def _confirm(question: str) -> bool:
@@ -321,7 +321,7 @@ def format_reply(reply: Reply) -> Text:
 def format_status(
     playlists: Sequence[PlaylistDetails], paused: str | None, running: bool = True
 ) -> str:
-    """`running` False: run here, with no app to rotate."""
+    """`running` False: run here, with no daemon to rotate."""
     lines: list[str] = []
     for playlist in playlists:
         lines.append(f"{playlist.name}  ({', '.join(_traits(playlist))})")
@@ -404,7 +404,7 @@ def _mark_text(reply: MarkResult) -> str:
 
 
 def _remove_text(reply: RemoveResult, running: bool = True) -> str:
-    """`running` False: run here, so no tick follows until the app starts."""
+    """`running` False: run here, so no tick follows until the daemon starts."""
     if reply.changed:
         listed = f"Listed {reply.image} in {reply.list_file} (not deleted)"
     else:
@@ -450,25 +450,25 @@ def _next_in(playlist: PlaylistDetails) -> str:
     return f"held ({left} once resumed)" if playlist.held else left
 
 
-def cmd_app(ctx: Context, args: argparse.Namespace) -> int:
+def cmd_daemon(ctx: Context, args: argparse.Namespace) -> int:
     """`run` (headless, in this terminal) and `tray`."""
     # pylint: disable=import-outside-toplevel
     from .app.processes import setup_logging
-    from .app.runtime import AppOptions, Platform, run_app
+    from .app.runtime import DaemonOptions, Platform, run_daemon
 
     tray = args.command == "tray"
     setup_logging(paths.log_file() if tray else None)
-    options = AppOptions(
+    options = DaemonOptions(
         tray=tray,
         tick_period=args.poll,
         quit_after_ticks=args.ticks,
     )
-    return run_app(options, Platform(ctx.backend_factory, ctx.presence_factory))
+    return run_daemon(options, Platform(ctx.backend_factory, ctx.presence_factory))
 
 
 def cmd_ui(ctx: Context, args: argparse.Namespace) -> int:
     """`ui [home|library|settings]`: the window, in its own process."""
-    del ctx  # the window talks to the app, which has the backend
+    del ctx  # the window talks to the daemon, which has the backend
     # pylint: disable=import-outside-toplevel
     from .app.processes import setup_logging
     from .app.ui.process import UiOptions, run_ui
@@ -485,7 +485,7 @@ def cmd_ui(ctx: Context, args: argparse.Namespace) -> int:
 
 
 def absolute_path(value: str) -> Path:
-    """Absolute (the app runs in another directory); symlinks are kept."""
+    """Absolute (the daemon runs in another directory); symlinks are kept."""
     return Path(os.path.abspath(value))
 
 
@@ -565,17 +565,17 @@ def build_parser() -> argparse.ArgumentParser:
     tray_parser = sub.add_parser(
         "tray", help="run the app with a tray icon (what starts at login)"
     )
-    for app_parser, poll_help in (
+    for daemon_parser, poll_help in (
         (run_parser, "seconds between checks (default: 5)"),
         (tray_parser, argparse.SUPPRESS),
     ):
-        app_parser.add_argument(
+        daemon_parser.add_argument(
             "--poll", type=positive_seconds, default=5.0, help=poll_help
         )
-        app_parser.add_argument(
+        daemon_parser.add_argument(
             "--ticks", type=int, default=None, help=argparse.SUPPRESS
         )
-        app_parser.set_defaults(handler=cmd_app)
+        daemon_parser.set_defaults(handler=cmd_daemon)
 
     ui_parser = sub.add_parser(
         "ui", help="open the window on a page (in the running UI process, or start one)"
@@ -677,12 +677,12 @@ def main(
     argv: Sequence[str] | None = None,
     backend_factory: BackendFactory = get_backend,
     presence_factory: PresenceFactory = get_presence,
-    app_client: AppClient = send_to_app,
+    daemon_client: DaemonClient = send_to_daemon,
 ) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     handler: Callable[[Context, argparse.Namespace], int] = args.handler
-    if args.verbose and handler not in (cmd_app, cmd_ui):  # those set up their own
+    if args.verbose and handler not in (cmd_daemon, cmd_ui):  # those set up their own
         # pylint: disable=import-outside-toplevel
         from .app.processes import setup_logging
 
@@ -690,7 +690,7 @@ def main(
     ctx = Context(
         backend_factory=backend_factory,
         presence_factory=presence_factory,
-        app_client=app_client,
+        daemon_client=daemon_client,
     )
     try:
         return handler(ctx, args)

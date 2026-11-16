@@ -20,7 +20,7 @@ else:
     NO_WINDOW = 0
 
 # argv: server name, command, timeout. Prints the reply as JSON,
-# NONE (no app running) or ERROR <message>.
+# NONE (no daemon running) or ERROR <message>.
 SEND = """
 import sys
 from pathlib import Path
@@ -52,7 +52,7 @@ print(data.decode().strip())
 """
 
 # argv: data dir, then CLI arguments. The backend factory fails, which
-# proves that a playlist command went to the running app (run here, it
+# proves that a playlist command went to the running daemon (run here, it
 # would need one).
 CLI = """
 import sys
@@ -67,7 +67,7 @@ sys.exit(cli.main(sys.argv[2:], backend_factory=no_backend))
 """
 
 # argv: data dir, then CLI arguments. Like CLI, but with a fake backend
-# (one monitor "Main"), for commands run here when no app is running.
+# (one monitor "Main"), for commands run here when no daemon is running.
 CLI_HERE = f"""
 import sys
 from pathlib import Path
@@ -89,7 +89,7 @@ sys.exit(
 )
 """
 
-# argv: data dir, seconds. Holds the app's lock that long (like a starting
+# argv: data dir, seconds. Holds the daemon's lock that long (like a starting
 # app, or a CLI command run here); prints "locked" once it has it.
 HOLD_LOCK = """
 import sys
