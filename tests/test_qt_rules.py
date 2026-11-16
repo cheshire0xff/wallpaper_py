@@ -1,6 +1,6 @@
 """
 The app code follows the Qt for Python rules that bit us or bite others
-(see docs/architecture.md, Rules):
+(AGENTS.md, "Qt for Python rules"):
 
 - no lambda holding `self` connected to a signal (or given to
   QTimer.singleShot): Qt keeps it, and with it the object, alive until the

@@ -79,6 +79,27 @@ def test_app_wiring_names_exist() -> None:
     assert len(references) >= 30, "the doc should reference the code it describes"
 
 
+def test_architecture_names_exist() -> None:
+    doc = WIRING.with_name("architecture.md")
+    references = set(REFERENCE.findall(doc.read_text(encoding="utf-8")))
+    missing = sorted(f"{o}.{m}" for o, m in references if not hasattr(OWNERS[o], m))
+    assert not missing, f"{doc.name} names code that no longer exists: {missing}"
+
+
+def test_mermaid_lines_have_no_semicolon() -> None:
+    # In a sequence diagram ";" ends the statement: the rest of the line
+    # fails to parse, and the diagram doesn't render at all.
+    found = []
+    for doc in sorted(WIRING.parent.rglob("*.md")):
+        inside = False
+        for number, line in enumerate(doc.read_text(encoding="utf-8").splitlines()):
+            if line.startswith("```"):
+                inside = line.startswith("```mermaid")
+            elif inside and ";" in line:
+                found.append(f"{doc.name}:{number + 1}: {line.strip()}")
+    assert not found, "';' in a diagram (use ',' instead):\n" + "\n".join(found)
+
+
 def test_agents_notes_names_exist() -> None:
     notes = Path(__file__).parents[1] / "AGENTS.md"
     references = set(REFERENCE.findall(notes.read_text(encoding="utf-8")))

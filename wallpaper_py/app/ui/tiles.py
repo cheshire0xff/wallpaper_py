@@ -17,7 +17,10 @@ the disk cache: the open playlist's folder first, then the other
 playlists' and the lists' entries. It waits while the grid has tiles to
 decode. Having seen every current image (every folder and list read), it
 deletes the cache files none of them names (old tile sizes, deleted or
-edited images). A change of what it should cover starts a new pass.
+edited images), except those written since the pass started; a folder it
+can't read (a drive not mounted) keeps its thumbnails, as no pass then
+prunes. A change of what it should cover starts a new pass, which begins
+once the old one has stopped at its next image (one thread).
 
 Everything here lives only in the UI process: closing the window ends it
 and gives the memory back; the app never makes thumbnails. The threads

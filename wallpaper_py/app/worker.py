@@ -124,6 +124,10 @@ class ServiceWorker(QObject):
 
     @Slot()
     def stop(self) -> None:
+        """
+        At shutdown: the timer, then the socket (ending every subscription,
+        so the UI process quits too), the service, COM; then the thread.
+        """
         if self._timer is not None:
             self._timer.stop()
         if self._server is not None:

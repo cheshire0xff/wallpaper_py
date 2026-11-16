@@ -107,233 +107,101 @@ Rules:
 - `app/__init__.py` loads `protocol.py` (all of pydantic) before any Qt
   module: PySide6's import hook breaks pydantic's lazy imports if pydantic
   was only partly loaded before Qt.
-- Qt for Python rules, checked by `tests/test_qt_rules.py`:
-  - Signals connect to bound methods, not lambdas or partials that hold
-    `self` (use `sender()`, or data on the sender such as
-    `QAction.setData`, for context). Qt keeps such a lambda alive, and the
-    object it holds can then be freed from inside the deletion of its own
-    child, which deletes that child twice (seen as a random access
-    violation in tests).
-  - Every method used as a slot has `@Slot(...)`, as Qt for Python
-    recommends. Only real slots run in the receiver's thread on a queued
-    connection; any other callable runs in the sender's thread.
-  - No method shadows an inherited Qt method (e.g. a slot called
-    `update` on a widget): PySide then connects it as a plain callable,
-    without thread affinity (PYSIDE-2990). Except the virtuals a class
-    exists to implement: event handlers, an item model's `rowCount` /
-    `data`, a delegate's `paint` / `sizeHint` (the Library's grid).
-    The UI process's threads are `Jobs` (jobs.py: a `QThreadPool` and
-    results on the UI thread), never a `QThread.run` override; the
-    service's `QThread` runs its event loop.
-  - A method that does override a Qt virtual (an event handler,
-    `QRunnable.run`) is marked `@override`, like every override (mypy's
-    `explicit-override`): a misspelt one, which Qt would silently never
-    call, is a mypy error.
-  - `sender()` only for same-thread connections (invalid for a direct
-    call from another thread); disconnect only our own connections.
-  - The worker's `QThread.started` slot only sets up and returns, so the
-    thread's event loop runs the timer and socket; work never runs there.
+- Qt for Python rules: AGENTS.md, "Qt for Python rules", each with its
+  reason; `tests/test_qt_rules.py` checks them.
 
 ## App shell
 
-Every process, thread, signal and connection, with the request / tick /
-window / shutdown flows: [app-wiring.md](app-wiring.md). The socket's
-messages: [protocol.md](protocol.md).
+How it is wired (processes, threads, flows): [app-wiring.md](app-wiring.md).
+The socket's messages: [protocol.md](protocol.md). What each module does:
+its docstring. Here: the decisions, and why.
 
-Two processes: the always-running **app** (service thread, tray, command
-socket), which stays small, and the **UI process** with the windows, which
-runs only while a window is open (see below).
+**Two processes.** The app (service thread, tray, command socket) always
+runs and stays small. The windows run in the UI process (`wallpaper ui`),
+started on demand and ended when the window closes: only ending a process
+surely gives its memory (the grids' thumbnails) back, as memory freed
+inside a running one may stay with it (allocator, fragmentation). Each
+runs at most once: the app holds an instance lock next to the state
+database (instance.py: the socket alone can't ensure it on Windows), the
+UI process `ui.lock` while it listens on its own small socket
+(launcher.py).
 
-One process rotates: `wallpaper tray` (with the tray icon) or `wallpaper
-run` (headless, in a terminal) start the same app. It holds a `QLockFile`
-next to the state database (the socket alone can't enforce this: on
-Windows a second `QLocalServer` can listen on the same pipe name) and
-listens on a per-user `QLocalServer` (name derived from the data
-directory).
+**One thread owns the service.** A change renders for ~200 ms, which must
+never happen on the UI thread, so the `PlaylistService` lives on a worker
+`QThread` with everything it uses (worker.py). Socket requests, tray
+actions and ticks all run there through `ServiceWorker.execute`, one at a
+time, so the core needs no locks; nothing there may block on a client or
+spin a nested event loop, which would hold up the ticks and every other
+client. The socket is made once and closed at stop, so it keeps answering
+(with the error) while the service is down.
 
-Threads: the `PlaylistService` lives on a worker `QThread`, which creates
-everything it uses there (the command socket, COM via
-`backends.thread_scope()`, the backend, the SQLite connection, the 5 s tick
-`QTimer`). A change renders for ~200 ms, which must never happen on the UI
-thread. The UI thread holds only UI (tray, screen watcher) and `ServiceHost`, a thin proxy: tray actions and extra ticks
-reach the worker as queued signals; replies, changes and the
-`Overview` come back the same way. Socket requests need no hop: the socket
-lives on the service thread and calls `ServiceWorker.execute` directly, the
-one entry point for every command. Commands run one at a time between
-ticks, in order, so the core needs no locking; nothing on that thread may
-block on a client or spin a nested event loop. A command that changes a
-wallpaper (`next`, `prev`, `pick`, `remove`) emits `changed` like a tick
-does; after every command the overview is published if it changed (that is
-how `hold` / `resume` reach the tray and subscribers). The
-socket is created once at start and closed at stop, so it keeps answering
-while the service is down. The UI waits on the worker only at shutdown.
+**The tick is the source of truth.** Every 5 s it re-reads the real
+state; Qt's screen signals only trigger one extra tick (screens.py), and
+lock / unlock and sleep are noticed by the tick itself (native
+notifications are decided against: plan.md). A missed or early signal
+costs at most one tick.
 
-Ticks: the 5 s tick is the source of truth (it re-reads the real state).
-Qt screen signals only restart a 2 s single-shot timer that triggers one
-extra tick, so a returning monitor gets its image without waiting. Lock /
-unlock and sleep / resume are noticed by the tick itself (WTS flag, tick
-gap); no native notifications.
+**Replies are data.** One pydantic model per command (protocol.py): the
+CLI makes its text from it, the tray and the windows show the same
+models, so a command is written once for all of them.
 
-Protocol: replies carry data only (`protocol.py`): one pydantic model per
-command, tagged on `command`, or `{"error": {"kind", "message"}}`. The CLI
-formats its text from that data; the tray and the windows use the same
-models (the tray in-process, through `ServiceHost`). `subscribe` keeps a
-connection open and streams one event per line (`changed`,
-`overview_changed`), written by the service thread where the socket lives;
-the first is the current overview. The protocol only adds things; clients
-ignore unknown fields. The JSON Schema (`docs/protocol.schema.json`) is
-generated from the models and checked by a test.
+**The CLI never starts the app.** Without one, it runs the command itself
+under the app's instance lock (one writer at a time) and exits: only the
+app rotates, and nothing keeps running after a command (cli.py).
 
-CLI: playlist commands run in the app if it runs, sent as one line of
-JSON (`ipc.py`, pydantic models) and run with `commands.execute()`. If no
-app answers, the CLI takes the app's instance lock and runs the command
-itself (the same `commands.execute()`, no tick first), then exits: it never
-starts the app, so nothing keeps running after a command. The lock keeps
-one writer: two CLIs take turns, and an app starting meanwhile waits up to
-5 s for it. `list` and `set` don't need the app. The client blocks
-without an event loop; PySide keeps the GIL while it waits, so it must run
-in a different process from the server (tests use child processes,
-`tests/clients.py`).
+**Errors stop only what they must.** A `WallpaperError` fails one
+operation and the rest goes on; a `ConfigError` (a list file that can't be
+used) stops the service, wherever it comes from (`ServiceWorker._failed`),
+and every tick tries to open it again, so it runs once the file is fixed.
+Settings that fail the checks are never stored, so they can't stop it.
 
-A list file that can't be used doesn't stop the app: a `ConfigError` stops
-the service wherever it comes from (opening it, a tick, a command, the
-overview, e.g. a list file saved with a BOM while running), all through
-`ServiceWorker._failed`. The tray shows the error and commands answer with
-it; every tick tries to open the service again, so it runs once the file
-is fixed. Settings that fail the checks are never stored, so they can't
-break it.
+**The windows are a client like the CLI.** The pages see only `Client`
+(client.py), never the service: the same commands and events as any
+other client, and tests give them a fake. Images are read from the files,
+never sent over the socket; for the library's grids the UI process also
+reads the folders, the list files and the history itself (read-only, off
+the UI thread; the history through a read-only SQLite connection, WAL).
+Writes are always commands. Its view state (ui_state.py) is not settings:
+no revision, nothing the app reads.
 
-Two kinds of expected error, both `AppError`: a `WallpaperError` fails one
-operation and the rest goes on; a `ConfigError` (not a `WallpaperError`, so
-`except WallpaperError` lets it through) stops the service.
-A list file that won't decode but changed in the last few seconds may be
-half-written by a script: it is busy, not broken, until it settles.
+**What the windows and the tray show is the app's.** They redraw from
+overviews and never poll; a toggle shows the overview's state, never the
+click.
 
-UI process (`wallpaper ui [home|library|settings]`, `app/ui/`): one main
-window with a sidebar (Home, Library, Settings) runs in a process of its
-own, started on demand and ended when the window closes, so whatever it
-holds (the grids' thumbnails) is given back; the app never holds it. At most
-one runs: it listens on its own small socket (`UiServer`, "show this
-page") while holding `ui.lock`. The tray's *Open wallpaper_py*, *Library*
-and *Settings…* ask that socket without blocking (`WindowOpener`) and
-start `wallpaper ui <page>` detached if nothing answers; a starting UI
-process asks it too and exits if another one answered. A running window
-comes to the front on the page asked for. The UI process is a client of
-the app's socket like the CLI: it subscribes (starting the app first if
-none runs, as the CLI does) and quits when the subscription ends, i.e.
-when the app quits. The pages depend only on `Client` (`run` a command
-with a reply callback; `overview_changed`, `changed`, `marks_changed`,
-`failed`), never on the service or `ServiceWorker`. For the library's
-grids the UI process reads some state itself, off its UI thread, and
-never writes it (writes are commands): the folders (`library.scan_files`,
-with each image's "added" time), the list files (`MarkFile`, again on
-`marks_changed`) and the history (`store.read_history`, a read-only
-SQLite connection). The UI process logs to `ui.log` next to the app's log.
+**One look on Windows and KDE.** The tones are derived from the system's
+palette (light / dark, the accent) and the controls are painted here
+(theme.py, controls.py), with no stylesheets, so the app looks the same on
+both and still follows the system. The rules: docs/design/README.md, "The
+look".
 
-The pages live as long as the window, so switching pages keeps unsaved
-settings; closing the window with them asks Save / Discard / Cancel on the
-Settings page. The look follows the system's colours (the palette, light
-/ dark, the accent) with controls of our own: the tones (page, sidebar
-line, panels behind images, filled fields, accent fills, the controls'
-states) are derived from the application's palette (`theme.derive_tones`;
-the accent from Accent on Windows, from Highlight elsewhere, where Qt puts
-KDE's), set on the window as palette roles (Window, Base, Button,
-PlaceholderText; nothing else, so a palette change still reaches it) and
-derived again when the palette changes; everything painted here (sidebar
-items, rows, tabs, buttons, drop-downs, segmented choices, switches,
-sliders: controls.py) reads them when it paints, so it looks the same on
-Windows and KDE. The style still draws text fields, scroll bars and
-dialogs: Windows 11 style on Windows, Fusion on Linux (PySide6's own Qt
-can't load the system's Breeze). No stylesheets. The keyboard focus is a
-2 px accent ring, shown only when the focus came from the keyboard; Qt
-can't paint outside a widget, so it lies on the control's edge and a
-filled control's fill shrinks inside it. In light mode the panels behind
-images stay dark. Icons are Lucide SVGs tinted from the tones and
-re-tinted when they change.
+**Two image pipelines.** Home and Settings show a few images, the grids
+thousands. `ThumbnailLoader` decodes one small copy per image, which the
+monitor previews render from; merging it with the grids' would split that
+one decode into two. The grids' `TileLoader` reads tiles from a disk cache
+(tiles.py, core/thumbnail_cache.py), newest request first, dropping tiles
+scrolled away, within a memory budget (no setting). A tile is the image
+filling it, cropped as Fill shows it, so every tile looks alike (the
+user's choice, as in the phone app).
 
-Home redraws from `overview_changed` (which carries each monitor's id,
-name and geometry, attached or not) and asks `status` once per new
-overview for the schedule, counting the time left down itself in between;
-it never polls. Toggles show the overview's state, never the click.
-Images are read from the files, not the socket: `ThumbnailLoader` decodes
-each once with Pillow at a reduced size, on a thread pool of its own, into
-a small copy (covering a square of the preview's longer side) and the
-row's thumbnail made from it; it caches by path (never dropping an image
-shown now) and drops results for images no longer shown. The window has
-one loader, shared by Home and Settings (they show the same images).
-
-The Library page asks the app for a playlist's numbers (`stats`, counted
-on the service thread from the cached scan, the shuffle deck and the
-lists) only while its Overview tab is on screen, and again on
-`overview_changed` and on a `changed` of that playlist; one request at a
-time. Which playlist and tab it shows is view state, in `ui-state.json`
-(`paths.ui_state`, `ui_state.py`), written only by the UI process: not
-settings (no revision, never on the socket, nothing the app reads), and
-not `QSettings` (the registry on Windows, outside the data locations
-About lists). Missing or unreadable, it is the defaults, logged.
-
-The grids (All images so far) are a second image pipeline beside
-`ThumbnailLoader`, made for 20k images (`grid.py`, `tiles.py`): a
-`QListView` in icon mode over a list model of paths, every tile one size
-(192 x 108, 16:9), so only the tiles on screen are painted or asked for.
-`TileLoader` decodes on four threads of its own, the newest request
-first; the grid says which tiles are on screen after every scroll or
-resize, and a request for any other is dropped before it is decoded. A
-thumbnail is the image filling the tile, cropped to the middle as Fill
-shows a wallpaper (so every tile looks alike), at the sharpest screen's
-scale (draft mode for JPEGs, `imaging.load_filled`), read from or saved
-to the disk cache (`core.thumbnail_cache`: `paths.thumbnail_dir()`, one
-JPEG per image, named by a hash of its path, mtime and size, the tile
-size and the style, so an edited image gets a new one). In memory, the pixmaps are an
-LRU with a byte budget (1.5 GB, no setting), which never drops a tile on
-screen; closing the window gives it all back. While the window is open,
-`Pregenerator` fills the disk cache on one low-priority thread (the
-chosen playlist's folder first, then the other playlists' and the lists'
-entries), waiting while the grid has tiles to decode; a pass that read
-every folder and list then deletes the files none of their images names
-(not ones written since it started). The overview names each playlist's
-folder and the list files for it.
-
-The monitor drawings show previews, not thumbnails: virtual monitors.
-`MonitorsView` renders each monitor's image with `imaging.render`, for the
-monitor's real screen size and its look, at a small output (480 px on the
-longer side, times the display scale), and paints it whole into the
-monitor's box. Home draws each monitor's saved look (`DesktopMonitor.look`
-in the overview); Settings draws the look as edited, so an unsaved change
-shows at once. Renders are cached by image, look and sizes, only while
-drawn, and made on the UI thread (a few ms; the decode is the slow part).
-No small preview shows sharpness (a small image enlarged on a 4K screen
-looks crisp in it) or pixel-level effects. The small copies are decoded
-for the screen with the highest scale when the window opens; a sharper
-screen attached later shows softer previews until the window is opened
-again. A known limitation, on purpose: decoding again while the window is
-open (new sizes, the cache dropped, late results refused) would add
+**Previews are virtual monitors.** `MonitorsView` renders each monitor's
+image with the app's own renderer (`imaging.render`), for the monitor's
+real screen size and its look, at a small output: every look shows as it
+will on the screen, with no preview code of its own, and Settings draws
+the look as edited, so an unsaved change shows at once. No small preview
+shows sharpness or pixel-level effects. A known limitation, on purpose:
+the small copies are decoded for the sharpest screen when the window
+opens, so a sharper screen attached later shows softer previews until the
+window is opened again; decoding again while it is open would add
 concurrency for a cosmetic issue that reopening fixes.
 
-The settings live in the state database (`core/store.py`), written only
-by the app: `settings` reads them with a revision, `save_settings` replaces
-them as a whole (refused if the revision moved on, or if a value can't be
-used) and uses them at once. There is no settings file. They are stored
-as one JSON document (`Settings`, as on the socket), since they are only
-ever read and written whole: a new setting with a default (general, per
-playlist or in a look) loads from a database saved before it, with no new
-schema. Renaming or removing one still needs a new schema (unknown fields
-are refused). What changes piece by piece stays in tables: each
-playlist's state (cursor, time shown, deck position, hold; updated on
-every tick), history, the shuffle decks and the applied images.
-
-The Settings page is monitor-first: the drawing (attached monitors only;
-a click selects one, outlined), then the selected monitor's rows (a
-drop-down that also lists switched-off and not-connected monitors, its
-playlist, its mode), then the playlists. It keeps the edit as a `Draft`
-(`settings_draft.py`: texts as typed, monitor rows as chosen) and checks
-it after every change, per field, as the app will (a new or changed folder
-must exist; one already saved may be away). Save sends the whole edit
-with the revision it read; the reply carries the new revision and any
-warnings. A monitor is never named in the settings: the page names it from
-the current listing, numbering monitors that share a name left to right
-(`arrangement.twins`), and one the desktop doesn't list by the model code
-in its id (`settings_draft.short_id`).
+**The settings are one JSON document** in the state database, written only
+by the app (`save_settings`, refused if the revision moved on since they
+were read); there is no settings file. They are only ever read and written
+whole, so a new setting with a default loads from a database saved before
+it, with no new schema; renaming or removing one still needs one (unknown
+fields are refused). What changes piece by piece (each playlist's state,
+history, the shuffle decks, the applied images) stays in tables
+(store.py).
 
 ## Playlist service
 
@@ -501,25 +369,18 @@ The look is per monitor (`MonitorSettings.look`, `Settings.look`), the
 timing per playlist: how an image looks depends on a screen's shape,
 while mirrored monitors must change together.
 
-Fit's bars are filled with the look's `background`: a fixed colour
-(`#rrggbb`); the image's average colour; its most common one (`dominant`:
-the pixels sorted into boxes of similar colour, the fullest box's
-average); the average of its edges next to the bars (the outer 1/128 on
-each side: left and right, or top and bottom, as the screen's shape puts
-them); or `blur`, the image as Fill would show it, blurred (and darkened, as set),
-under the sharp one: how much blur (`Look.blur`) and darkening
-(`Look.darken`) is the monitor's setting, as it is taste and depends on
-the screen (Settings: a slider each, with even steps: the radius doubles
-every four). Automatic colours come from a fixed tiny copy of
-the image (`imaging.TINY`, 128x128, one column or row per edge), never
-from the output, so the wallpaper (from the file) and its preview (from
-the small copy) get the same colour. Except, rarely, `dominant` when two
-colours are about as common: the copies differ by a few levels, and each
-may pick another (accepted). Blur's radius is a part of the screen's
-longer side, so a preview has the same blur, smaller; it is worked out
-at a size where the radius is a few pixels and enlarged (the same to the
-eye, 5x faster at 4K). The tests above cover every background, and blur
-at both ends of its range. The background is kept in the other modes,
-unused, so going back to Fit brings it back; blur and darkening are kept
-with the other backgrounds alike. A new look field with a default needs
-no new schema (the settings are stored as JSON, "Settings" above).
+Fit's bars are filled with the look's `background`: a fixed colour, one
+taken from the image (its average, its most common one, its edges next to
+the bars: imaging.py), or `blur`, the image as Fill would show it, blurred
+and darkened under the sharp one. How much blur and darkening
+(`Look.blur`, `Look.darken`) is the monitor's setting, as it is taste and
+depends on the screen. Automatic colours come from a fixed tiny copy of
+the image (`imaging.TINY`), never from the output, so the wallpaper (from
+the file) and its preview (from the small copy) get the same colour.
+Except, rarely, `dominant` when two colours are about as common: the
+copies differ by a few levels, and each may pick another (accepted).
+Blur's radius is a part of the screen's longer side, so a preview has the
+same blur, smaller; it is worked out at a size where the radius is a few
+pixels and enlarged (the same to the eye, 5x faster at 4K). The
+background is kept in the other modes, unused, so going back to Fit
+brings it back.

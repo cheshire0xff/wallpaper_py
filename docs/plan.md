@@ -142,8 +142,7 @@ Lists (shared by all playlists)
 - CLI: `wallpaper stats [target] [--rescan]`, `wallpaper reset-cycle
   target` (asks first, unless `--yes`), `wallpaper upcoming [target]
   [-n N]`, and `--image PATH` on `fav` / `unfav` / `remove` / `unremove`.
-- docs/protocol.md and docs/app-wiring.md get the new commands, the
-  event and its connections.
+- docs/protocol.md gets the new commands and the event.
 
 ### What the UI process reads itself
 
