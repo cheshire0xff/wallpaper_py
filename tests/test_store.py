@@ -17,7 +17,7 @@ from wallpaper_py.core.settings import (
     Settings,
     StaleSettingsError,
 )
-from wallpaper_py.core.store import SCHEMA_VERSION, Store
+from wallpaper_py.core.store import SCHEMA_VERSION, Store, read_history
 
 from .fakes import add_playlists
 
@@ -47,6 +47,35 @@ def test_set_cursor_restarts_the_interval(store: Store) -> None:
     store.add_elapsed("1", 100)
     store.set_cursor("1", store.append_history("1", Path("a.jpg"), 1.0))
     assert store.playlist_state("1").elapsed == 0
+
+
+def test_read_history_newest_shown_first(tmp_path: Path) -> None:
+    """Read-only, beside the app's open connection, and after it closed."""
+    path = tmp_path / "state.sqlite3"
+    assert not read_history(path, "1")  # no database yet
+    with add_playlists(Store(path), "1", "2") as store:
+        first = store.append_history("1", Path("a.jpg"), 1.0)
+        store.append_history("1", Path("b.jpg"), 3.0)
+        store.insert_history("1", first, Path("picked.jpg"), 5.0)  # shown last
+        store.append_history("1", Path("a.jpg"), 4.0)  # shown again
+        store.append_history("2", Path("x.jpg"), 9.0)
+        names = ["picked.jpg", "a.jpg", "b.jpg", "a.jpg"]
+        assert [e.path.name for e in read_history(path, "1")] == names
+        assert [e.shown_at for e in read_history(path, "1", limit=2)] == [5.0, 4.0]
+        with store.transaction():  # the app writing: the last commit is read
+            store.append_history("1", Path("c.jpg"), 6.0)
+            assert len(read_history(path, "1")) == 4
+    assert [e.path.name for e in read_history(path, "1")][:2] == ["c.jpg", "picked.jpg"]
+    assert not read_history(path, "3")
+
+
+def test_read_history_refuses_another_schema(tmp_path: Path) -> None:
+    path = tmp_path / "state.sqlite3"
+    with Store(path) as store:
+        # pylint: disable-next=protected-access
+        store._db.execute("PRAGMA user_version = 99")
+    with pytest.raises(WallpaperError, match="schema 99"):
+        read_history(path, "1")
 
 
 def test_history_walks_per_playlist(store: Store) -> None:

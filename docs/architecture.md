@@ -205,10 +205,13 @@ comes to the front on the page asked for. The UI process is a client of
 the app's socket like the CLI: it subscribes (starting the app first if
 none runs, as the CLI does) and quits when the subscription ends, i.e.
 when the app quits. The pages depend only on `Client` (`run` a command
-with a reply callback; `overview_changed`, `changed`, `failed`), never on
-the service or `ServiceWorker`; reading state for the library's grids
-(SQLite read-only, the .txt files, the folders) comes in Phase 5's later
-steps. The UI process logs to `ui.log` next to the app's log.
+with a reply callback; `overview_changed`, `changed`, `marks_changed`,
+`failed`), never on the service or `ServiceWorker`. For the library's
+grids the UI process reads some state itself, off its UI thread, and
+never writes it (writes are commands): the folders (`library.scan_files`,
+with each image's "added" time), the list files (`MarkFile`, again on
+`marks_changed`) and the history (`store.read_history`, a read-only
+SQLite connection). The UI process logs to `ui.log` next to the app's log.
 
 The pages live as long as the window, so switching pages keeps unsaved
 settings; closing the window with them asks Save / Discard / Cancel on the
@@ -304,14 +307,17 @@ State lives in two places, by design:
   given. It is the single source of truth. Whoever holds the instance lock is
   its only writer: the app, or a CLI command run while no app runs (with
   the app running, CLI commands go through its socket). WAL mode
-  lets later read-only windows read alongside. Pre-release, the schema
+  lets the library window read the history alongside (`read_history`,
+  read-only). Pre-release, the schema
   changes in place: a database of another schema version is refused with
   a message to delete it (the settings, history and shuffle state in it
   are lost).
 - **Favourites / to-remove** live only in their `.txt` files. Every change
   re-reads the file, applies one add or remove and writes it atomically;
-  reads reload when the file's mtime/size changes. Entries for missing
-  images are hidden, never pruned automatically. A file that has never
+  reads reload when the file's mtime/size changes, and the app tells
+  subscribers (`marks_changed`) when that moved since its last tick or
+  command. Entries for missing images are hidden, never pruned
+  automatically. A file that has never
   been read (another program holds it) is *unknown*, not empty: while
   to-remove is unknown no image is chosen (ticks wait, `next` / `prev` /
   `pick` fail), and an unknown favourite is `null` in the overview.

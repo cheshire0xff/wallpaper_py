@@ -12,6 +12,8 @@ a database saved before it, with no new schema. The state the service
 updates piece by piece (per playlist, on each tick), history and the
 shuffle decks are tables. The layout is private to the service: the
 settings window reads and writes the settings through the app's commands.
+The one exception is `read_history`, the library window's read-only view
+of a playlist's history.
 
 The database is the single source of truth, so a one-shot CLI command
 (`wallpaper next`) and a running `wallpaper run` in another process see the
@@ -490,6 +492,44 @@ class Store:
             self._db.execute(
                 "DELETE FROM applied WHERE monitor_id = ?", (monitor_id.key,)
             )
+
+
+def read_history(
+    database: Path, playlist: str, limit: int | None = None
+) -> list[HistoryEntry]:
+    """
+    A playlist's history (by its id), newest shown first, every time an
+    image was shown (repeats kept): for the library window, which reads it
+    itself. A read-only connection of its own, opened and closed here, so
+    any thread may call it; WAL lets it read while the app writes. No
+    database yet: no history.
+
+    Raises:
+        WallpaperError: it can't be read, or is of another schema.
+    """
+    if not database.exists():
+        return []
+    try:
+        connection = sqlite3.connect(
+            f"{database.as_uri()}?mode=ro", uri=True, timeout=10.0
+        )
+        try:
+            (version,) = connection.execute("PRAGMA user_version").fetchone()
+            if version != SCHEMA_VERSION:
+                raise WallpaperError(
+                    f"The state database is of schema {version}, not "
+                    f"{SCHEMA_VERSION}: restart wallpaper_py after updating"
+                )
+            rows = connection.execute(
+                "SELECT id, path, shown_at FROM history WHERE playlist = ? "
+                "ORDER BY shown_at DESC, id DESC LIMIT ?",
+                (playlist, -1 if limit is None else limit),
+            ).fetchall()
+        finally:
+            connection.close()
+    except sqlite3.Error as err:
+        raise WallpaperError(f"Cannot read the history in {database}: {err}") from err
+    return [_history(row) for row in rows]
 
 
 def _history(row: tuple[int, str, float]) -> HistoryEntry:

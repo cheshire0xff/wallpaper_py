@@ -4,6 +4,7 @@ How windows talk to the app: `Client`, the only thing they may use.
     client.run(request, on_reply)   a command; its Reply comes back later
     client.overview_changed         the latest Overview (also client.overview)
     client.changed                  a wallpaper changed (a Change)
+    client.marks_changed            favourites or to-remove changed
     client.failed                   the app can't be reached; nothing more comes
 
 Windows never see the service, `ServiceWorker` or a socket. `SocketClient`
@@ -31,6 +32,7 @@ from ...protocol import (
     CommandRequest,
     Envelope,
     ErrorReply,
+    MarksChangedEvent,
     Overview,
     OverviewChangedEvent,
     Reply,
@@ -67,6 +69,7 @@ class Client(QObject):
 
     overview_changed = Signal(object)  # protocol.Overview
     changed = Signal(object)  # core.service.Change
+    marks_changed = Signal()  # read the list files again
     failed = Signal(str)  # message
 
     def __init__(self, parent: QObject | None = None) -> None:
@@ -227,6 +230,8 @@ class SocketClient(Client):
                 self._set_overview(message.overview)
             elif isinstance(message, ChangedEvent):
                 self.changed.emit(message.change)
+            elif isinstance(message, MarksChangedEvent):
+                self.marks_changed.emit()
 
     @Slot(QLocalSocket.LocalSocketError)
     def _error(self, error: QLocalSocket.LocalSocketError) -> None:

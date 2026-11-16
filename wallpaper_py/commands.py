@@ -10,7 +10,9 @@ a tick's. Qt-free, like the core.
 
 `open_service()` runs the service on the settings in the state database;
 `settings` and `save_settings` read and write them. `stats` counts what
-playlists pick up, `reset_cycle` starts a shuffle cycle over.
+playlists pick up, `reset_cycle` starts a shuffle cycle over, `upcoming`
+lists what comes next. The list commands (`fav`, `unfav`, `remove`,
+`unremove`) take a playlist's current image or any image named.
 
 `overview()` is the small snapshot the tray and the windows draw from.
 """
@@ -20,7 +22,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Literal, NamedTuple
+from typing import NamedTuple, get_args
 
 from .core import paths
 from .core.backend import Backend
@@ -46,13 +48,13 @@ from .core.service import (
 from .core.settings import PlaylistSettings, SettingsError, StaleSettingsError
 from .core.store import Store
 from .protocol import (
-    TARGET_COMMANDS,
     Command,
     DesktopMonitor,
     ErrorKind,
     Geometry,
     ErrorReply,
     HoldResult,
+    MarkRequest,
     MarkResult,
     MonitorView,
     NextResult,
@@ -63,6 +65,7 @@ from .protocol import (
     PlaylistView,
     PrevResult,
     RemoveResult,
+    Request,
     Reply,
     ResetCycleRequest,
     ResetCycleResult,
@@ -75,6 +78,8 @@ from .protocol import (
     StatsRequest,
     StatsResult,
     StatusResult,
+    UpcomingRequest,
+    UpcomingResult,
 )
 
 
@@ -128,13 +133,25 @@ def execute(service: PlaylistService, request: CommandRequest) -> Outcome:
             return Outcome(_status(service))
         if isinstance(request, StatsRequest | ResetCycleRequest):
             return Outcome(_library_command(service, request))
-        playlist = service.find_playlist(request.target)
-        if isinstance(request, PickRequest):
-            change = service.pick(playlist, request.image)
-            return Outcome(PickResult(playlist=playlist.name, change=change), change)
-        return _TARGET_HANDLERS[request.command](service, playlist)
+        if isinstance(request, MarkRequest):
+            return _mark_command(service, request)
+        return _playlist_command(service, request)
     except WallpaperError as err:  # not a ConfigError: that one goes up
         return Outcome(error_reply(err))
+
+
+def _playlist_command(
+    service: PlaylistService, request: Request | PickRequest | UpcomingRequest
+) -> Outcome:
+    """The commands on one playlist (not `status`, which has no target)."""
+    playlist = service.find_playlist(request.target)
+    if isinstance(request, PickRequest):
+        change = service.pick(playlist, request.image)
+        return Outcome(PickResult(playlist=playlist.name, change=change), change)
+    if isinstance(request, UpcomingRequest):
+        images = tuple(service.upcoming(playlist, request.limit))
+        return Outcome(UpcomingResult(playlist=playlist.name, images=images))
+    return _TARGET_HANDLERS[request.command](service, playlist)
 
 
 # Most specific first: the first match names the kind.
@@ -229,38 +246,54 @@ def _prev(service: PlaylistService, playlist: PlaylistSettings) -> Outcome:
     return Outcome(PrevResult(playlist=playlist.name, change=change), change)
 
 
-def _fav(service: PlaylistService, playlist: PlaylistSettings) -> Outcome:
-    image, added = service.favourite(playlist)
-    return Outcome(_mark("fav", service, playlist, image, added))
-
-
-def _unfav(service: PlaylistService, playlist: PlaylistSettings) -> Outcome:
-    image, removed = service.unfavourite(playlist)
-    return Outcome(_mark("unfav", service, playlist, image, removed))
-
-
-def _mark(
-    command: Literal["fav", "unfav"],
-    service: PlaylistService,
-    playlist: PlaylistSettings,
-    image: Path,
-    changed: bool,
-) -> MarkResult:
-    return MarkResult(
+def _mark_command(service: PlaylistService, request: MarkRequest) -> Outcome:
+    """
+    The image named, or the target playlist's current one (`playlist` in
+    the result then names it). `remove` of the current image also moves on.
+    """
+    playlist: str | None = None
+    if request.image is None:
+        settings = service.find_playlist(request.target)
+        if request.command == "remove":
+            return _remove_current(service, settings)
+        playlist, image = settings.name, service.require_current(settings)
+    else:
+        image = request.image
+    command = request.command
+    match command:
+        case "fav":
+            marks, changed = service.favourites, service.favourites.add(image)
+        case "unfav":
+            marks, changed = service.favourites, service.favourites.discard(image)
+        case "remove":  # an image named: only listed, the next tick moves on
+            changed = service.to_remove.add(image)
+            removed = RemoveResult(
+                playlist=None,
+                image=image,
+                list_file=service.to_remove.file,
+                changed=changed,
+                change=None,
+            )
+            return Outcome(removed)
+        case "unremove":
+            marks, changed = service.to_remove, service.to_remove.discard(image)
+    mark = MarkResult(
         command=command,
-        playlist=playlist.name,
+        playlist=playlist,
         image=image,
-        list_file=service.favourites.file,
+        list_file=marks.file,
         changed=changed,
     )
+    return Outcome(mark)
 
 
-def _remove(service: PlaylistService, playlist: PlaylistSettings) -> Outcome:
-    image, change = service.remove(playlist)
+def _remove_current(service: PlaylistService, playlist: PlaylistSettings) -> Outcome:
+    image, listed, change = service.remove(playlist)
     result = RemoveResult(
         playlist=playlist.name,
         image=image,
         list_file=service.to_remove.file,
+        changed=listed,
         change=change,
     )
     return Outcome(result, change)
@@ -280,13 +313,10 @@ _Handler = Callable[[PlaylistService, PlaylistSettings], Outcome]
 _TARGET_HANDLERS: dict[Command, _Handler] = {
     "next": _next,
     "prev": _prev,
-    "fav": _fav,
-    "unfav": _unfav,
-    "remove": _remove,
     "hold": _hold,
     "resume": _resume,
 }
-assert set(_TARGET_HANDLERS) == set(TARGET_COMMANDS)
+assert set(_TARGET_HANDLERS) == set(get_args(Command)) - {"status"}
 
 
 # -- overview and status ---------------------------------------------------------

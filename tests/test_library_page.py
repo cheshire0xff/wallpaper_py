@@ -132,6 +132,8 @@ def test_asks_one_at_a_time_and_again_on_its_playlists_changes(
     answer(client, StatsRequest, stats_of())
     client.changed.emit(other)
     assert len(asked(client)) == 2  # another playlist's change
+    client.marks_changed.emit()  # favourites or to-remove: its counts too
+    assert len(asked(client)) == 3
 
 
 def test_nothing_is_asked_while_the_app_has_an_error(

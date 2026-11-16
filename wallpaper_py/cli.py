@@ -8,7 +8,9 @@ app starting meanwhile waits for it), and nothing is left running after:
 only the app rotates. Replies are data (protocol.py); the text printed here
 is made here. `run` and `tray` start the app, `ui` the windows (see
 wallpaper_py.app). The settings are edited in the window (`ui settings`).
-`reset-cycle` asks first (it can't be undone), unless `--yes`.
+`reset-cycle` asks first (it can't be undone), unless `--yes`. The list
+commands (`fav`, `unfav`, `remove`, `unremove`) take the playlist's
+current image, or `--image PATH`.
 """
 
 from __future__ import annotations
@@ -35,12 +37,16 @@ from .core.service import ListStats, PlaylistStats
 from .core.settings import Order, format_ago, format_duration
 from .core.setter import apply_wallpaper
 from .protocol import (
+    MARK_COMMANDS,
+    MAX_UPCOMING,
     TARGET_COMMANDS,
     Command,
     CommandRequest,
     Envelope,
     ErrorReply,
     HoldResult,
+    MarkCommand,
+    MarkRequest,
     MarkResult,
     NextResult,
     PickRequest,
@@ -58,7 +64,11 @@ from .protocol import (
     StatsRequest,
     StatsResult,
     StatusResult,
+    UpcomingRequest,
+    UpcomingResult,
 )
+
+TARGET_HELP = "playlist name, or a monitor it drives; optional with one playlist"
 
 # The pages `wallpaper ui` opens the window on (app/ui/launcher.py
 # PAGE_NAMES; not imported from there, which would load Qt for every command).
@@ -196,13 +206,21 @@ class Text(NamedTuple):
 
 
 def cmd_playlist(ctx: Context, args: argparse.Namespace) -> int:
-    """status, pick, stats and the TARGET_COMMANDS: in the app, or here."""
+    """
+    status, pick, upcoming, stats, unremove and the TARGET_COMMANDS: in the
+    app, or here.
+    """
     target: str | None = getattr(args, "target", None)
     request: CommandRequest
     if args.command == "pick":
         request = PickRequest(target=target, image=args.image)
     elif args.command == "stats":
         request = StatsRequest(target=target, rescan=args.rescan)
+    elif args.command == "upcoming":
+        request = UpcomingRequest(target=target, limit=args.n)
+    elif args.command in MARK_COMMANDS:
+        mark: MarkCommand = args.command
+        request = MarkRequest(command=mark, target=target, image=args.image)
     else:
         command: Command = args.command  # a subparser name from Command
         request = Request(command=command, target=target)
@@ -248,7 +266,7 @@ def _print(answer: Answer) -> int:
 
 
 def format_answer(answer: Answer) -> Text:
-    """The reply's text; run here, `status` says so."""
+    """The reply's text; run here, `status` and `remove --image` say so."""
     text = format_reply(answer.reply)
     if not answer.here:
         return text
@@ -257,6 +275,8 @@ def format_answer(answer: Answer) -> Text:
             playlists, paused = answer.reply.playlists, answer.reply.paused
             out = format_status(playlists, paused, running=False)
             return text._replace(out=out)
+        case RemoveResult():
+            return text._replace(out=_remove_text(answer.reply, running=False))
     return text
 
 
@@ -275,21 +295,14 @@ def format_reply(reply: Reply) -> Text:
             if reply.change is None:
                 return Text(0, f"{reply.playlist}: no earlier image")
             return Text(0, reply.change.describe())
-        case MarkResult(command="fav"):
-            if reply.changed:
-                return Text(0, f"Added {reply.image} to {reply.list_file}")
-            return Text(0, f"{reply.image.name} is already a favourite")
         case MarkResult():
-            if reply.changed:
-                return Text(0, f"Removed {reply.image} from {reply.list_file}")
-            return Text(0, f"{reply.image.name} is not a favourite")
+            return Text(0, _mark_text(reply))
         case RemoveResult():
-            lines = [f"Listed {reply.image} in {reply.list_file} (not deleted)"]
-            if reply.change:
-                lines.append(reply.change.describe())
-            else:
-                lines.append(f"{reply.playlist}: changes once a monitor is attached")
-            return Text(0, "\n".join(lines))
+            return Text(0, _remove_text(reply))
+        case UpcomingResult():
+            if not reply.images:
+                return Text(0, f"{reply.playlist}: nothing to come")
+            return Text(0, "\n".join(str(p) for p in reply.images))
         case HoldResult() | ResumeResult():
             return Text(0, _hold_text(reply))
         case StatsResult():
@@ -374,6 +387,36 @@ def _list_line(label: str, stats: ListStats) -> str:
         f"{label}: {stats.file}: {stats.listed:,} listed, "
         f"{stats.available:,} available"
     )
+
+
+def _mark_text(reply: MarkResult) -> str:
+    if reply.changed:
+        if reply.command == "fav":
+            return f"Added {reply.image} to {reply.list_file}"
+        return f"Removed {reply.image} from {reply.list_file}"
+    match reply.command:
+        case "fav":
+            return f"{reply.image.name} is already a favourite"
+        case "unfav":
+            return f"{reply.image.name} is not a favourite"
+        case "unremove":
+            return f"{reply.image.name} is not listed for removal"
+
+
+def _remove_text(reply: RemoveResult, running: bool = True) -> str:
+    """`running` False: run here, so no tick follows until the app starts."""
+    if reply.changed:
+        listed = f"Listed {reply.image} in {reply.list_file} (not deleted)"
+    else:
+        listed = f"{reply.image.name} is already listed for removal"
+    if reply.change is not None:
+        moved = reply.change.describe()
+    elif reply.playlist is None:  # an image named: only listed
+        when = "within a few seconds" if running else "once the app runs"
+        moved = f"A playlist showing it moves on {when}"
+    else:
+        moved = f"{reply.playlist}: changes once a monitor is attached"
+    return f"{listed}\n{moved}"
 
 
 def _hold_text(reply: HoldResult | ResumeResult) -> str:
@@ -461,6 +504,16 @@ def image_mode(value: str) -> ImageMode:
         raise argparse.ArgumentTypeError(f"choose from: {choices}") from err
 
 
+def upcoming_count(value: str) -> int:
+    try:
+        count = int(value)
+    except ValueError as err:
+        raise argparse.ArgumentTypeError(f"not a whole number: {value}") from err
+    if not 1 <= count <= MAX_UPCOMING:
+        raise argparse.ArgumentTypeError(f"must be 1 to {MAX_UPCOMING}")
+    return count
+
+
 def positive_seconds(value: str) -> float:
     seconds = float(value)
     if not math.isfinite(seconds) or seconds <= 0:  # nan and inf parse as floats
@@ -534,36 +587,68 @@ def build_parser() -> argparse.ArgumentParser:
 
     status_parser = sub.add_parser("status", help="show playlists and their state")
     status_parser.set_defaults(handler=cmd_playlist)
+    _add_playlist_commands(sub)
+    _add_library_commands(sub)
+    return parser
 
-    target_help = "playlist name, or a monitor it drives; optional with one playlist"
+
+def _add_playlist_commands(
+    sub: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> None:
+    """The TARGET_COMMANDS, `unremove` and `pick`."""
     helps = {
         "next": "show the next image",
         "prev": "go back in history",
-        "fav": "add the current image to favourites",
-        "unfav": "remove the current image from favourites",
-        "remove": "list the current image for removal, show the next",
+        "fav": "add the current image (or --image) to favourites",
+        "unfav": "take the current image (or --image) off favourites",
+        "remove": "list the current image for removal and show the next; "
+        "with --image, only list that one",
         "hold": "stop rotating until resume (next / prev / pick still work)",
         "resume": "rotate a held playlist again",
     }
     for name in TARGET_COMMANDS:
         command = sub.add_parser(name, help=helps[name])
-        command.add_argument("target", nargs="?", help=target_help)
+        if name in MARK_COMMANDS:
+            either = command.add_mutually_exclusive_group()
+            either.add_argument("target", nargs="?", help=TARGET_HELP)
+            either.add_argument(
+                "--image",
+                type=absolute_path,
+                help="this image instead of a playlist's current one (any path)",
+            )
+        else:
+            command.add_argument("target", nargs="?", help=TARGET_HELP)
         command.set_defaults(handler=cmd_playlist)
+    unremove = sub.add_parser("unremove", help="take an image off the to-remove list")
+    unremove.add_argument(
+        "--image", type=absolute_path, required=True, help="the image (any path)"
+    )
+    unremove.set_defaults(handler=cmd_playlist)
 
     pick = sub.add_parser(
         "pick", help="show an image now, from any directory (prev goes back)"
     )
     pick.add_argument("image", type=absolute_path, help="image file")
-    pick.add_argument("target", nargs="?", help=target_help)
+    pick.add_argument("target", nargs="?", help=TARGET_HELP)
     pick.set_defaults(handler=cmd_playlist)
-    _add_library_commands(sub)
-    return parser
 
 
 def _add_library_commands(
     sub: argparse._SubParsersAction[argparse.ArgumentParser],
 ) -> None:
-    """`stats` and `reset-cycle`."""
+    """`upcoming`, `stats` and `reset-cycle`."""
+    upcoming = sub.add_parser(
+        "upcoming", help="the images a playlist shows next, in order (a path a line)"
+    )
+    upcoming.add_argument("target", nargs="?", help=TARGET_HELP)
+    upcoming.add_argument(
+        "-n",
+        type=upcoming_count,
+        default=10,
+        help=f"how many (default: 10, at most {MAX_UPCOMING})",
+    )
+    upcoming.set_defaults(handler=cmd_playlist)
+
     stats = sub.add_parser(
         "stats",
         help="count each playlist's images: seen and unseen in this cycle, "

@@ -296,9 +296,20 @@ no stylesheet.
    can't paint outside a widget), and a switch keeps 4 px around its
    pill for it; *Changes* (Every / Manually) stays a drop-down beside the
    interval field. Mode's icons are our own, drawn like Lucide's.
-3. **Data for the grids**: marks by `image`, `unremove`,
+3. **Data for the grids** (done): marks by `image`, `unremove`,
    `marks_changed`, `upcoming` (and their CLI); the UI-side scan with
-   "added" times; the read-only history reader.
+   "added" times (`library.scan_files`); the read-only history reader
+   (`store.read_history`). Decided while building: the list commands are
+   a request model of their own (`MarkRequest`), an `image` or a `target`,
+   never both; `unremove` needs an `image` (the current image is never
+   listed for long); `remove` replies `changed` too; the tray and Home
+   build their buttons' requests with `protocol.target_request`.
+   `marks_changed` carries no fields and goes only to subscribers; the
+   Overview tab asks for its numbers again on it. `scan_files` reads the
+   times from the directory listing (free on Windows, an `lstat` each on
+   Linux) and shares its walk with `scan`. The history reader takes a
+   playlist's id: step 5 gets it from the `settings` command, or adds
+   `id` to the overview's playlists.
 4. **Thumbnails**: the grid pipeline, the disk cache, pre-generation and
    pruning; tested offscreen with generated images
    (`tests/generate_test_images.py`).

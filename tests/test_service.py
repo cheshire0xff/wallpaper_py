@@ -24,6 +24,7 @@ from wallpaper_py.core.selection import MonitorSelectionError
 from wallpaper_py.core.service import (
     Change,
     ManualPlaylistError,
+    NothingShownError,
     NoImagesError,
     PlaylistError,
     PlaylistService,
@@ -314,29 +315,35 @@ def test_next_with_no_monitor_attached_consumes_nothing(env: Env) -> None:
     assert env.service.status()[0].upcoming[0] == upcoming
 
 
-def test_favourite_writes_the_txt_file(env: Env) -> None:
+def test_require_current(env: Env) -> None:
+    with pytest.raises(NothingShownError, match="has not shown an image yet"):
+        env.service.require_current(env.fantasy)
     env.service.tick()
-    image, added = env.service.favourite(env.fantasy)
-    assert added and image == env.tmp / "fantasy" / "f1.png"
-    assert not env.service.favourite(env.fantasy)[1]
-    text = env.favourites_file.read_text(encoding="utf-8")
-    assert text == f"{image}\n"
+    assert env.service.require_current(env.fantasy) == env.tmp / "fantasy" / "f1.png"
 
 
-def test_unfavourite_removes_only_the_current_image(env: Env) -> None:
+def test_an_image_taken_off_the_list_before_the_tick_stays(env: Env) -> None:
     env.service.tick()
-    env.favourites_file.parent.mkdir()
-    env.favourites_file.write_text("# mine\nother.png\n", encoding="utf-8")
-    image, _ = env.service.favourite(env.fantasy)
-    assert env.service.unfavourite(env.fantasy) == (image, True)
-    assert env.service.unfavourite(env.fantasy) == (image, False)
-    text = env.favourites_file.read_text(encoding="utf-8")
-    assert text == "# mine\nother.png\n"
+    image = env.service.require_current(env.fantasy)
+    assert env.service.to_remove.add(image)
+    assert env.service.to_remove.discard(image)
+    assert env.service.tick() == []
+
+
+def test_lists_stamp_follows_edits(env: Env) -> None:
+    before = env.service.lists_stamp()
+    assert env.service.lists_stamp() == before
+    env.service.favourites.add(env.tmp / "x.png")
+    after_fav = env.service.lists_stamp()
+    assert after_fav != before
+    env.to_remove_file.write_text("by hand.png\n", encoding="utf-8")
+    assert env.service.lists_stamp() != after_fav
 
 
 def test_remove_lists_hides_and_moves_on(env: Env) -> None:
     env.service.tick()
-    image, change = env.service.remove(env.konachan)
+    image, listed, change = env.service.remove(env.konachan)
+    assert listed
     assert change is not None and change.image != image
     assert image.exists()  # never deleted
     assert env.to_remove_file.read_text(encoding="utf-8") == f"{image}\n"
@@ -606,7 +613,7 @@ def test_held_playlist_still_replaces_a_removed_image(env: Env) -> None:
     env.service.hold(env.konachan)
     env.backend.detach("AW3225QF")
     env.backend.detach("PLX2783H")
-    image, change = env.service.remove(env.konachan)
+    image, _, change = env.service.remove(env.konachan)
     assert change is None  # nowhere to show the next one yet
     env.backend.update("PLX2783H", rect=make_monitor("x").rect)
     [change] = [c for c in env.service.tick() if c.playlist == "konachan"]
@@ -851,7 +858,7 @@ def test_stats_count_a_shuffle_cycle(env: Env) -> None:
     later = env.service.status(upcoming=1)[0].upcoming[0]
     env.to_remove_file.parent.mkdir(parents=True, exist_ok=True)
     env.to_remove_file.write_text(f"{later}\n", encoding="utf-8")
-    env.service.favourite(env.konachan)
+    env.service.favourites.add(env.service.require_current(env.konachan))
     new = make_images(env.tmp / "konachan", "k09.jpg")[0]
     stats = env.service.stats(env.konachan)
     assert (stats.images, stats.seen, stats.unseen, stats.skipped) == (9, 2, 6, 1)

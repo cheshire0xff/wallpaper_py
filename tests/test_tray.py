@@ -24,11 +24,14 @@ from wallpaper_py.app.worker import ServiceHost, ServiceSettings
 from wallpaper_py.core.model import MonitorId
 from wallpaper_py.protocol import (
     ErrorReply,
+    MarkRequest,
     MonitorView,
     Overview,
     PlaylistView,
     Reply,
     Request,
+    TargetCommand,
+    target_request,
 )
 
 from .fakes import FakeAutostart, FakeBackend, FakePresence
@@ -53,8 +56,8 @@ STRIP = PlaylistView(
 )
 
 
-def queued(command: str, target: str) -> Request:
-    return Request.model_validate({"command": command, "target": target})
+def queued(command: TargetCommand, target: str) -> Request | MarkRequest:
+    return target_request(command, target)
 
 
 class Actions:
@@ -64,7 +67,7 @@ class Actions:
         self.calls: list[object] = []
         self.autostart = False
 
-    def run(self, request: Request) -> None:
+    def run(self, request: Request | MarkRequest) -> None:
         self.calls.append(request)
 
     def open_image(self, image: Path) -> None:

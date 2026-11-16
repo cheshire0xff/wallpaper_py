@@ -32,7 +32,7 @@ loop. The UI thread never waits on it (except once, at shutdown).
 The UI process is a client like the CLI: commands and a subscription over
 the app's socket. Its window and pages use only the `Client` interface
 (`Client.run`, `Client.overview_changed`, `Client.changed`,
-`Client.failed`), never the service or a socket.
+`Client.marks_changed`, `Client.failed`), never the service or a socket.
 
 ## Overview
 
@@ -68,7 +68,7 @@ flowchart LR
     client ==>|"subscribe: events<br/>commands: request / reply"| server
     opener ==>|"show page / ok"| uiserver
     uiserver -->|"show_requested"| windows
-    client -->|"overview_changed, changed"| windows
+    client -->|"overview_changed, changed,<br/>marks_changed"| windows
     windows -->|"run (also stats, reset_cycle,<br/>settings, save_settings)"| client
     windows -->|"want"| thumbs
     thumbs -.->|"loaded"| windows
@@ -117,6 +117,7 @@ Inside the service thread (direct):
 | `CommandServer.subscribed` | `ServiceWorker._welcome` -> `CommandServer.send_event` (the current `Overview`) |
 | a change (tick or command) | `ServiceWorker._announce`: `ServiceWorker.changed` and `CommandServer.broadcast` |
 | a new overview | `ServiceWorker._publish`: `ServiceWorker.overview_changed` and `CommandServer.broadcast` |
+| the list files' stamp moved (`PlaylistService.lists_stamp`: paths, mtimes, sizes), checked after every tick and command | `ServiceWorker._publish_lists` (from `ServiceWorker._publish`): `CommandServer.broadcast` of `marks_changed` (subscribers only: the tray reads `favourite` from the overview) |
 | an error from the service (a command, a tick, the overview) | `ServiceWorker._failed`: a `ConfigError` (a list file went bad) stops the service (`ServiceWorker._fail`; commands answer with it, and each tick tries to open it again), any other is logged |
 
 Inside the UI thread (direct):
@@ -162,7 +163,7 @@ the new overview is published, both before the reply.
 | Home's countdown `QTimer` (every second, only while a playlist counts down) | `HomePage.refresh_schedule` |
 | `ThumbnailLoader.loaded` (an image is ready) | `HomePage._thumbnail_loaded` (the rows and `MonitorsView` that still show it), `SettingsPage._image_loaded` (its `MonitorsView`) |
 | `Tabs.current_changed` (Settings' sub-tabs) | `QStackedWidget.setCurrentIndex` |
-| `SocketClient.overview_changed`, `SocketClient.changed`, `SocketClient.failed` | `LibraryPage.show_overview` (the playlists in its drop-down; the numbers again), `LibraryPage._changed` (a change of its playlist: the numbers again), `LibraryPage.show_error` |
+| `SocketClient.overview_changed`, `SocketClient.changed`, `SocketClient.marks_changed`, `SocketClient.failed` | `LibraryPage.show_overview` (the playlists in its drop-down; the numbers again), `LibraryPage._changed` (a change of its playlist: the numbers again), `LibraryPage._marks_changed` (the numbers again), `LibraryPage.show_error` |
 | `Tabs.current_changed` (the Library's tabs), the Library's *Playlist* drop-down's `currentIndexChanged` | `LibraryPage._tab_chosen`, `LibraryPage._playlist_chosen` (each remembered in ui-state.json; Overview: the numbers again) |
 | `OverviewTab.rescan_requested`, `OverviewTab.reset_requested` | `LibraryPage._rescan_clicked` (`stats` with `rescan`), `LibraryPage._reset_clicked` (asks first; `reset_cycle`, reply to `LibraryPage.reset_replied`) |
 | `PlaylistEditor.edited`, and the *General* tab's fields | `SettingsPage._edited` -> `SettingsPage._refresh` (problems, summaries, the monitor rows, Save / Revert, the status line, the drawing) |
@@ -403,7 +404,7 @@ sequenceDiagram
     C->>W: stats: commands.execute counts from the scan, the deck and the lists
     W->>C: StatsResult
     C->>L: OverviewTab.show_stats
-    C->>L: overview_changed, or changed of its playlist: asked again
+    C->>L: overview_changed, marks_changed, or changed of its playlist: asked again
 ```
 
 - It asks only while the Overview tab is on screen (page shown, tab

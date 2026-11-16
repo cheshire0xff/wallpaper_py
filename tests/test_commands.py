@@ -32,11 +32,13 @@ from wallpaper_py.core.settings import (
 )
 from wallpaper_py.protocol import (
     Command,
+    CommandRequest,
     DesktopMonitor,
     Envelope,
     ErrorReply,
     Geometry,
     HoldResult,
+    MarkRequest,
     MarkResult,
     MonitorView,
     NextResult,
@@ -58,6 +60,10 @@ from wallpaper_py.protocol import (
     StatsRequest,
     StatsResult,
     StatusResult,
+    TargetCommand,
+    UpcomingRequest,
+    UpcomingResult,
+    target_request,
 )
 
 from .fakes import (
@@ -117,8 +123,20 @@ def fixture_service(tmp_path: Path, backend: FakeBackend) -> Iterator[PlaylistSe
         yield service
 
 
-def run(service: PlaylistService, command: Command, target: str | None = None) -> Reply:
-    return execute(service, Request(command=command, target=target)).reply
+def request(
+    command: Command | TargetCommand, target: str | None = None
+) -> CommandRequest:
+    if command == "status":
+        return Request(command="status")
+    return target_request(command, target)
+
+
+def run(
+    service: PlaylistService,
+    command: Command | TargetCommand,
+    target: str | None = None,
+) -> Reply:
+    return execute(service, request(command, target)).reply
 
 
 def walls_change(tmp_path: Path, name: str, reason: ChangeReason = "next") -> Change:
@@ -164,16 +182,119 @@ def test_commands_reply_with_data(service: PlaylistService, tmp_path: Path) -> N
         playlist="walls",
         image=a,
         list_file=paths.data_dir() / "to-remove.txt",
+        changed=True,
         change=walls_change(tmp_path, "b.jpg"),
     )
     assert b.is_file()  # listed, never deleted
 
 
+def test_marks_by_image(service: PlaylistService, tmp_path: Path) -> None:
+    """Any image, by path: no playlist, nothing shown needed, no change."""
+    favourites = paths.data_dir() / "favourites.txt"
+    to_remove = paths.data_dir() / "to-remove.txt"
+    gone = tmp_path / "elsewhere" / "gone.jpg"  # need not exist
+
+    def mark(command: Literal["fav", "unfav", "remove", "unremove"]) -> Outcome:
+        return execute(service, MarkRequest(command=command, image=gone))
+
+    def result(
+        command: Literal["fav", "unfav", "unremove"], file: Path, changed: bool
+    ) -> Outcome:
+        return Outcome(
+            MarkResult(
+                command=command,
+                playlist=None,
+                image=gone,
+                list_file=file,
+                changed=changed,
+            )
+        )
+
+    assert mark("fav") == result("fav", favourites, True)
+    assert mark("fav") == result("fav", favourites, False)
+    assert favourites.read_text(encoding="utf-8") == f"{gone}\n"
+    assert mark("unfav") == result("unfav", favourites, True)
+    assert mark("unfav") == result("unfav", favourites, False)
+    for changed in (True, False):
+        assert mark("remove") == Outcome(
+            RemoveResult(
+                playlist=None,
+                image=gone,
+                list_file=to_remove,
+                changed=changed,
+                change=None,
+            )
+        )
+    assert to_remove.read_text(encoding="utf-8") == f"{gone}\n"
+    assert mark("unremove") == result("unremove", to_remove, True)
+    assert mark("unremove") == result("unremove", to_remove, False)
+    assert to_remove.read_text(encoding="utf-8") == ""
+
+
+def test_remove_by_image_moves_on_at_the_next_tick(
+    service: PlaylistService, tmp_path: Path
+) -> None:
+    """Only listed, as if edited by hand: the playlist showing it moves on."""
+    a = tmp_path / "walls" / "a.jpg"
+    run(service, "next", "walls")
+    outcome = execute(service, MarkRequest(command="remove", image=a))
+    assert outcome.change is None
+    assert service.current(service.find_playlist("walls")) == a
+    assert [c.image.name for c in service.tick()] == ["b.jpg"]
+
+
+@pytest.mark.parametrize(
+    "fields, message",
+    [
+        ({"command": "fav", "target": "walls", "image": "/a.jpg"}, "not both"),
+        ({"command": "unremove", "target": "walls"}, "unremove needs an image"),
+        ({"command": "fav", "image": "a.jpg"}, "absolute"),
+        ({"command": "upcoming", "limit": 0}, "greater than or equal to 1"),
+        ({"command": "upcoming", "limit": 1001}, "less than or equal to 1000"),
+        ({"command": "upcoming", "limit": True}, "valid integer"),
+        ({"command": "upcoming", "limit": "5"}, "valid integer"),
+    ],
+)
+def test_mark_and_upcoming_requests_are_checked(
+    fields: dict[str, object], message: str
+) -> None:
+    if fields.get("image") == "/a.jpg":
+        fields = {**fields, "image": str(Path.cwd() / "a.jpg")}  # absolute here
+    with pytest.raises(ValidationError, match=message):
+        Envelope.model_validate({"request": fields})
+
+
+def test_upcoming(service: PlaylistService, tmp_path: Path) -> None:
+    """In order: walls is sorted; history ahead first, after prev."""
+    walls = tmp_path / "walls"
+    make_images(walls, "c.jpg")
+
+    def upcoming(limit: int = 100) -> Reply:
+        return execute(service, UpcomingRequest(target="walls", limit=limit)).reply
+
+    assert upcoming() == UpcomingResult(
+        playlist="walls", images=(walls / "a.jpg", walls / "b.jpg", walls / "c.jpg")
+    )
+    run(service, "next", "walls")
+    run(service, "next", "walls")
+    run(service, "prev", "walls")  # on a.jpg, b.jpg ahead in the history
+    assert upcoming(2) == UpcomingResult(
+        playlist="walls", images=(walls / "b.jpg", walls / "c.jpg")
+    )
+    execute(service, MarkRequest(command="remove", image=walls / "c.jpg"))
+    reply = upcoming()
+    assert isinstance(reply, UpcomingResult)
+    # c.jpg is left out; the walk goes on after b.jpg and wraps around.
+    assert [p.name for p in reply.images] == ["b.jpg", "a.jpg", "b.jpg"]
+    error = execute(service, UpcomingRequest(target="nowhere")).reply
+    assert isinstance(error, ErrorReply) and error.error.kind == "unknown_target"
+
+
 def test_commands_that_change_wallpapers_return_the_change(
     service: PlaylistService,
 ) -> None:
-    def change(command: Command) -> tuple[str, str] | None:
-        outcome = execute(service, Request(command=command, target="walls"))
+    def change(command: TargetCommand) -> tuple[str, str] | None:
+        outcome = execute(service, request(command, "walls"))
         assert not isinstance(outcome.reply, ErrorReply), outcome.reply
         if outcome.change is None:
             return None
@@ -199,9 +320,13 @@ def test_commands_that_change_wallpapers_return_the_change(
     ],
 )
 def test_errors_are_structured(
-    service: PlaylistService, command: Command, target: str, kind: str, message: str
+    service: PlaylistService,
+    command: TargetCommand,
+    target: str,
+    kind: str,
+    message: str,
 ) -> None:
-    outcome = execute(service, Request(command=command, target=target))
+    outcome = execute(service, request(command, target))
     assert outcome.change is None
     reply = outcome.reply
     assert isinstance(reply, ErrorReply)

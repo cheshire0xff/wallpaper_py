@@ -142,12 +142,12 @@
         "request": {
           "discriminator": {
             "mapping": {
-              "fav": "#/$defs/Request",
+              "fav": "#/$defs/MarkRequest",
               "hold": "#/$defs/Request",
               "next": "#/$defs/Request",
               "pick": "#/$defs/PickRequest",
               "prev": "#/$defs/Request",
-              "remove": "#/$defs/Request",
+              "remove": "#/$defs/MarkRequest",
               "reset_cycle": "#/$defs/ResetCycleRequest",
               "resume": "#/$defs/Request",
               "save_settings": "#/$defs/SaveSettingsRequest",
@@ -155,7 +155,9 @@
               "stats": "#/$defs/StatsRequest",
               "status": "#/$defs/Request",
               "subscribe": "#/$defs/Subscribe",
-              "unfav": "#/$defs/Request"
+              "unfav": "#/$defs/MarkRequest",
+              "unremove": "#/$defs/MarkRequest",
+              "upcoming": "#/$defs/UpcomingRequest"
             },
             "propertyName": "command"
           },
@@ -164,7 +166,13 @@
               "$ref": "#/$defs/Request"
             },
             {
+              "$ref": "#/$defs/MarkRequest"
+            },
+            {
               "$ref": "#/$defs/PickRequest"
+            },
+            {
+              "$ref": "#/$defs/UpcomingRequest"
             },
             {
               "$ref": "#/$defs/StatsRequest"
@@ -242,13 +250,17 @@
         },
         {
           "$ref": "#/$defs/OverviewChangedEvent"
+        },
+        {
+          "$ref": "#/$defs/MarksChangedEvent"
         }
       ],
       "discriminator": {
         "propertyName": "event",
         "mapping": {
           "changed": "#/$defs/ChangedEvent",
-          "overview_changed": "#/$defs/OverviewChangedEvent"
+          "overview_changed": "#/$defs/OverviewChangedEvent",
+          "marks_changed": "#/$defs/MarksChangedEvent"
         }
       }
     },
@@ -401,19 +413,73 @@
       "title": "Look",
       "type": "object"
     },
+    "MarkRequest": {
+      "additionalProperties": false,
+      "description": "Put an image on a list (`fav`, `remove`) or take it off (`unfav`,\n`unremove`). Without `image`: the target playlist's current image, and\n`remove` then shows the next one. With it: that image (any path, no\ntarget); `remove` then only lists it (a playlist showing it moves on at\nits next tick). `unremove` needs an image: the current one is never\nlisted for long.",
+      "properties": {
+        "command": {
+          "enum": [
+            "fav",
+            "unfav",
+            "remove",
+            "unremove"
+          ],
+          "title": "Command",
+          "type": "string"
+        },
+        "target": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target"
+        },
+        "image": {
+          "anyOf": [
+            {
+              "format": "path",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Image"
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "title": "MarkRequest",
+      "type": "object"
+    },
     "MarkResult": {
       "properties": {
         "command": {
           "enum": [
             "fav",
-            "unfav"
+            "unfav",
+            "unremove"
           ],
           "title": "Command",
           "type": "string"
         },
         "playlist": {
-          "title": "Playlist",
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Playlist"
         },
         "image": {
           "format": "path",
@@ -438,6 +504,19 @@
         "changed"
       ],
       "title": "MarkResult",
+      "type": "object"
+    },
+    "MarksChangedEvent": {
+      "description": "Favourites or to-remove changed (by a command, by hand, or the settings\nname other files): read them again.",
+      "properties": {
+        "event": {
+          "const": "marks_changed",
+          "default": "marks_changed",
+          "title": "Event",
+          "type": "string"
+        }
+      },
+      "title": "MarksChangedEvent",
       "type": "object"
     },
     "MonitorSettings": {
@@ -965,8 +1044,15 @@
           "type": "string"
         },
         "playlist": {
-          "title": "Playlist",
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Playlist"
         },
         "image": {
           "format": "path",
@@ -977,6 +1063,10 @@
           "format": "path",
           "title": "List File",
           "type": "string"
+        },
+        "changed": {
+          "title": "Changed",
+          "type": "boolean"
         },
         "change": {
           "anyOf": [
@@ -993,6 +1083,7 @@
         "playlist",
         "image",
         "list_file",
+        "changed",
         "change"
       ],
       "title": "RemoveResult",
@@ -1021,6 +1112,9 @@
               "$ref": "#/$defs/PickResult"
             },
             {
+              "$ref": "#/$defs/UpcomingResult"
+            },
+            {
               "$ref": "#/$defs/HoldResult"
             },
             {
@@ -1047,8 +1141,10 @@
               "prev": "#/$defs/PrevResult",
               "fav": "#/$defs/MarkResult",
               "unfav": "#/$defs/MarkResult",
+              "unremove": "#/$defs/MarkResult",
               "remove": "#/$defs/RemoveResult",
               "pick": "#/$defs/PickResult",
+              "upcoming": "#/$defs/UpcomingResult",
               "hold": "#/$defs/HoldResult",
               "resume": "#/$defs/ResumeResult",
               "stats": "#/$defs/StatsResult",
@@ -1418,6 +1514,67 @@
         }
       },
       "title": "Subscribe",
+      "type": "object"
+    },
+    "UpcomingRequest": {
+      "additionalProperties": false,
+      "description": "The images a playlist shows next, in order.",
+      "properties": {
+        "command": {
+          "const": "upcoming",
+          "default": "upcoming",
+          "title": "Command",
+          "type": "string"
+        },
+        "target": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target"
+        },
+        "limit": {
+          "default": 100,
+          "maximum": 1000,
+          "minimum": 1,
+          "title": "Limit",
+          "type": "integer"
+        }
+      },
+      "title": "UpcomingRequest",
+      "type": "object"
+    },
+    "UpcomingResult": {
+      "properties": {
+        "command": {
+          "const": "upcoming",
+          "default": "upcoming",
+          "title": "Command",
+          "type": "string"
+        },
+        "playlist": {
+          "title": "Playlist",
+          "type": "string"
+        },
+        "images": {
+          "items": {
+            "format": "path",
+            "type": "string"
+          },
+          "title": "Images",
+          "type": "array"
+        }
+      },
+      "required": [
+        "playlist",
+        "images"
+      ],
+      "title": "UpcomingResult",
       "type": "object"
     }
   }

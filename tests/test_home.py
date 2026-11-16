@@ -47,6 +47,7 @@ from wallpaper_py.protocol import (
     DesktopMonitor,
     ErrorReply,
     Geometry,
+    MarkRequest,
     MarkResult,
     MonitorView,
     NextResult,
@@ -512,10 +513,10 @@ def test_buttons_send_commands(page: HomePage, client: FakeClient) -> None:
     assert client.commands() == [
         Request(command="prev", target="konachan"),
         Request(command="next", target="konachan"),
-        Request(command="fav", target="konachan"),
-        Request(command="remove", target="konachan"),
+        MarkRequest(command="fav", target="konachan"),
+        MarkRequest(command="remove", target="konachan"),
         Request(command="hold", target="konachan"),
-        Request(command="unfav", target="other"),  # it is a favourite
+        MarkRequest(command="unfav", target="other"),  # it is a favourite
         Request(command="resume", target="other"),  # it is held
     ]
     assert row.prev_button.toolTip() == "Previous"
@@ -531,7 +532,7 @@ def test_toggles_follow_the_overview_not_the_click(
     row.fav_button.click()
     row.hold_button.click()
     request, on_reply = client.calls[-2]
-    assert request == Request(command="fav", target="konachan")
+    assert request == MarkRequest(command="fav", target="konachan")
     on_reply(
         MarkResult(
             command="fav",

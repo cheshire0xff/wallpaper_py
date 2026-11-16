@@ -1,9 +1,15 @@
-"""Find the images in a playlist directory, and compare paths."""
+"""
+Find the images in a playlist directory, and compare paths. The app scans
+with `scan` (cached by `Library`); the library window with `scan_files`,
+which also says when each image was added.
+"""
 
 from __future__ import annotations
 
 import os
 import re
+from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 
 from .model import Clock
@@ -35,17 +41,74 @@ def scan(directory: Path) -> list[Path]:
     All images under `directory`, recursively, in natural order.
 
     Symlinked files are included (they may point to upscaled versions);
-    symlinked directories are not followed. A missing or unreadable
-    directory gives an empty list: the drive may simply not be mounted yet.
+    symlinked directories are not followed, nor hidden ones (".name").
+    A missing or unreadable directory gives an empty list: the drive may
+    simply not be mounted yet.
     """
-    found: list[Path] = []
-    for root, dirs, files in os.walk(directory):
-        dirs[:] = [d for d in dirs if not d.startswith(".")]
-        for name in files:
-            if os.path.splitext(name)[1].lower() in IMAGE_SUFFIXES:
-                found.append(Path(root, name))
+    found = [Path(entry.path) for entry in _image_entries(directory)]
     found.sort(key=natural_key)
     return found
+
+
+@dataclass(frozen=True)
+class ImageFile:
+    path: Path
+    # When it came into the library, as a timestamp: its creation time
+    # where the system records one (Windows), else its mtime (Linux). Of a
+    # symlink itself, not of what it points to: when it was linked in.
+    added: float
+
+
+def scan_files(directory: Path) -> list[ImageFile]:
+    """
+    `scan`, with each image's `added` time (for sorting by it). On Windows
+    the times come with the directory listing; elsewhere it is one `lstat`
+    per image. An image that vanishes meanwhile is left out.
+    """
+    found: list[ImageFile] = []
+    for entry in _image_entries(directory):
+        try:
+            stat = entry.stat(follow_symlinks=False)
+        except OSError:
+            continue
+        added = getattr(stat, "st_birthtime", None)  # not recorded on Linux
+        found.append(
+            ImageFile(Path(entry.path), stat.st_mtime if added is None else added)
+        )
+    found.sort(key=lambda f: natural_key(f.path))
+    return found
+
+
+def _image_entries(directory: Path) -> Iterator[os.DirEntry[str]]:
+    """The image files under `directory`, as `os.walk` finds them."""
+    pending = [os.fspath(directory)]
+    while pending:
+        try:
+            with os.scandir(pending.pop()) as entries:
+                listed = list(entries)
+        except OSError:  # missing, not a directory, or not allowed
+            continue
+        for entry in listed:
+            if _is_dir(entry):
+                if not entry.name.startswith(".") and not _is_symlink(entry):
+                    pending.append(entry.path)
+            elif os.path.splitext(entry.name)[1].lower() in IMAGE_SUFFIXES:
+                yield entry
+
+
+def _is_dir(entry: os.DirEntry[str]) -> bool:
+    """A directory, or a symlink to one (never followed: see `scan`)."""
+    try:
+        return entry.is_dir()
+    except OSError:
+        return False
+
+
+def _is_symlink(entry: os.DirEntry[str]) -> bool:
+    try:
+        return entry.is_symlink()
+    except OSError:
+        return False
 
 
 class Library:

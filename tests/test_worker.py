@@ -25,13 +25,16 @@ from wallpaper_py.protocol import (
     Envelope,
     ErrorReply,
     HoldResult,
+    MarkRequest,
     MarkResult,
+    MarksChangedEvent,
     NextResult,
     Overview,
     OverviewChangedEvent,
     PickRequest,
     PickResult,
     PrevResult,
+    RemoveResult,
     Reply,
     Request,
     SaveSettingsRequest,
@@ -39,6 +42,7 @@ from wallpaper_py.protocol import (
     SettingsRequest,
     SettingsResult,
     Subscribe,
+    target_request,
 )
 
 from .fakes import (
@@ -160,7 +164,7 @@ def test_commands_are_answered_in_order(qtbot: QtBot, host: ServiceHost) -> None
     start(qtbot, host)
     replies: list[Reply] = []
     for command in ("next", "next", "prev", "fav"):
-        host.submit(Request.model_validate({"command": command}), replies.append)
+        host.submit(target_request(command, None), replies.append)
     qtbot.waitUntil(lambda: len(replies) == 4)
     assert [shown(r) for r in replies[:3]] == ["b.jpg", "c.jpg", "b.jpg"]
     assert isinstance(replies[3], MarkResult) and replies[3].changed
@@ -222,21 +226,48 @@ def test_subscribers_follow_events(qtbot: QtBot, host: ServiceHost, name: str) -
         assert host.shutdown(5_000)
 
 
+def test_list_changes_reach_subscribers(
+    qtbot: QtBot, host: ServiceHost, name: str
+) -> None:
+    """By a command, or by hand (seen on the next tick)."""
+    start(qtbot, host)
+    subscriber = ask(qtbot, name, Subscribe())
+    read_lines(qtbot, subscriber, 1)  # the current overview
+    image = paths.data_dir() / "elsewhere" / "x.jpg"
+    reply = send(qtbot, name, MarkRequest(command="remove", image=image))
+    assert isinstance(reply, RemoveResult) and reply.changed
+    [line] = read_lines(qtbot, subscriber, 1)
+    assert ipc.decode_event(line) == MarksChangedEvent()
+
+    (paths.data_dir() / "favourites.txt").write_text(f"{image}\n", encoding="utf-8")
+    tick(qtbot, host)
+    [line] = read_lines(qtbot, subscriber, 1)
+    assert ipc.decode_event(line) == MarksChangedEvent()
+
+
 def test_extra_tick_on_request(qtbot: QtBot, host: ServiceHost) -> None:
     start(qtbot, host)
     tick(qtbot, host)
 
 
 def test_a_bad_list_file_at_start_then_fixed(
-    qtbot: QtBot, host: ServiceHost, caplog: pytest.LogCaptureFixture
+    qtbot: QtBot,
+    host: ServiceHost,
+    caplog: pytest.LogCaptureFixture,
+    name: str,
 ) -> None:
-    """The service can't open; each tick tries again, and it runs once fixed."""
+    """
+    The service can't open; each tick tries again, and it runs once fixed.
+    Subscribers then read the lists again: they couldn't either.
+    """
     listed = paths.data_dir() / "favourites.txt"
     listed.parent.mkdir(parents=True, exist_ok=True)
     listed.write_text("a.jpg\n", encoding="utf-8-sig")
     settled(listed)
     overview = start(qtbot, host)
     assert overview.error is not None and "byte order mark" in overview.error
+    subscriber = ask(qtbot, name, Subscribe())
+    read_lines(qtbot, subscriber, 1)  # the overview with the error
     assert "byte order mark" in error(submit(qtbot, host, Request(command="next")))
     tick(qtbot, host)  # tries again: the same error, logged once
     errors = [r for r in caplog.records if r.levelname == "ERROR"]
@@ -246,6 +277,8 @@ def test_a_bad_list_file_at_start_then_fixed(
     with qtbot.waitSignal(host.overview_changed) as blocker:
         host.request_tick()
     assert blocker.args[0].error is None
+    events = [ipc.decode_event(line) for line in read_lines(qtbot, subscriber, 2)]
+    assert MarksChangedEvent() in events
     assert shown(submit(qtbot, host, Request(command="next"))) == "b.jpg"
 
 

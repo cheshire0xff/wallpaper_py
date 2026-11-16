@@ -9,7 +9,8 @@ History and Upcoming); the playlist and the tab are remembered in
 `ui-state.json` (ui_state.py), never in the settings.
 
 Overview asks the app (`stats`) when it is shown, and again on
-`overview_changed` and on a `changed` of its playlist while it is: one
+`overview_changed`, `marks_changed` and a `changed` of its playlist
+while it is: one
 request at a time, asked again if more came meanwhile. *Rescan* asks with
 `rescan`; *Reset cycle…* asks first, then sends `reset_cycle`. Everything
 comes through `Client`; nothing is read here yet.
@@ -127,6 +128,7 @@ class LibraryPage(QWidget):
         self.overview_tab.reset_requested.connect(self._reset_clicked)
         client.overview_changed.connect(self.show_overview)
         client.changed.connect(self._changed)
+        client.marks_changed.connect(self._marks_changed)
         client.failed.connect(self.show_error)
         if client.overview is not None:
             self.show_overview(client.overview)
@@ -234,6 +236,10 @@ class LibraryPage(QWidget):
     def _changed(self, change: Change) -> None:
         if change.playlist == self.playlist():
             self._ask_stats()
+
+    @Slot()
+    def _marks_changed(self) -> None:
+        self._ask_stats()
 
     @Slot(str)
     def show_error(self, message: str) -> None:

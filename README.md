@@ -61,7 +61,9 @@ wallpaper tray                               # the app, in the tray (what starts
 wallpaper run [--poll SECONDS]               # the app, headless in this terminal (Ctrl+C stops)
 wallpaper status                             # playlists, monitors, current, upcoming
 wallpaper next|prev|fav|unfav|remove [TARGET]  # TARGET: playlist or monitor name
+wallpaper fav|unfav|remove|unremove --image PATH  # any image instead of the current one
 wallpaper pick IMAGE [TARGET]                # show IMAGE now (any directory)
+wallpaper upcoming [TARGET] [-n N]           # the next N images, one path a line
 wallpaper hold|resume [TARGET]               # stop / restart rotating
 wallpaper stats [TARGET] [--rescan]          # images seen / unseen / skipped; the lists
 wallpaper reset-cycle TARGET [--yes]         # every image unseen again (asks first)
@@ -93,9 +95,13 @@ to edit.
   (a group keeps going on its other members) and the monitor gets the
   current image when it comes back.
 - `fav` and `remove` append the current image to `favourites.txt` /
-  `to-remove.txt` (one full path per line, editable by hand); `unfav` takes
-  it out of favourites again. `remove` only lists the image and hides it
-  from rotation; deleting is up to you.
+  `to-remove.txt` (one full path per line, editable by hand); `unfav` and
+  `unremove` take an image off again. `remove` only lists the image and
+  hides it from rotation (and shows the next one); deleting is up to you.
+  With `--image PATH` they act on that image instead (any path, no
+  playlist); a playlist showing an image listed this way, or by hand,
+  moves on at the app's next tick: within a few seconds, or when it
+  starts.
 
 ### The app
 

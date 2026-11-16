@@ -14,7 +14,15 @@ from wallpaper_py.app import ipc
 from wallpaper_py.app.ui.client import SocketClient
 from wallpaper_py.app.worker import ServiceHost
 from wallpaper_py.core.service import Change
-from wallpaper_py.protocol import ErrorReply, NextResult, Overview, Reply, Request
+from wallpaper_py.protocol import (
+    CommandRequest,
+    ErrorReply,
+    MarkRequest,
+    NextResult,
+    Overview,
+    Reply,
+    Request,
+)
 
 from wallpaper_py.core.settings import Settings
 
@@ -67,7 +75,7 @@ def started(qtbot: QtBot, host: ServiceHost) -> None:
         host.start()
 
 
-def run(qtbot: QtBot, client: SocketClient, request: Request) -> Reply:
+def run(qtbot: QtBot, client: SocketClient, request: CommandRequest) -> Reply:
     replies: list[Reply] = []
     with qtbot.waitSignal(client.idle):
         client.run(request, replies.append)
@@ -99,6 +107,9 @@ def test_follows_the_app_and_runs_commands(
     assert [c.image.name for c in changes] == ["b.jpg"]
     current = updated.args[0].playlists[0].current
     assert current is not None and current.name == "b.jpg"
+
+    with qtbot.waitSignal(client.marks_changed):
+        run(qtbot, client, MarkRequest(command="fav", target="walls"))
 
     # The app quitting ends the subscription.
     with qtbot.waitSignal(client.ended):
