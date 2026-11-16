@@ -36,8 +36,8 @@ from PySide6.QtWidgets import (
 )
 
 from ...protocol import Overview
+from ..client import Client
 from . import theme
-from .client import Client
 from .home import HomePage
 from .launcher import PageName
 from .library import LibraryPage

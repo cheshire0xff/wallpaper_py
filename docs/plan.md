@@ -15,7 +15,7 @@ thin. See [architecture.md](architecture.md) for the layers.
 | 4b | Settings in the database, per-monitor looks, previews, backgrounds | done |
 | 4c | More backgrounds for Fit: dominant, blur | done |
 | 4d | Blur strength and darkening per monitor; the look stored as one value | done |
-| S | Simplification: words, protocol and plumbing, tray / CLI / window as clients | next |
+| S | Simplification: words, protocol and plumbing, tray / CLI / window as clients | steps 1–3a done; 3b, 4 next |
 | 5 | Library page: overview (stats), grids, enlarged view | steps 1–4 done; 5–6 after S |
 | 6 | KDE backend | backend done; Kubuntu and the checks by hand left |
 | 7 | Polish | |
@@ -82,14 +82,14 @@ window process).
 
 ### Steps
 
-1. **Words.** The renames above in code, tests and docs: `run_app` →
+1. **Words** (done). The renames above in code, tests and docs: `run_app` →
    `run_daemon`, `AppOptions` → `DaemonOptions`, `start_app` /
    `app_command` → `start_daemon` / `daemon_command`, `send_to_app` →
    `send_to_daemon`, test_app.py → test_daemon.py, and every other name
    that says "app" for the daemon. architecture.md opens with the table
    above. Nothing else changes. First and alone: it touches most files.
 2. **Easy fixes**, two sessions side by side:
-   - **a. Protocol.**
+   - **a. Protocol** (done).
      - The windows key playlists by id, not by name: Home's rows and
        status details (`HomePage.rows`, `HomePage._details`), the
        Library's drop-down, `LibraryPage.directory` and the playlist in
@@ -107,7 +107,7 @@ window process).
        still needs. `HoldResult` and `ResumeResult` become one, as
        `MarkResult` already covers three commands.
      - protocol.md and the schema follow.
-   - **b. Plumbing and the windows' repeats.**
+   - **b. Plumbing and the windows' repeats** (done).
      - The settings checks once: `check_settings`, `check_folders` and
        `check_list_files` find every problem with its place (playlist id
        or none, field, message) and raise the first where they check
@@ -134,14 +134,15 @@ window process).
        100 ms, with its time: by step 4, the daemon's log shows what a
        click could wait for.
 3. **Every client the same**, two sessions side by side:
-   - **a. The tray on `Client`.** The tray uses the `Client` the pages
+   - **a. The tray on `Client`** (done). The tray uses the `Client` the pages
      use, implemented in-process. Not over the socket: both ends of each
      connection would sit in the daemon, a socket pair per connection to
      pass messages between two threads.
      - The service thread sends each event once, as the protocol's
        `Event`, to both kinds of listener: `ServiceWorker._send(event)`
-       emits one `event` signal and broadcasts to the subscribers. It
-       replaces the `changed` and `overview_changed` signals.
+       emits one `sent` signal (not `event`: that would hide
+       `QObject.event`) and broadcasts to the subscribers. It replaces the
+       `changed` and `overview_changed` signals.
      - `LocalClient(Client)` on the main thread: `run` is today's
        `ServiceThread.submit` with its callbacks (queued to the service
        thread, the reply back through `replied`); events go through

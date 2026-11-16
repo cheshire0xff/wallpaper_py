@@ -16,7 +16,7 @@ the receiving thread's event loop, so the sender never waits.
 
 | Process / thread | Objects |
 |---|---|
-| **daemon**, main thread (Qt event loop) | `QApplication`, `Tray`, `WindowOpener`, `ScreenWatcher`, and `ServiceThread`, the thin proxy to the service thread |
+| **daemon**, main thread (Qt event loop) | `QApplication`, `Tray`, `WindowOpener`, `ScreenWatcher`, `ServiceThread` (the handle on the service thread) and its `LocalClient`, the tray's `Client` |
 | **daemon**, service thread (`QThread` "playlist-service") | `ServiceWorker` and everything it creates on that thread: the `CommandServer` (socket), the tick `QTimer`, COM (`backends.thread_scope`), the backend, the SQLite `Store`, the `PlaylistService` |
 | **window process** (`wallpaper ui`, on demand), main thread | `QApplication`, `UiServer` (its own socket), `SocketClient` (the daemon's socket), and the one `MainWindow`: its `ThumbnailLoader` (shared by Home and Settings), its `Sidebar` and its pages, `HomePage` (with its `PlaylistRow`s and `MonitorsView`), `LibraryPage` (with its `OverviewTab`, the All images `ImageGrid`, and the grids' `TileLoader`, `Pregenerator` and `FolderScan`), `SettingsPage` (with its `PlaylistEditor`s, `LookEditor`, a `MonitorsView` and the About tab) |
 | **window process**, pool threads (a `Jobs` each: `ThumbnailLoader` 2, `TileLoader` 4, `Pregenerator` 1 at low priority, `FolderScan` 1) | nothing lives there: jobs read files (images, thumbnails, folders) and hand their results to `Jobs.done` on the main thread |
@@ -44,6 +44,7 @@ flowchart LR
         tray["Tray"]
         opener["WindowOpener"]
         screens["ScreenWatcher"]
+        local["LocalClient"]
         host["ServiceThread"]
     end
     subgraph SVC["daemon: service thread"]
@@ -66,14 +67,15 @@ flowchart LR
     server -->|"received, subscribed"| worker
     worker -->|"reply, broadcast"| server
     tray -->|"open_window"| opener
-    tray -->|"run: submit"| host
+    tray -->|"run"| local
+    local -->|"overview_changed,<br/>reply callback"| tray
+    local -.->|"_submit"| worker
+    worker -.->|"replied, sent (events)"| local
     screens -->|"settled: request_tick"| host
-    host -.->|"_submit, _tick, _stop"| worker
+    host -.->|"_tick, _stop"| worker
     timer -->|"timeout"| worker
     worker -->|"calls"| service
-    worker -.->|"replied, overview_changed, changed, ticked, failed"| host
-    host -->|"overview_changed"| tray
-    host -->|"reply callback"| tray
+    worker -.->|"ticked, failed"| host
 ```
 
 ## Flows
@@ -86,58 +88,58 @@ sequenceDiagram
     participant CLI as CLI process<br/>ipc.send
     participant S as CommandServer<br/>service thread
     participant W as ServiceWorker<br/>service thread
-    participant H as ServiceThread<br/>main thread
+    participant L as LocalClient<br/>main thread
 
     CLI->>S: connect, write one JSON line, then block
     S->>S: CommandServer._received: validate
     S->>W: CommandServer.received(connection_id, request)
     W->>W: ServiceWorker.execute: commands.execute(service, request)
-    W--)H: ServiceWorker.changed(change), if the command changed a wallpaper
-    W->>S: CommandServer.broadcast(changed), to subscribers
-    W--)H: ServiceWorker.overview_changed(overview), only if it changed
-    W->>S: CommandServer.broadcast(overview_changed), to subscribers
+    Note over W: ServiceWorker._send, per event: a changed if the command<br/>changed a wallpaper, an overview_changed only if it changed
+    W--)L: ServiceWorker.sent(event): Client._dispatch, the tray's signals
+    W->>S: CommandServer.broadcast(event), to subscribers
     W->>S: CommandServer.reply(connection_id, reply)
     S->>CLI: one JSON line (data, e.g. NextResult), then close
     Note over CLI: ipc.send returns, then cli.format_reply makes the text
 ```
 
-A tray click goes through `ServiceThread`, so the reply comes back to the UI
-thread. The worker never sees who asked: the socket's `connection_id`
-stays in `CommandServer`, the tray's callback (by `request_id`) in
-`ServiceThread`.
+A tray click goes through the tray's `Client`, the `LocalClient` that
+`ServiceThread` hands out, so the reply comes back to the main thread. The
+worker never sees who asked: the socket's `connection_id` stays in
+`CommandServer`, the tray's callback (by `request_id`) in `LocalClient`.
 
 ```mermaid
 sequenceDiagram
     participant Tr as Tray<br/>main thread
-    participant H as ServiceThread<br/>main thread
+    participant L as LocalClient<br/>main thread
     participant W as ServiceWorker<br/>service thread
 
-    Tr->>H: Tray.run: ServiceThread.submit(request, Tray._replied)
-    Note over H: callbacks[request_id] = Tray._replied
-    H--)W: ServiceThread._submit(request_id, request)
+    Tr->>L: Tray.run: Client.run(request, Tray._replied)
+    Note over L: callbacks[request_id] = Tray._replied
+    L--)W: LocalClient._submit(request_id, request)
     W->>W: ServiceWorker.submit: ServiceWorker.execute(request)
-    W--)H: ServiceWorker.changed / overview_changed, as above
-    W--)H: ServiceWorker.replied(request_id, reply)
-    H->>Tr: ServiceThread._on_replied: pop the callback, call it
+    W--)L: ServiceWorker.sent(event), as above
+    W--)L: ServiceWorker.replied(request_id, reply)
+    L->>Tr: LocalClient._replied: pop the callback, call it
     Note over Tr: Tray._replied shows a notification on an ErrorReply
 ```
 
 A tick (every 5 s, or extra after a screen change: `ScreenWatcher.settled`
--> `ServiceThread.request_tick`). Each change and new overview also goes to
-subscribers, as in the CLI flow.
+-> `ServiceThread.request_tick`). Each event also goes to subscribers, as
+in the CLI flow.
 
 ```mermaid
 sequenceDiagram
     participant T as tick QTimer<br/>service thread
     participant W as ServiceWorker<br/>service thread
+    participant L as LocalClient<br/>main thread
     participant H as ServiceThread<br/>main thread
     participant Tr as Tray<br/>main thread
 
     T->>W: timeout, every 5 s
     W->>W: ServiceWorker.tick: service.tick()
-    W--)H: ServiceWorker.changed(change), once per wallpaper change
-    W--)H: ServiceWorker.overview_changed(overview), only if it changed
-    H->>Tr: ServiceThread.overview_changed: Tray.show_overview
+    W--)L: ServiceWorker.sent(changed), once per wallpaper change
+    W--)L: ServiceWorker.sent(overview_changed), only if it changed
+    L->>Tr: Client._dispatch: Client.overview_changed, Tray.show_overview
     Note over Tr: redraw the menu and the icon
     W--)H: ServiceWorker.ticked
 ```

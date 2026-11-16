@@ -22,12 +22,12 @@ from PySide6.QtWidgets import QApplication
 
 from ...core import paths
 from ...core.model import WallpaperError
+from ..client import SocketClient
 from ..icon import app_icon
 from ..instance import InstanceLock
 from ..ipc import server_name
 from ..processes import autostart_command, quit_on_interrupt, start_detached
 from . import theme
-from .client import SocketClient
 from .launcher import (
     SHOW_TIMEOUT_S,
     PageName,

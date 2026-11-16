@@ -103,7 +103,7 @@ def _run_locked(
     if options.tray:
         opener = WindowOpener(ui_server_name(paths.data_dir()), ui_command)
         tray = Tray(
-            service_thread,
+            service_thread.client,
             platform.autostart_factory(),
             autostart_command(),
             app.quit,

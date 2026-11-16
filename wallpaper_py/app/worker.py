@@ -9,24 +9,25 @@ this thread touches it.
 
 Everything reaches the service through `ServiceWorker.execute`, one at a
 time, between ticks: socket requests directly (the socket lives on this
-thread), the tray through `ServiceThread`. After `save_settings` it ticks,
+thread), the tray through its `LocalClient`. After `save_settings` it ticks,
 so that the monitors show the new settings before the reply. A command or
 tick over `SLOW_S` is logged with its time.
 Nothing on this thread may block waiting for a client or spin a nested
-event loop. Events (a change, a new overview) go to the main thread as
-signals and to socket subscribers (the window process) as lines, both from
-here; so does `marks_changed` (only to subscribers), when the list files'
-mtime or size moved since the last tick or command.
+event loop. Each event (a change, a new overview, the list files' mtime or
+size moved since the last tick or command) is sent once, as the protocol's
+`Event` (`ServiceWorker._send`): to the main thread as the `sent` signal,
+and to socket subscribers (the window process) as a line.
 
 The service stops when it can't go on (a list file went bad, see
 `_failed`); each tick then tries to open it again, so it is back once the
 file is fixed. Meanwhile commands answer with the error, and the overview
 shows it.
 
-`ServiceThread` is the main thread's handle. It reaches the worker only through
-queued signals (requests, extra ticks, stop) and gets results back the
-same way (replies, the overview, changes); it never waits on the worker,
-except once at shutdown.
+`ServiceThread` is the main thread's handle on the thread: start, extra
+ticks, stop. Its `client`, a `LocalClient`, is the tray's `Client`: requests
+go to the worker as queued signals, replies and events come back the same
+way. The models cross the threads as they are (frozen, so safe to share):
+no JSON. Neither waits on the worker, except once at shutdown.
 """
 
 from __future__ import annotations
@@ -36,6 +37,7 @@ import time
 from collections.abc import Callable
 from contextlib import AbstractContextManager, ExitStack
 from dataclasses import dataclass
+from typing import override
 
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, Slot
 
@@ -59,13 +61,12 @@ from ..protocol import (
     OverviewChangedEvent,
     Reply,
 )
+from .client import Client, ReplyCallback
 from .ipc import CommandServer
 
 log = logging.getLogger(__name__)
 
 SLOW_S = 0.1  # seconds: a command or tick that takes longer is logged
-
-ReplyCallback = Callable[[Reply], None]
 
 
 @dataclass(frozen=True)
@@ -84,8 +85,7 @@ class ServiceWorker(QObject):
     # pylint: disable=too-many-instance-attributes
 
     ticked = Signal()
-    changed = Signal(object)  # core.service.Change
-    overview_changed = Signal(object)  # protocol.Overview
+    sent = Signal(object)  # protocol.Event (not `event`: QObject.event)
     replied = Signal(int, object)  # request id, protocol.Reply
     failed = Signal(str)  # the command socket could not open; nothing runs
 
@@ -212,7 +212,7 @@ class ServiceWorker(QObject):
 
     @Slot(int, object)
     def submit(self, request_id: int, request: CommandRequest) -> None:
-        """A request queued by `ServiceThread.submit`; answered by `replied`."""
+        """A request queued by `LocalClient.run`; answered by `replied`."""
         self.replied.emit(request_id, self.execute(request))
 
     @Slot(int, object)
@@ -230,10 +230,11 @@ class ServiceWorker(QObject):
             self._server.send_event(connection_id, event)
 
     def _announce(self, change: Change) -> None:
-        self.changed.emit(change)
-        self._broadcast(ChangedEvent(change=change))
+        self._send(ChangedEvent(change=change))
 
-    def _broadcast(self, event: Event) -> None:
+    def _send(self, event: Event) -> None:
+        """To both kinds of listener: the main thread, socket subscribers."""
+        self.sent.emit(event)
         if self._server is not None:
             self._server.broadcast(event)
 
@@ -276,10 +277,7 @@ class ServiceWorker(QObject):
         self._session.close()
 
     def _publish(self) -> None:
-        """
-        Emit the overview if it changed (the tray redraws its menu), and
-        tell subscribers if the lists changed.
-        """
+        """Send the overview if it changed, and `marks_changed` if the lists did."""
         self._publish_lists()
         current: Overview | None = None
         if self._service is not None:
@@ -293,8 +291,7 @@ class ServiceWorker(QObject):
             current = Overview(error=self._error.error.message if self._error else None)
         if current != self._overview:
             self._overview = current
-            self.overview_changed.emit(current)
-            self._broadcast(OverviewChangedEvent(overview=current))
+            self._send(OverviewChangedEvent(overview=current))
 
     def _publish_lists(self) -> None:
         """`marks_changed` if a list file changed: a command, an edit by hand."""
@@ -303,7 +300,7 @@ class ServiceWorker(QObject):
         stamp = self._service.lists_stamp()
         if stamp != self._lists_stamp:
             self._lists_stamp = stamp
-            self._broadcast(MarksChangedEvent())
+            self._send(MarksChangedEvent())
 
 
 def _log_if_slow(what: str, started: float) -> None:
@@ -312,50 +309,70 @@ def _log_if_slow(what: str, started: float) -> None:
         log.info("%s took %d ms", what, round(took * 1000))
 
 
+class LocalClient(Client):
+    """
+    The tray's `Client`, in the daemon: `run` queues the request to the
+    worker and its reply comes back through `replied`; events come through
+    the worker's `sent` signal. Made before the thread starts, so it sees
+    every event (that is its subscription). Lives on the main thread.
+    """
+
+    _submit = Signal(int, object)  # request id, protocol.CommandRequest
+
+    def __init__(self, worker: ServiceWorker, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._callbacks: dict[int, ReplyCallback] = {}
+        self._next_id = 0
+        queued = Qt.ConnectionType.QueuedConnection
+        self._submit.connect(worker.submit, queued)
+        worker.replied.connect(self._replied, queued)
+        worker.sent.connect(self._dispatch, queued)
+
+    @override
+    def run(self, request: CommandRequest, on_reply: ReplyCallback) -> None:
+        request_id = self._next_id
+        self._next_id += 1
+        self._callbacks[request_id] = on_reply
+        self._submit.emit(request_id, request)
+
+    @Slot(int, object)
+    def _replied(self, request_id: int, reply: Reply) -> None:
+        callback = self._callbacks.pop(request_id, None)
+        if callback is not None:
+            callback(reply)
+
+
 class ServiceThread(QObject):
-    """The main thread's handle on the worker thread."""
+    """
+    The main thread's handle on the worker thread; `client` is the daemon's
+    own `Client` (the tray's).
+    """
 
     ticked = Signal()
-    changed = Signal(object)  # core.service.Change
-    overview_changed = Signal(object)  # protocol.Overview
     failed = Signal(str)  # see ServiceWorker.failed
 
     # Queued into the worker thread.
-    _submit = Signal(int, object)
     _tick = Signal()
     _stop = Signal()
 
     def __init__(self, settings: ServiceSettings) -> None:
         super().__init__()
-        self.overview: Overview | None = None
-        self._callbacks: dict[int, ReplyCallback] = {}
-        self._next_id = 0
         self._thread = QThread()
         self._thread.setObjectName("playlist-service")
         self._worker = ServiceWorker(settings)
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.start)
         self._thread.finished.connect(self._worker.deleteLater)
+        self.client = LocalClient(self._worker, self)
 
         queued = Qt.ConnectionType.QueuedConnection
-        self._submit.connect(self._worker.submit, queued)
         self._tick.connect(self._worker.tick, queued)
         self._stop.connect(self._worker.stop, queued)
-        self._worker.replied.connect(self._on_replied, queued)
-        self._worker.overview_changed.connect(self._on_overview, queued)
-        self._worker.changed.connect(self.changed, queued)
         self._worker.ticked.connect(self.ticked, queued)
         self._worker.failed.connect(self.failed, queued)
 
     def start(self) -> None:
         self._thread.start()
-
-    def submit(self, request: CommandRequest, callback: ReplyCallback) -> None:
-        """Run `request` on the service; `callback` gets the reply (main thread)."""
-        request_id = self._next_id
-        self._next_id += 1
-        self._callbacks[request_id] = callback
-        self._submit.emit(request_id, request)
 
     @Slot()
     def request_tick(self) -> None:
@@ -377,14 +394,3 @@ class ServiceThread(QObject):
             if time.monotonic() >= deadline:
                 return False
         return True
-
-    @Slot(int, object)
-    def _on_replied(self, request_id: int, reply: Reply) -> None:
-        callback = self._callbacks.pop(request_id, None)
-        if callback is not None:
-            callback(reply)
-
-    @Slot(object)
-    def _on_overview(self, current: Overview) -> None:
-        self.overview = current
-        self.overview_changed.emit(current)

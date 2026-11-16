@@ -62,10 +62,10 @@ from ...protocol import (
     SettingsRequest,
     SettingsResult,
 )
+from ..client import Client, ReplyTo
 from . import theme
 from .about import AboutPage, OpenUrl, data_locations, version_text
 from .arrangement import MonitorsView
-from .client import Client, ReplyTo
 from .controls import Button, Switch
 from .settings_draft import (
     DEFAULT_IDLE,

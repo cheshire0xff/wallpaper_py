@@ -125,7 +125,7 @@ def test_ui_shows_the_live_overview_until_its_window_closes(
 
 def with_service_thread_started(service_thread: ServiceThread) -> None:
     started: list[bool] = []
-    service_thread.overview_changed.connect(lambda _: started.append(True))
+    service_thread.client.overview_changed.connect(lambda _: started.append(True))
     service_thread.start()
     deadline = time.monotonic() + 10
     while not started and time.monotonic() < deadline:

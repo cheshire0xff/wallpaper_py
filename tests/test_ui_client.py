@@ -13,7 +13,7 @@ from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from pytestqt.qtbot import QtBot
 
 from wallpaper_py.app import ipc
-from wallpaper_py.app.ui.client import OneAtATime, ReplyTo, SocketClient
+from wallpaper_py.app.client import OneAtATime, ReplyTo, SocketClient
 from wallpaper_py.app.worker import ServiceThread
 from wallpaper_py.core.service import Change
 from wallpaper_py.protocol import (
@@ -75,7 +75,7 @@ def make_client(
 
 
 def started(qtbot: QtBot, service_thread: ServiceThread) -> None:
-    with qtbot.waitSignal(service_thread.overview_changed):
+    with qtbot.waitSignal(service_thread.client.overview_changed):
         service_thread.start()
 
 

@@ -1,17 +1,24 @@
 """
-How windows talk to the daemon: `Client`, the only thing they may use.
+How the tray and the windows talk to the daemon: `Client`, the only thing
+they may use.
 
     client.run(request, on_reply)   a command; its Reply comes back later
     client.overview_changed         the latest Overview (also client.overview)
     client.changed                  a wallpaper changed (a Change)
     client.marks_changed            favourites or to-remove changed
     client.failed                   the daemon can't be reached; nothing more comes
+                                    (SocketClient only: the daemon's own can't lose it)
 
-Windows never see `PlaylistService`, `ServiceWorker` or a socket. `SocketClient`
-implements it over the daemon's socket for the window process: it subscribes (and
-starts the daemon first if none runs, which the CLI never does), and runs each
-command on a connection of its own. Everything is event driven: the main thread never
-waits.
+Neither sees `PlaylistService`, `ServiceWorker` or a socket. Two
+implementations, each passing the protocol's events to `Client._dispatch`:
+
+- `LocalClient` (worker.py), the tray's, in the daemon: queued signals to
+  and from the service thread, the models as they are.
+- `SocketClient`, the window process's, over the daemon's socket: it
+  subscribes (and starts the daemon first if none runs, which the CLI never
+  does), and runs each command on a connection of its own.
+
+Everything is event driven: the main thread never waits.
 """
 
 from __future__ import annotations
@@ -20,31 +27,32 @@ import logging
 import time
 import weakref
 from collections.abc import Callable
-from typing import override
+from typing import assert_never, override
 
 from PySide6.QtCore import QObject, QTimer, Signal, Slot
 from PySide6.QtNetwork import QLocalSocket
 from shiboken6 import Shiboken
 
-from ...core import paths
-from ...protocol import (
+from ..core import paths
+from ..protocol import (
     ChangedEvent,
     CommandRequest,
     Envelope,
     ErrorReply,
+    Event,
     MarksChangedEvent,
     Overview,
     OverviewChangedEvent,
     Reply,
     Subscribe,
 )
-from .. import ipc
+from . import ipc
 
 log = logging.getLogger(__name__)
 
 ReplyCallback = Callable[[Reply], None]
 
-START_TIMEOUT_S = 10.0  # for a started app to answer
+START_TIMEOUT_S = 10.0  # for a started daemon to answer
 RETRY_INTERVAL_MS = 200
 
 
@@ -98,7 +106,7 @@ class OneAtATime:
 
 
 class Client(QObject):
-    """The narrow interface windows depend on (see the module docstring)."""
+    """What the tray and the windows depend on (see the module docstring)."""
 
     overview_changed = Signal(object)  # protocol.Overview
     changed = Signal(object)  # core.service.Change
@@ -113,9 +121,19 @@ class Client(QObject):
         """Run `request` in the daemon; `on_reply` gets the reply (this thread)."""
         raise NotImplementedError
 
-    def _set_overview(self, overview: Overview) -> None:
-        self.overview = overview
-        self.overview_changed.emit(overview)
+    @Slot(object)
+    def _dispatch(self, event: Event) -> None:
+        """An event from the daemon, as this client's signal."""
+        match event:
+            case OverviewChangedEvent(overview=overview):
+                self.overview = overview
+                self.overview_changed.emit(overview)
+            case ChangedEvent(change=change):
+                self.changed.emit(change)
+            case MarksChangedEvent():
+                self.marks_changed.emit()
+            case _:  # a new event: mypy says it is missing here
+                assert_never(event)
 
 
 class SocketClient(Client):
@@ -263,12 +281,7 @@ class SocketClient(Client):
             if not self._subscribed:
                 self._subscribed = True
                 log.info("Connected to the daemon")
-            if isinstance(message, OverviewChangedEvent):
-                self._set_overview(message.overview)
-            elif isinstance(message, ChangedEvent):
-                self.changed.emit(message.change)
-            elif isinstance(message, MarksChangedEvent):
-                self.marks_changed.emit()
+            self._dispatch(message)
 
     @Slot(QLocalSocket.LocalSocketError)
     def _error(self, error: QLocalSocket.LocalSocketError) -> None:

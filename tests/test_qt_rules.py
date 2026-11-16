@@ -169,6 +169,6 @@ def test_the_checks_see_the_code() -> None:
     members = Members()
     assert members.kind("ServiceWorker", "tick") == "slot"
     assert members.kind("CommandServer", "_ready_read") == "slot"  # inherited
-    assert members.kind("ServiceWorker", "changed") == "signal"
+    assert members.kind("ServiceWorker", "sent") == "signal"
     assert members.kind("ServiceWorker", "deleteLater") is None  # Qt's
     assert len(list(our_qobject_classes())) >= 12

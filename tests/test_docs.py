@@ -11,7 +11,7 @@ from wallpaper_py.app.screens import ScreenWatcher
 from wallpaper_py.app.tray import Tray
 from wallpaper_py.app.ui import launcher
 from wallpaper_py.app.ui.arrangement import MonitorsView
-from wallpaper_py.app.ui.client import Client, SocketClient
+from wallpaper_py.app.client import Client, SocketClient
 from wallpaper_py.app.ui.grid import FolderScan, ImageGrid
 from wallpaper_py.app.ui.home import HomePage, PlaylistRow
 from wallpaper_py.app.ui.jobs import Jobs
@@ -24,7 +24,7 @@ from wallpaper_py.app.ui.settings_look import LookEditor
 from wallpaper_py.app.ui.thumbnails import ThumbnailLoader
 from wallpaper_py.app.ui.tiles import Pregenerator, TileLoader
 from wallpaper_py.app.ui.window import MainWindow, Sidebar
-from wallpaper_py.app.worker import ServiceThread, ServiceWorker
+from wallpaper_py.app.worker import LocalClient, ServiceThread, ServiceWorker
 from wallpaper_py.core import paths
 from wallpaper_py.core.thumbnail_cache import ThumbnailCache
 
@@ -42,6 +42,7 @@ OWNERS: dict[str, type | ModuleType] = {
     "ImageGrid": ImageGrid,
     "Jobs": Jobs,
     "LibraryPage": LibraryPage,
+    "LocalClient": LocalClient,
     "LookEditor": LookEditor,
     "MonitorsView": MonitorsView,
     "MainWindow": MainWindow,

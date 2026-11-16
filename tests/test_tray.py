@@ -1,7 +1,6 @@
 """The tray menu drawn from an Overview, and what its items do."""
 
 from collections.abc import Callable
-from contextlib import nullcontext
 from importlib import resources
 from pathlib import Path
 
@@ -20,7 +19,6 @@ from wallpaper_py.app.tray import (
     tooltip,
 )
 from wallpaper_py.app.ui.launcher import PageName
-from wallpaper_py.app.worker import ServiceSettings, ServiceThread
 from wallpaper_py.core.model import MonitorId
 from wallpaper_py.protocol import (
     ErrorReply,
@@ -28,13 +26,13 @@ from wallpaper_py.protocol import (
     MonitorView,
     Overview,
     PlaylistView,
-    Reply,
     Request,
     TargetCommand,
     target_request,
 )
 
-from .fakes import FakeAutostart, FakeBackend, FakePresence
+from .fake_client import FakeClient
+from .fakes import FakeAutostart
 
 
 def monitor(name: str, attached: bool | None) -> MonitorView:
@@ -298,23 +296,34 @@ def test_app_icon_keeps_transparency_and_tray_states() -> None:
     assert error.pixelColor(54, 48).name() == "#e03c31"
 
 
-def test_tray_follows_the_overview() -> None:
-    service_thread = ServiceThread(  # never started: requests just queue up
-        ServiceSettings(lambda: FakeBackend([]), FakePresence, nullcontext)
+def make_tray(
+    client: FakeClient,
+    *,
+    autostart: FakeAutostart | None = None,
+    pages: list[PageName] | None = None,
+    quit_daemon: Callable[[], None] = lambda: None,
+) -> Tray:
+    """A tray on `client`; the pages it opens go to `pages`."""
+    return Tray(
+        client,
+        autostart or FakeAutostart(),
+        ["py", "tray"],
+        quit_daemon,
+        open_window=(pages if pages is not None else []).append,
     )
+
+
+def test_tray_follows_the_overview() -> None:
+    client = FakeClient()
     autostart = FakeAutostart()
     quits: list[bool] = []
     pages: list[PageName] = []
-    tray = Tray(
-        service_thread,
-        autostart,
-        ["py", "tray"],
-        lambda: quits.append(True),
-        open_window=pages.append,
+    tray = make_tray(
+        client, autostart=autostart, pages=pages, quit_daemon=lambda: quits.append(True)
     )
     assert items(tray.menu)[0].text() == "Starting..."
 
-    service_thread.overview_changed.emit(Overview(playlists=(WALLS,)))
+    client.publish(Overview(playlists=(WALLS,)))
     assert items(tray.menu)[0].text() == "walls · AW3225QF + PLX2783H (off)"
 
     find(tray.menu, "Start at login").trigger()
@@ -329,14 +338,17 @@ def test_tray_follows_the_overview() -> None:
     assert quits == [True]
 
 
+def test_menu_items_run_through_the_client() -> None:
+    client = FakeClient()
+    tray = make_tray(client)
+    client.publish(Overview(playlists=(WALLS,)))
+    find(tray.menu, "Next").trigger()
+    assert [request for request, _ in client.calls] == [queued("next", "walls-id")]
+
+
 def test_left_click_opens_home_window() -> None:
-    service_thread = ServiceThread(
-        ServiceSettings(lambda: FakeBackend([]), FakePresence, nullcontext)
-    )
     pages: list[PageName] = []
-    tray = Tray(
-        service_thread, FakeAutostart(), [], lambda: None, open_window=pages.append
-    )
+    tray = make_tray(FakeClient(), pages=pages)
 
     tray._activated(  # pylint: disable=protected-access
         QSystemTrayIcon.ActivationReason.Trigger
@@ -348,53 +360,39 @@ def test_left_click_opens_home_window() -> None:
 def test_tray_notifies_failed_commands(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    service_thread = ServiceThread(
-        ServiceSettings(lambda: FakeBackend([]), FakePresence, nullcontext)
-    )
-    error = ErrorReply.make("not_attached", "None attached")
-
-    def submit(_: Request, callback: Callable[[Reply], None]) -> None:
-        callback(error)  # as the service thread would answer
-
-    monkeypatch.setattr(service_thread, "submit", submit)
-    tray = Tray(service_thread, FakeAutostart(), [], lambda: None, open_window=print)
+    client = FakeClient()
+    tray = make_tray(client)
     notes: list[str] = []
     monkeypatch.setattr(tray, "notify", notes.append)
     tray.run(queued("next", "walls-id"))
+    _, on_reply = client.calls[-1]
+    on_reply(ErrorReply.make("not_attached", "None attached"))  # as the daemon answers
     assert notes == ["None attached"]
 
 
 def test_starting_without_playlists_notifies_once_and_opens_settings(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    service_thread = ServiceThread(
-        ServiceSettings(lambda: FakeBackend([]), FakePresence, nullcontext)
-    )
+    client = FakeClient()
     pages: list[PageName] = []
-    tray = Tray(
-        service_thread, FakeAutostart(), [], lambda: None, open_window=pages.append
-    )
+    tray = make_tray(client, pages=pages)
     shown: list[str] = []
     monkeypatch.setattr(tray, "_show_message", lambda m, _: shown.append(m))
-    service_thread.overview_changed.emit(
+    client.publish(
         Overview(error="favourites.txt is not UTF-8 text")
     )  # not started yet
-    service_thread.overview_changed.emit(Overview())
-    service_thread.overview_changed.emit(Overview())
+    client.publish(Overview())
+    client.publish(Overview())
     assert shown == ["favourites.txt is not UTF-8 text", NO_PLAYLISTS_NOTE]  # once
     tray._message_clicked()  # pylint: disable=protected-access
     assert pages == ["settings"]
 
 
 def test_other_notifications_open_nothing_when_clicked() -> None:
-    service_thread = ServiceThread(
-        ServiceSettings(lambda: FakeBackend([]), FakePresence, nullcontext)
-    )
+    client = FakeClient()
     pages: list[PageName] = []
-    tray = Tray(
-        service_thread, FakeAutostart(), [], lambda: None, open_window=pages.append
-    )
-    service_thread.overview_changed.emit(Overview())  # the no-playlists note
+    tray = make_tray(client, pages=pages)
+    client.publish(Overview())  # the no-playlists note
     tray.notify("None attached")  # shown over it
     tray._message_clicked()  # pylint: disable=protected-access
     assert not pages
@@ -403,12 +401,10 @@ def test_other_notifications_open_nothing_when_clicked() -> None:
 def test_starting_with_playlists_does_not_notify(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    service_thread = ServiceThread(
-        ServiceSettings(lambda: FakeBackend([]), FakePresence, nullcontext)
-    )
-    tray = Tray(service_thread, FakeAutostart(), [], lambda: None, open_window=print)
+    client = FakeClient()
+    tray = make_tray(client)
     shown: list[str] = []
     monkeypatch.setattr(tray, "_show_message", lambda m, _: shown.append(m))
-    service_thread.overview_changed.emit(Overview(playlists=(WALLS,)))
-    service_thread.overview_changed.emit(Overview())  # the playlists deleted later
+    client.publish(Overview(playlists=(WALLS,)))
+    client.publish(Overview())  # the playlists deleted later
     assert not shown

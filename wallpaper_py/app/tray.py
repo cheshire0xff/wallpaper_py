@@ -22,8 +22,9 @@ actions.
     [ ] Start at login
     Quit
 
-The menu is drawn from the service's latest `Overview` and never waits on
-the service: actions are queued to it, and the menu redraws when the next
+The menu is drawn from the daemon's latest `Overview` and never waits on
+the service thread: actions go through the `Client` (the daemon's own,
+`worker.LocalClient`), and the menu redraws when the next
 overview arrives. Errors from actions show as a notification. If the daemon
 starts without playlists, a notification says so once, and clicking it
 opens Settings.
@@ -59,9 +60,9 @@ from ..protocol import (
     target_request,
 )
 from ..texts import members, playlist_label
+from .client import Client
 from .icon import IconState, app_icon
 from .ui.launcher import PageName
-from .worker import ServiceThread
 
 log = logging.getLogger(__name__)
 
@@ -225,7 +226,7 @@ class Tray(QObject):
     # pylint: disable=too-many-instance-attributes,too-many-arguments
     def __init__(
         self,
-        service_thread: ServiceThread,
+        client: Client,
         autostart: Autostart,
         autostart_command: Sequence[str],
         quit_daemon: Callable[[], None],
@@ -233,7 +234,7 @@ class Tray(QObject):
         open_window: Callable[[PageName], None],
     ) -> None:
         super().__init__()
-        self._service_thread = service_thread
+        self._client = client
         self._open_window = open_window
         self._autostart = autostart
         self._autostart_command = list(autostart_command)
@@ -255,7 +256,7 @@ class Tray(QObject):
         self._icon.messageClicked.connect(self._message_clicked)
         self._autostart_action = fill_menu(self.menu, None, self.autostart_enabled())
         self._update_icon()
-        service_thread.overview_changed.connect(self.show_overview)
+        client.overview_changed.connect(self.show_overview)
 
     def show(self) -> None:
         if not QSystemTrayIcon.isSystemTrayAvailable():
@@ -287,7 +288,7 @@ class Tray(QObject):
     # -- MenuActions ---------------------------------------------------------
 
     def run(self, request: PlaylistRequest) -> None:
-        self._service_thread.submit(request, self._replied)
+        self._client.run(request, self._replied)
 
     def open_image(self, image: Path) -> None:
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(image)))

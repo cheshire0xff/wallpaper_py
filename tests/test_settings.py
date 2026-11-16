@@ -21,7 +21,7 @@ from pytestqt.qtbot import QtBot
 from wallpaper_py.app import ipc
 from wallpaper_py.app.ui import theme
 from wallpaper_py.app.ui.about import existing_folder, version_text
-from wallpaper_py.app.ui.client import ReplyCallback, SocketClient
+from wallpaper_py.app.client import ReplyCallback, SocketClient
 from wallpaper_py.app.ui.controls import Segments
 from wallpaper_py.app.ui.settings import SettingsPage
 from wallpaper_py.app.ui.settings_dialogs import Choice, Dialogs
@@ -928,7 +928,7 @@ def test_edits_the_running_daemons_settings(
     service_thread = make_service_thread(lambda: backend, name)
     client = SocketClient(name, None)
     try:
-        with qtbot.waitSignal(service_thread.overview_changed):
+        with qtbot.waitSignal(service_thread.client.overview_changed):
             service_thread.start()
         window = SettingsPage(client, dialogs.dialogs(), loader=loader, version="1")
         qtbot.addWidget(window)

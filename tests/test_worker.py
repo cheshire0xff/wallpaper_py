@@ -1,6 +1,7 @@
 """
 The service on its worker thread, driven like the daemon does: through
-ServiceThread (the tray) and through its command socket.
+`ServiceThread.client`, a `LocalClient` (the tray's), and through its
+command socket.
 """
 
 import logging
@@ -109,7 +110,7 @@ def fixture_service_thread(
 
 
 def start(qtbot: QtBot, service_thread: ServiceThread) -> Overview:
-    with qtbot.waitSignal(service_thread.overview_changed) as blocker:
+    with qtbot.waitSignal(service_thread.client.overview_changed) as blocker:
         service_thread.start()
     overview: Overview = blocker.args[0]
     return overview
@@ -119,7 +120,7 @@ def submit(
     qtbot: QtBot, service_thread: ServiceThread, request: CommandRequest
 ) -> Reply:
     replies: list[Reply] = []
-    service_thread.submit(request, replies.append)
+    service_thread.client.run(request, replies.append)
     qtbot.waitUntil(lambda: bool(replies))
     return replies[0]
 
@@ -162,7 +163,7 @@ def test_first_tick_runs_on_the_worker_thread(
     overview = start(qtbot, service_thread)
     assert overview.playlists[0].current == tmp_path / "walls" / "a.jpg"
     assert threads and threading.get_ident() not in threads
-    assert service_thread.overview == overview
+    assert service_thread.client.overview == overview
 
 
 def test_commands_are_answered_in_order(
@@ -171,13 +172,13 @@ def test_commands_are_answered_in_order(
     start(qtbot, service_thread)
     replies: list[Reply] = []
     for command in ("next", "next", "prev", "fav"):
-        service_thread.submit(target_request(command, None), replies.append)
+        service_thread.client.run(target_request(command, None), replies.append)
     qtbot.waitUntil(lambda: len(replies) == 4)
     assert [shown(r) for r in replies[:3]] == ["b.jpg", "c.jpg", "b.jpg"]
     assert isinstance(replies[3], MarkResult) and replies[3].changed
     qtbot.waitUntil(
-        lambda: service_thread.overview is not None
-        and service_thread.overview.playlists[0].favourite
+        lambda: service_thread.client.overview is not None
+        and service_thread.client.overview.playlists[0].favourite
     )
 
 
@@ -185,8 +186,8 @@ def test_tray_commands_announce_changes(
     qtbot: QtBot, service_thread: ServiceThread
 ) -> None:
     start(qtbot, service_thread)
-    with qtbot.waitSignal(service_thread.changed) as blocker:
-        service_thread.submit(Request(command="next"), lambda _: None)
+    with qtbot.waitSignal(service_thread.client.changed) as blocker:
+        service_thread.client.run(Request(command="next"), lambda _: None)
     change: Change = blocker.args[0]
     assert (change.image.name, change.reason) == ("b.jpg", "next")
 
@@ -197,7 +198,7 @@ def test_socket_commands_run_on_the_service_thread(
     start(qtbot, service_thread)
     threads: set[int] = set()
     backend.before_monitors = lambda _: threads.add(threading.get_ident())
-    with qtbot.waitSignal(service_thread.changed) as blocker:
+    with qtbot.waitSignal(service_thread.client.changed) as blocker:
         reply = send(qtbot, name, Request(command="next"))
     assert shown(reply) == "b.jpg"
     assert blocker.args[0].image.name == "b.jpg"  # announced like a tick's
@@ -241,12 +242,13 @@ def test_subscribers_follow_events(
 def test_list_changes_reach_subscribers(
     qtbot: QtBot, service_thread: ServiceThread, name: str
 ) -> None:
-    """By a command, or by hand (seen on the next tick)."""
+    """By a command, or by hand (seen on the next tick); the tray's client too."""
     start(qtbot, service_thread)
     subscriber = ask(qtbot, name, Subscribe())
     read_lines(qtbot, subscriber, 1)  # the current overview
     image = paths.data_dir() / "elsewhere" / "x.jpg"
-    reply = send(qtbot, name, MarkRequest(command="remove", image=image))
+    with qtbot.waitSignal(service_thread.client.marks_changed):
+        reply = send(qtbot, name, MarkRequest(command="remove", image=image))
     assert isinstance(reply, RemoveResult) and reply.changed
     [line] = read_lines(qtbot, subscriber, 1)
     assert ipc.decode_event(line) == MarksChangedEvent()
@@ -288,7 +290,7 @@ def test_a_bad_list_file_at_start_then_fixed(
     assert len([r for r in errors if "byte order mark" in r.getMessage()]) == 1
 
     listed.write_text("a.jpg\n", encoding="utf-8")
-    with qtbot.waitSignal(service_thread.overview_changed) as blocker:
+    with qtbot.waitSignal(service_thread.client.overview_changed) as blocker:
         service_thread.request_tick()
     assert blocker.args[0].error is None
     events = [ipc.decode_event(line) for line in read_lines(qtbot, subscriber, 2)]
@@ -343,7 +345,7 @@ def test_hold_reaches_the_tray_and_subscribers(
     start(qtbot, service_thread)
     subscriber = ask(qtbot, name, Subscribe())
     read_lines(qtbot, subscriber, 1)  # the current overview
-    with qtbot.waitSignal(service_thread.overview_changed) as blocker:
+    with qtbot.waitSignal(service_thread.client.overview_changed) as blocker:
         reply = submit(qtbot, service_thread, Request(command="hold"))
     assert reply == HoldResult(
         command="hold", playlist="walls", held=True, changed=True
@@ -374,7 +376,7 @@ def test_pick_over_the_socket(
     image = tmp_path / "elsewhere" / "x.png"
     image.parent.mkdir()
     Image.new("RGB", (8, 8)).save(image)
-    with qtbot.waitSignal(service_thread.changed) as blocker:
+    with qtbot.waitSignal(service_thread.client.changed) as blocker:
         reply = send(qtbot, name, PickRequest(image=image))
     assert isinstance(reply, PickResult) and reply.change.image == image
     assert blocker.args[0].reason == "picked"
@@ -418,7 +420,7 @@ def test_a_list_file_that_is_not_utf8_stops_the_service(
     # It goes bad while the daemon runs: the next tick stops the service.
     listed.write_text("a.jpg\n", encoding="utf-16")
     settled(listed)
-    with qtbot.waitSignal(service_thread.overview_changed) as blocker:
+    with qtbot.waitSignal(service_thread.client.overview_changed) as blocker:
         service_thread.request_tick()
     assert "not UTF-8" in blocker.args[0].error
     reply = send(qtbot, name, Request(command="next"))
@@ -441,7 +443,7 @@ def test_a_renamed_playlist_keeps_its_state(
     assert shown(send(qtbot, name, Request(command="next"))) == "b.jpg"
     art = settings.playlists[0].model_copy(update={"name": "art"})
     edit = settings.model_copy(update={"playlists": (art,)})
-    with qtbot.waitSignal(service_thread.overview_changed) as blocker:
+    with qtbot.waitSignal(service_thread.client.overview_changed) as blocker:
         reply = send(qtbot, name, SaveSettingsRequest(settings=edit, revision=1))
     assert isinstance(reply, SaveSettingsResult)
     [playlist] = blocker.args[0].playlists
@@ -476,7 +478,7 @@ def test_a_config_error_from_a_command_stops_the_service(
     listed.write_text("a.jpg\n", encoding="utf-8-sig")  # Notepad's BOM
     settled(listed)
 
-    with qtbot.waitSignal(service_thread.overview_changed) as blocker:
+    with qtbot.waitSignal(service_thread.client.overview_changed) as blocker:
         reply = send(qtbot, name, Request(command="next"))  # reads it
     assert isinstance(reply, ErrorReply) and reply.error.kind == "config_error"
     assert "byte order mark" in reply.error.message
@@ -500,7 +502,7 @@ def test_saved_settings_show_before_the_reply(
     fit = main.model_copy(update={"look": Look(ImageMode.FIT)})
     edit = current.settings.model_copy(update={"monitors": (fit,)})
     calls = len(backend.set_calls)
-    with qtbot.waitSignal(service_thread.changed) as blocker:
+    with qtbot.waitSignal(service_thread.client.changed) as blocker:
         reply = send(
             qtbot, name, SaveSettingsRequest(settings=edit, revision=current.revision)
         )
@@ -509,7 +511,7 @@ def test_saved_settings_show_before_the_reply(
     assert blocker.args[0].reason == "restored"
 
     def fit_in_overview() -> bool:
-        overview = service_thread.overview
+        overview = service_thread.client.overview
         return overview is not None and overview.monitors[0].look == fit.look
 
     qtbot.waitUntil(fit_in_overview)

@@ -52,8 +52,8 @@ from ...protocol import (
     StatsRequest,
     StatsResult,
 )
+from ..client import Client, OneAtATime, ReplyTo
 from . import theme
-from .client import Client, OneAtATime, ReplyTo
 from .grid import FolderScan, ImageGrid
 from .library_overview import OverviewTab, count
 from .settings_form import combo

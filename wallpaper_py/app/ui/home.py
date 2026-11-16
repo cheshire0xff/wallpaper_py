@@ -52,9 +52,9 @@ from ...protocol import (
     target_request,
 )
 from ...texts import members, not_rotating, rounded_duration
+from ..client import Client, OneAtATime, ReplyTo
 from . import theme
 from .arrangement import MonitorsView
-from .client import Client, OneAtATime, ReplyTo
 from .thumbnails import ROW_THUMBNAIL, ImageInfo, Thumbnail, ThumbnailLoader
 
 COUNTDOWN_MS = 1000

@@ -22,7 +22,11 @@ cli.py                        command line; playlist commands go to the daemon (
 app/                          PySide6 (Qt only here); two processes
   runtime.py     the daemon: lock, service thread, screens, tray
   worker.py      ServiceWorker (owns the service and the socket, on its own
-                 QThread) + ServiceThread (the main thread's proxy)
+                 QThread) + ServiceThread (the main thread's handle) and its
+                 LocalClient (the tray's Client: queued signals, no socket)
+  client.py      Client: all the tray and the pages may use (commands,
+                 events); SocketClient (the window process's);
+                 ReplyTo, OneAtATime (a request asked again only once)
   ipc.py         sockets: line framing (LineBuffer, for LineServer, LineRequest,
                  blocking send), the daemon's CommandServer (commands,
                  subscriptions)
@@ -35,8 +39,6 @@ app/                          PySide6 (Qt only here); two processes
   ui/            the window process (`wallpaper ui`), on demand
     process.py   run_ui: single instance, the window, quits with the daemon / window
     launcher.py  its own socket: "show this page" (UiServer, WindowOpener)
-    client.py    Client: all the pages may use (commands, events); SocketClient;
-                 ReplyTo, OneAtATime (a request asked again only once)
     window.py    MainWindow: the sidebar (NavButton per page, the daemon's status)
                  and the pages; asks before closing with unsaved settings
     home.py      Home: the monitors on a panel, then a row per playlist
@@ -179,14 +181,23 @@ used) stops `PlaylistService`, wherever it comes from (`ServiceWorker._failed`),
 and every tick tries to open it again, so it runs once the file is fixed.
 Settings that fail the checks are never stored, so they can't stop it.
 
-**The windows are a client like the CLI.** The pages see only `Client`
-(client.py), never `PlaylistService`: the same commands and events as any
-other client, and tests give them a fake. Images are read from the files,
-never sent over the socket; for the library's grids the window process also
-reads the folders, the list files and the history itself (read-only, off
-the main thread; the history through a read-only SQLite connection, WAL).
-Writes are always commands. Its view state (ui_state.py) is not settings:
-no revision, nothing the daemon reads.
+**The tray and the windows are clients like the CLI.** They see only
+`Client` (client.py), never `PlaylistService`: the same commands, replies
+and events as any other client, and tests give them a fake (`FakeClient`).
+The tray's is a `LocalClient` (worker.py), in the daemon: queued signals
+to and from the service thread, the models passed as they are (frozen, so
+safe to share between threads). Not over the socket: both ends would sit
+in the daemon, a socket pair per command to pass messages between two of
+its threads. The service thread sends each event once, as the protocol's
+`Event` (`ServiceWorker._send`), to both kinds of listener, and both
+clients turn it into the same signals (`Client._dispatch`).
+
+The windows read images from the files, never sent over the socket; for
+the library's grids the window process also reads the folders, the list
+files and the history itself (read-only, off the main thread; the history
+through a read-only SQLite connection, WAL). Writes are always commands.
+Its view state (ui_state.py) is not settings: no revision, nothing the
+daemon reads.
 
 **What the windows and the tray show is the daemon's.** They redraw from
 overviews and never poll; a toggle shows the overview's state, never the
