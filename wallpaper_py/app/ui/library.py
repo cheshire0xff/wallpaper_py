@@ -34,7 +34,6 @@ from PySide6.QtCore import Qt, Slot
 from PySide6.QtGui import QShowEvent
 from PySide6.QtWidgets import (
     QHBoxLayout,
-    QLabel,
     QMessageBox,
     QStackedWidget,
     QVBoxLayout,
@@ -54,7 +53,7 @@ from ...protocol import (
     StatsResult,
 )
 from . import theme
-from .client import Client, ReplyTo
+from .client import Client, OneAtATime, ReplyTo
 from .grid import FolderScan, ImageGrid
 from .library_overview import OverviewTab, count
 from .settings_form import combo
@@ -112,8 +111,7 @@ class LibraryPage(QWidget):
         self.state = load_ui_state(self._state_file)
         self._overview: Overview | None = None
         self.stats: StatsResult | None = None  # of the playlist chosen
-        self._asked_for: PlaylistId | None = None  # a stats request runs for it
-        self._ask_again = False
+        self._stats_asks = OneAtATime()
         self._rescan = False  # the next stats request scans again
         self._resetting = False
         self._grid_folder: Path | None = None  # All images shows its images
@@ -121,12 +119,7 @@ class LibraryPage(QWidget):
         self.playlist_combo = combo(self, "Playlist")
         self.playlist_combo.setFixedWidth(COMBO_WIDTH)
         self.count = theme.muted("", self)
-        self.banner = QLabel(self)
-        self.banner.setWordWrap(True)
-        self.banner.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
-        )
-        self.banner.setVisible(False)
+        self.banner = theme.Banner(self)
         self.tabs = theme.Tabs(self)
         self.stack = QStackedWidget(self)
         self.overview_tab = OverviewTab(self)
@@ -284,7 +277,7 @@ class LibraryPage(QWidget):
     @Slot(object)
     def show_overview(self, overview: Overview) -> None:
         self._overview = overview
-        self._set_banner(f"Error: {overview.error}" if overview.error else None)
+        self.banner.set_message(f"Error: {overview.error}" if overview.error else None)
         self._fill_playlists([(p.id, p.name) for p in overview.playlists])
         if not overview.playlists:
             self.overview_tab.show_message(
@@ -306,11 +299,7 @@ class LibraryPage(QWidget):
 
     @Slot(str)
     def show_error(self, message: str) -> None:
-        self._set_banner(f"Error: {message}")
-
-    def _set_banner(self, text: str | None) -> None:
-        self.banner.setText(text or "")
-        self.banner.setVisible(bool(text))
+        self.banner.set_message(f"Error: {message}")
 
     # -- images ------------------------------------------------------------------
 
@@ -362,19 +351,16 @@ class LibraryPage(QWidget):
 
     def _ask_stats(self) -> None:
         """One request at a time; asked again if more came meanwhile."""
-        if not self._wants_stats():
+        playlist = self.playlist()
+        if not self._wants_stats() or playlist is None or not self._stats_asks.ask():
             return
-        if self._asked_for is not None:
-            self._ask_again = True
-            return
-        self._asked_for = self.playlist()
         rescan, self._rescan = self._rescan, False
-        request = StatsRequest(target=self._asked_for, rescan=rescan)
-        self._client.run(request, ReplyTo(self, LibraryPage.stats_replied))
+        request = StatsRequest(target=playlist, rescan=rescan)
+        self._client.run(request, ReplyTo(self, LibraryPage.stats_replied, playlist))
 
-    def stats_replied(self, reply: Reply) -> None:
-        asked, self._asked_for = self._asked_for, None
-        if asked is not None and asked == self.playlist():  # else another was chosen
+    def stats_replied(self, asked: PlaylistId, reply: Reply) -> None:
+        """The stats of `asked` (its id)."""
+        if asked == self.playlist():  # else another was chosen meanwhile
             if isinstance(reply, StatsResult) and reply.playlists:
                 self._show_stats(reply)
             elif isinstance(reply, ErrorReply):
@@ -383,8 +369,7 @@ class LibraryPage(QWidget):
                     f"Can't count {self.playlist_name(asked)}'s images: "
                     f"{reply.error.message}"
                 )
-        if self._ask_again:
-            self._ask_again = False
+        if self._stats_asks.done():
             self._ask_stats()
 
     def _show_stats(self, stats: StatsResult | None) -> None:

@@ -5,8 +5,9 @@ The Settings page's edit, without widgets (settings.py shows it).
 folders, list files) and the monitors' rows as chosen. `Draft.of` reads
 saved `Settings`, `Draft.settings` turns a draft without problems back
 into `Settings` for `save_settings`. `problems` says what keeps a draft
-from being saved, per field, for the form to show next to it; the daemon
-checks again when it saves (core.settings.check_settings).
+from being saved, per field, for the form to show next to it: the texts
+that don't read, then the daemon's own checks (core.settings), which it
+runs again when it saves.
 
 Also what the page derives from a draft: monitor labels for the
 drop-down (`monitor_entries`), what a playlist is shown on, the summary of
@@ -34,17 +35,25 @@ from ...core.model import (
 from ...core.settings import (
     DEFAULT_IDLE_S,
     DEFAULT_INTERVAL_S,
+    DIRECTORY,
+    FAVOURITES,
+    FIELD_NAMES,
+    IDLE,
+    INTERVAL,
     MANUAL,
-    MIN_INTERVAL_S,
+    TO_REMOVE,
     MonitorSettings,
     Order,
-    SAME_LISTS,
     PlaylistSettings,
+    Problem,
     Settings,
+    folder_problems,
     format_duration,
+    list_file_problems,
     new_playlist_id,
     parse_duration,
     same_path,
+    settings_problems,
 )
 from ...protocol import DesktopMonitor, MonitorView, Overview, PlaylistView
 from .arrangement import twins
@@ -53,18 +62,9 @@ NEW_NAME = "New playlist"
 NEW_INTERVAL = format_duration(DEFAULT_INTERVAL_S)
 DEFAULT_IDLE = format_duration(DEFAULT_IDLE_S)
 
-# A problem's place: (playlist id, or None for the general settings; field).
+# A problem's place: (playlist id, or None for the general settings; field,
+# as core.settings names them: DIRECTORY, IDLE, ...).
 Field = tuple[str | None, str]
-NAME, DIRECTORY, INTERVAL = "name", "directory", "interval"
-IDLE, FAVOURITES, TO_REMOVE = "pause_when_idle", "favourites_file", "to_remove_file"
-FIELD_NAMES = {
-    NAME: "name",
-    DIRECTORY: "folder",
-    INTERVAL: "interval",
-    IDLE: "idle pause",
-    FAVOURITES: "favourites file",
-    TO_REMOVE: "to-remove file",
-}
 
 MODE_NAMES = {
     ImageMode.FILL: "Fill",
@@ -217,15 +217,29 @@ class Draft:
 
     # -- saving ------------------------------------------------------------
 
-    def settings(self) -> Settings:
+    def settings(self, *, readable: bool = False) -> Settings:
         """
         The draft as settings. A monitor's row that says no more than the
         defaults is left out (as if it had none).
 
+        `readable`: a duration that doesn't read is left out (None: manual,
+        never), for the checks of the rest (`problems`).
+
         Raises:
-            ValueError: a text that doesn't read (see `problems`).
+            ValueError: a text that doesn't read (see `problems`), unless
+                `readable`.
         """
-        idle = self.pause_when_idle
+
+        def duration(text: str | None) -> float | None:
+            if text is None:
+                return None
+            try:
+                return parse_duration(text)
+            except ValueError:
+                if readable:
+                    return None
+                raise
+
         return Settings(
             playlists=tuple(
                 PlaylistSettings(
@@ -233,13 +247,13 @@ class Draft:
                     name=p.name.strip(),
                     directory=_path(p.directory),
                     order=p.order,
-                    interval=None if p.manual else parse_duration(p.interval),
+                    interval=duration(None if p.manual else p.interval),
                 )
                 for p in self.playlists
             ),
             monitors=tuple(m for m in self.monitors if m != MonitorSettings(id=m.id)),
             pause_when_locked=self.pause_when_locked,
-            pause_when_idle=None if idle is None else parse_duration(idle),
+            pause_when_idle=duration(self.pause_when_idle),
             favourites_file=_list_file(self.favourites_file),
             to_remove_file=_list_file(self.to_remove_file),
         )
@@ -265,84 +279,63 @@ def _list_file(text: str) -> Path | None:
 
 def problems(draft: Draft, base: Settings, data_dir: Path) -> dict[Field, str]:
     """
-    What keeps `draft` from being saved, per field. A folder must exist
-    only when it is new or changed since `base` (the saved settings): an
-    unplugged drive must not block changing something else. `data_dir`
-    holds the list files left empty (the defaults).
+    What keeps `draft` from being saved, per field, in the form's order
+    (the playlists, then the general settings). The texts are read here
+    (durations, a folder chosen, a list file that is a folder); what the
+    values mean is the daemon's check (core.settings), so the form says
+    what the daemon would. A folder must exist only when it is new or
+    changed since `base` (the saved settings): an unplugged drive must not
+    block changing something else. `data_dir` holds the list files left
+    empty (the defaults).
     """
-    written = {p.id: p.directory for p in base.playlists}
+    found = _text_problems(draft)
+    settings = draft.settings(readable=True)
+    checked = (
+        settings_problems(settings)
+        + folder_problems(settings, base)
+        + list_file_problems(settings, data_dir)
+    )
+    for problem in checked:  # one per field: what the texts say, else the first
+        found.setdefault((problem.playlist, problem.field), problem.message)
+    order = {p.id: index for index, p in enumerate(draft.playlists)}
+    fields = list(FIELD_NAMES)
+
+    def place(field: Field) -> tuple[int, int]:
+        playlist_id, key = field
+        playlist = len(order) if playlist_id is None else order.get(playlist_id, 0)
+        return playlist, fields.index(key)
+
+    return {field: found[field] for field in sorted(found, key=place)}
+
+
+def _text_problems(draft: Draft) -> dict[Field, str]:
     found: dict[Field, str] = {}
-    names: dict[str, str] = {}
     for playlist in draft.playlists:
-        name = playlist.name.strip()
-        if not name:
-            found[(playlist.id, NAME)] = "Give it a name"
-        elif (other := names.get(name.casefold())) is not None:
-            found[(playlist.id, NAME)] = f"Another playlist is called {other}"
-        else:
-            names[name.casefold()] = name
-        problem = _folder_problem(playlist.directory, written.get(playlist.id))
-        if problem is not None:
-            found[(playlist.id, DIRECTORY)] = problem
+        if not playlist.directory.strip():
+            found[(playlist.id, DIRECTORY)] = "Choose a folder"
         if (problem := interval_problem(playlist.interval)) is not None:
             found[(playlist.id, INTERVAL)] = problem
     if draft.pause_when_idle is not None:
         try:
-            if parse_duration(draft.pause_when_idle) <= 0:
-                found[(None, IDLE)] = "Must be more than 0; untick it to never pause"
+            parse_duration(draft.pause_when_idle)
         except ValueError:
             found[(None, IDLE)] = "Use a duration like 45s, 5m or 1h"
-    return found | _list_problems(draft, data_dir)
-
-
-def _folder_problem(text: str, written: Path | None) -> str | None:
-    if not text.strip():
-        return "Choose a folder"
-    path = _path(text)
-    if not path.is_absolute():
-        return "Use the folder's full path"
-    if path != written and not path.is_dir():
-        return f"No such folder: {path}"
-    return None
-
-
-def interval_problem(interval: str) -> str | None:
-    if interval == MANUAL:
-        return None
-    try:
-        seconds = parse_duration(interval)
-    except ValueError:
-        return "Use a duration like 45s, 30m, 1h30m or 1d"
-    if seconds < MIN_INTERVAL_S:
-        return f"At least {format_duration(MIN_INTERVAL_S)}"
-    return None
-
-
-def _list_problems(draft: Draft, data_dir: Path) -> dict[Field, str]:
-    found: dict[Field, str] = {}
     for key in (FAVOURITES, TO_REMOVE):
         text: str = getattr(draft, key)
-        if (problem := _list_problem(text)) is not None:
-            found[(None, key)] = problem
-    if found:
-        return found
-    lists = Settings(
-        favourites_file=_list_file(draft.favourites_file),
-        to_remove_file=_list_file(draft.to_remove_file),
-    ).list_files(data_dir)
-    if same_path(*lists):  # check_list_files
-        found[(None, TO_REMOVE)] = SAME_LISTS
+        path = _path(text)
+        if text.strip() and path.is_absolute() and path.is_dir():
+            found[(None, key)] = "This is a folder; choose a file"
     return found
 
 
-def _list_problem(text: str) -> str | None:
-    if not text.strip():
+def interval_problem(interval: str) -> str | None:
+    """An interval as typed that doesn't read as a duration (or manual)."""
+    if interval == MANUAL:
         return None
-    path = _path(text)
-    if not path.is_absolute():
-        return "Use the file's full path"
-    if path.is_dir():
-        return "This is a folder; choose a file"
+    try:
+        parse_duration(interval)
+    except ValueError:
+        return "Use a duration like 45s, 30m, 1h30m or 1d"
     return None
 
 
@@ -350,13 +343,11 @@ def problem_summary(found: Mapping[Field, str], draft: Draft) -> str:
     """The first problem, for the line beside Save: "konachan, folder: …"."""
     (playlist_id, key), message = next(iter(found.items()))
     playlist = draft.playlist(playlist_id) if playlist_id is not None else None
-    if playlist is not None:
-        where = f"{playlist.name.strip() or 'a playlist'}, {FIELD_NAMES[key]}: "
-    else:
-        where = f"{FIELD_NAMES[key].capitalize()}: "
+    name = playlist.name.strip() if playlist is not None else None
+    where = Problem(playlist_id if playlist else None, key, message).where(name)
     more = len(found) - 1
     tail = f" (and {more} more)" if more else ""
-    return f"Can't save yet. {where}{message}{tail}"
+    return f"Can't save yet. {where}: {message}{tail}"
 
 
 # -- monitors ------------------------------------------------------------------

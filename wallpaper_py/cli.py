@@ -67,6 +67,7 @@ from .protocol import (
     UpcomingRequest,
     UpcomingResult,
 )
+from .texts import traits
 
 TARGET_HELP = "playlist name, or a monitor it drives; optional with one playlist"
 
@@ -326,7 +327,7 @@ def format_status(
     """`running` False: run here, with no daemon to rotate."""
     lines: list[str] = []
     for playlist in playlists:
-        lines.append(f"{playlist.name}  ({', '.join(_traits(playlist))})")
+        lines.append(f"{playlist.name}  ({', '.join(traits(playlist))})")
         members = []
         for monitor in playlist.monitors:
             if monitor.attached is None:
@@ -431,18 +432,6 @@ def _hold_text(reply: HoldResult) -> str:
             )
         return f"{name} is already held"
     return f"{name}: rotating again" if reply.changed else f"{name} is not held"
-
-
-def _traits(playlist: PlaylistDetails) -> list[str]:
-    """Order, interval, and held if it is."""
-    if playlist.interval is None:
-        rotation = "manual"
-    else:
-        rotation = f"every {format_duration(playlist.interval)}"
-    traits = [playlist.order.value, rotation]
-    if playlist.held:
-        traits.append("held")
-    return traits
 
 
 def _next_in(playlist: PlaylistDetails) -> str:

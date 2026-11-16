@@ -24,7 +24,8 @@ import hashlib
 import logging
 import os
 import time
-from collections.abc import Callable
+from collections.abc import Buffer, Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import override
 
@@ -119,6 +120,33 @@ def brief(err: ValidationError) -> str:
     return f"{where}: {first['msg']}" if where else str(first["msg"])
 
 
+class LineBuffer:
+    """
+    The line framing, for every reader: bytes in as they arrive, complete
+    lines out (without their newline); the rest waits for more.
+    """
+
+    def __init__(self, limit: int, what: str) -> None:
+        """`limit`: bytes a line may have; `what`: its name in the error."""
+        self._limit = limit
+        self._what = what
+        self._rest = bytearray()
+
+    def feed(self, data: Buffer) -> list[bytes]:
+        """
+        The lines `data` completes, in order.
+
+        Raises:
+            ProtocolError: a line (complete or not) is longer than the limit.
+        """
+        self._rest += data
+        *lines, rest = self._rest.split(b"\n")
+        self._rest = rest
+        if len(rest) > self._limit or any(len(line) > self._limit for line in lines):
+            raise ProtocolError(f"{self._what} too long")
+        return [bytes(line) for line in lines]
+
+
 # -- blocking client -------------------------------------------------------------
 
 
@@ -168,19 +196,16 @@ def request_line(
 
 def _read_line(socket: QLocalSocket, deadline: float, limit: int, peer: str) -> bytes:
     peer = peer[0].upper() + peer[1:]  # starts the sentences below
-    buffer = bytearray()
-    while b"\n" not in buffer:
+    lines = LineBuffer(limit, "Reply")
+    while True:
         left_ms = int((deadline - time.monotonic()) * 1000)
         if left_ms <= 0:
             raise WallpaperError(f"{peer} did not answer in time")
         ready = socket.waitForReadyRead(left_ms)
-        buffer += socket.readAll().data()
-        if not ready and b"\n" not in buffer:
-            if socket.state() != QLocalSocket.LocalSocketState.ConnectedState:
-                raise WallpaperError(f"{peer} closed the connection")
-        if len(buffer) > limit:
-            raise ProtocolError("Reply too long")
-    return bytes(buffer.split(b"\n", 1)[0])
+        if found := lines.feed(socket.readAll().data()):
+            return found[0]
+        if not ready and socket.state() != QLocalSocket.LocalSocketState.ConnectedState:
+            raise WallpaperError(f"{peer} closed the connection")
 
 
 # -- event-driven client ---------------------------------------------------------
@@ -212,8 +237,7 @@ class LineRequest(QObject):
         self._line = line
         self._on_answer = on_answer
         self._on_failure = on_failure
-        self._limit = limit
-        self._buffer = bytearray()
+        self._lines = LineBuffer(limit, "Reply")
         self._done = False
         self._socket = QLocalSocket(self)
         self._socket.connected.connect(self._send)
@@ -237,12 +261,14 @@ class LineRequest(QObject):
         """True once it is done (answered, or failed on a too long reply)."""
         if self._done:
             return True
-        self._buffer += self._socket.readAll().data()
-        if b"\n" in self._buffer:
+        try:
+            lines = self._lines.feed(self._socket.readAll().data())
+        except ProtocolError as err:
+            self._fail(False, str(err))
+            return True
+        if lines:
             self._finish()
-            self._on_answer(bytes(self._buffer.split(b"\n", 1)[0]))
-        elif len(self._buffer) > self._limit:
-            self._fail(False, "Reply too long")
+            self._on_answer(lines[0])
         return self._done
 
     @Slot(QLocalSocket.LocalSocketError)
@@ -272,6 +298,17 @@ class LineRequest(QObject):
 # -- servers ---------------------------------------------------------------------
 
 
+@dataclass
+class _Connection:
+    """A server's connection: its socket, and its request as it arrives."""
+
+    socket: QLocalSocket
+    lines: LineBuffer = field(
+        default_factory=lambda: LineBuffer(MAX_MESSAGE, "Request")
+    )
+    received: bool = False  # its request came (it is answered, or subscribed)
+
+
 class LineServer(QObject):
     """
     Accepts connections and reads one line from each, which `_received`
@@ -291,7 +328,7 @@ class LineServer(QObject):
         self._server = QLocalServer(self)
         self._server.setSocketOptions(QLocalServer.SocketOption.UserAccessOption)
         self._server.newConnection.connect(self._accept)
-        self._clients: dict[int, tuple[QLocalSocket, bytearray]] = {}
+        self._clients: dict[int, _Connection] = {}
         self._next_id = 0
 
     def listen(self) -> None:
@@ -304,8 +341,8 @@ class LineServer(QObject):
 
     def close(self) -> None:
         self._server.close()
-        for socket, _ in list(self._clients.values()):
-            socket.abort()
+        for client in list(self._clients.values()):
+            client.socket.abort()
         self._clients.clear()
 
     def send(self, connection_id: int, line: bytes) -> bool:
@@ -316,7 +353,7 @@ class LineServer(QObject):
         client = self._clients.get(connection_id)
         if client is None:
             return False
-        socket, _ = client
+        socket = client.socket
         if socket.bytesToWrite() > MAX_BACKLOG:
             log.warning("Dropping a client that stopped reading")
             self._forget(connection_id)
@@ -330,9 +367,8 @@ class LineServer(QObject):
         client = self._clients.pop(connection_id, None)
         if client is None:
             return  # the client gave up meanwhile
-        socket, _ = client
-        socket.write(line)
-        socket.disconnectFromServer()  # after the line is written
+        client.socket.write(line)
+        client.socket.disconnectFromServer()  # after the line is written
 
     def _received(self, connection_id: int, line: bytes) -> None:
         raise NotImplementedError
@@ -346,7 +382,7 @@ class LineServer(QObject):
         while (socket := self._server.nextPendingConnection()) is not None:
             connection_id = self._next_id
             self._next_id += 1
-            self._clients[connection_id] = (socket, bytearray())
+            self._clients[connection_id] = _Connection(socket)
             socket.setProperty(_CONNECTION_ID, connection_id)
             socket.readyRead.connect(self._ready_read)
             socket.disconnected.connect(socket.deleteLater)
@@ -378,22 +414,25 @@ class LineServer(QObject):
         client = self._clients.get(connection_id)
         if client is None:
             return
-        socket, buffer = client
-        buffer += socket.readAll().data()
-        if b"\n" not in buffer:
-            if len(buffer) > MAX_MESSAGE:
-                self.finish(connection_id, self._too_long())
+        socket = client.socket
+        try:
+            lines = client.lines.feed(socket.readAll().data())
+        except ProtocolError:
+            self.finish(connection_id, self._too_long())
+            return
+        if not lines:
             return
         # One request per connection. (Only our own connection: Qt may
         # have its own on the socket.)
+        client.received = True
         socket.readyRead.disconnect(self._ready_read)
-        self._received(connection_id, bytes(buffer.split(b"\n", 1)[0]))
+        self._received(connection_id, lines[0])
 
     def _expire(self, connection_id: int) -> None:
         client = self._clients.get(connection_id)
-        if client is not None and b"\n" not in client[1]:  # still no request
+        if client is not None and not client.received:  # still no request
             self._forget(connection_id)
-            client[0].abort()
+            client.socket.abort()
 
     def _forget(self, connection_id: int) -> None:
         self._clients.pop(connection_id, None)

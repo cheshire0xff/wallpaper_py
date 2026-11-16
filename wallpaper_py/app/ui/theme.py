@@ -28,8 +28,8 @@ it, constants and small painted widgets. Not a framework. The controls
   `IconButton` (borderless; on: accent icon on a faint accent fill),
   `TextButton` (accent text, for secondary actions), `Tabs`
   (sub-tabs with an accent underline), `Divider` (the thin line), `Panel`
-  (the lighter panel behind images), `Chip`, `ImageView` (an image
-  letterboxed on the panel tone).
+  (the lighter panel behind images), `Banner` (a page's message), `Chip`,
+  `ImageView` (an image letterboxed on the panel tone).
 - The keyboard focus: a 2 px accent ring (`draw_focus_ring`), only when
   the focus came from the keyboard (`keyboard_focus`).
 
@@ -168,10 +168,6 @@ def with_alpha(color: QColor, alpha: float) -> QColor:
     return result
 
 
-def is_dark(palette: QPalette) -> bool:
-    return palette.color(QPalette.ColorRole.Window).lightnessF() < 0.5
-
-
 def readable_accent(accent: QColor, dark: bool) -> QColor:
     """The accent, made light enough to read on dark, or dark enough on light."""
     color = QColor(accent)
@@ -223,7 +219,7 @@ def derive_tones(palette: QPalette) -> Tones:
     group = QPalette.ColorGroup.Active
     window = palette.color(group, QPalette.ColorRole.Window)
     text = palette.color(group, QPalette.ColorRole.WindowText)
-    dark = is_dark(palette)
+    dark = window.lightnessF() < 0.5
     page = window.darker(122) if dark else QColor(window)
     accent = readable_accent(palette.color(group, ACCENT_ROLE), dark)
     soft = mix(text, page, 0.24)
@@ -874,6 +870,20 @@ class ValueLabel(QLabel):
         super().changeEvent(event)
         if event.type() == QEvent.Type.StyleChange:
             self._align()
+
+
+class Banner(QLabel):
+    """A page's message (an error): wrapped, selectable, hidden while empty."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWordWrap(True)
+        self.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.set_message(None)
+
+    def set_message(self, text: str | None) -> None:
+        self.setText(text or "")
+        self.setVisible(bool(text))
 
 
 class Chip(QLabel):

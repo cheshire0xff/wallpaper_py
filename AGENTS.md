@@ -57,7 +57,7 @@ report with a few steps to try once instead.
 - mypy is strict; pydantic models for anything (de)serialized: the
   settings are `Settings` in `core/settings.py` (stored in the state
   database, sent on the socket; a new setting goes there, with its
-  meaning checked in `check_settings`), not `isinstance` checks.
+  meaning checked in `settings_problems`), not `isinstance` checks.
   Hand-written code checks only what values mean (durations, paths,
   uniqueness). Use `StrictInt` / `StrictStr` / `StrictBool` and
   `Field(strict=True)` for values a client sends: lax pydantic takes

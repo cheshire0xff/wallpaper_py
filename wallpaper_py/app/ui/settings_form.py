@@ -31,10 +31,10 @@ from PySide6.QtWidgets import (
 )
 
 from ...core.model import BLACK
-from ...core.settings import MANUAL, Order
+from ...core.settings import DIRECTORY, INTERVAL, MANUAL, NAME, Order
 from . import theme
 from .controls import FieldCombo, Segments, Slider
-from .settings_draft import DIRECTORY, INTERVAL, NAME, NEW_INTERVAL, PlaylistDraft
+from .settings_draft import NEW_INTERVAL, PlaylistDraft
 
 EVERY, MANUALLY = "every", MANUAL  # the Changes row's choices
 

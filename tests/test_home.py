@@ -27,9 +27,7 @@ from wallpaper_py.app.ui.arrangement import (
 )
 from wallpaper_py.app.ui.home import (
     HomePage,
-    chip_text,
     details_text,
-    format_duration,
     format_size,
     schedule_text,
 )
@@ -267,19 +265,9 @@ def test_formats() -> None:
     assert format_size(12_300) == "12 KB"
     assert format_size(4_200_000) == "4.2 MB"
     assert format_size(1_100_000_000) == "1.1 GB"
-    # As the settings write durations; seconds only under 10 minutes.
-    assert format_duration(30) == "30s"
-    assert format_duration(350) == "5m50s"
-    assert format_duration(300) == "5m"
-    assert format_duration(754) == "13m"
-    assert format_duration(3600) == "1h"
-    assert format_duration(3900) == "1h5m"
-    assert format_duration(2 * 86400 + 3 * 3600) == "2d3h"
-    assert format_duration(-5) == "0s"
 
 
 def test_row_text_normal() -> None:
-    assert chip_text(KONACHAN) is None
     assert details_text(KONACHAN, details(KONACHAN), THUMBNAIL, 754.0) == (
         "3840×2160 · 4.2 MB · shuffle, every 30m · next in 13m"
     )
@@ -293,14 +281,12 @@ def test_row_text_normal() -> None:
 
 def test_row_text_held() -> None:
     held = KONACHAN.model_copy(update={"held": True})
-    assert chip_text(held) == "Held"
     assert schedule_text(held, details(held), 754.0) == (
         "shuffle, every 30m · 13m left once resumed"
     )
 
 
 def test_row_text_manual() -> None:
-    assert chip_text(FANTASY) == "Manual"
     assert details_text(FANTASY, details(FANTASY), THUMBNAIL, None) == (
         "3840×2160 · 4.2 MB · shuffle · manual"
     )

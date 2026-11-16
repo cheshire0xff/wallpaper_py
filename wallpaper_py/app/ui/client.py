@@ -48,20 +48,53 @@ START_TIMEOUT_S = 10.0  # for a started app to answer
 RETRY_INTERVAL_MS = 200
 
 
-class ReplyTo[P: QObject]:
+class ReplyTo[P: QObject, *Ts]:
     """
-    A `Client.run` callback that calls `method(page, reply)`, holding the
-    page weakly: the window may close (and be deleted) before the reply.
+    A `Client.run` callback that calls `method(page, *args, reply)`, holding
+    the page weakly: the window may close (and be deleted) before the reply.
+    `args`: what the page needs to know about the request (plain data).
     """
 
-    def __init__(self, page: P, method: Callable[[P, Reply], None]) -> None:
+    def __init__(
+        self, page: P, method: Callable[[P, *Ts, Reply], None], *args: *Ts
+    ) -> None:
         self._page = weakref.ref(page)
         self._method = method
+        self._args = args
 
     def __call__(self, reply: Reply) -> None:
         page = self._page()
         if page is not None and Shiboken.isValid(page):
-            self._method(page, reply)
+            self._method(page, *self._args, reply)
+
+
+class OneAtATime:
+    """
+    For a request whose latest answer is all that counts (Home's `status`,
+    the Library's `stats`): one runs at a time, and asking while it runs
+    asks once more after its reply, so the last answer is never stale.
+
+        if asks.ask():          send it
+        ...reply: if asks.done(): ask again (more came meanwhile)
+    """
+
+    def __init__(self) -> None:
+        self._running = False
+        self._again = False
+
+    def ask(self) -> bool:
+        """True: send it now. False: one runs; it is asked again after it."""
+        if self._running:
+            self._again = True
+            return False
+        self._running = True
+        return True
+
+    def done(self) -> bool:
+        """Its reply came; True if it should be asked again now."""
+        self._running = False
+        again, self._again = self._again, False
+        return again
 
 
 class Client(QObject):
@@ -112,7 +145,7 @@ class SocketClient(Client):
         self._start_timeout_s = start_timeout_s
         self._deadline: float | None = None  # set once the daemon was started
         self._socket: QLocalSocket | None = None
-        self._buffer = bytearray()
+        self._lines = ipc.LineBuffer(ipc.MAX_REPLY, "Event")
         self._subscribed = False
         self._over = False  # failed, ended or closed: nothing more happens
         self._in_flight = 0  # commands sent by `run` and not answered yet
@@ -182,7 +215,7 @@ class SocketClient(Client):
             return
         socket = QLocalSocket(self)
         self._socket = socket
-        self._buffer.clear()
+        self._lines = ipc.LineBuffer(ipc.MAX_REPLY, "Event")
         socket.connected.connect(self._subscribe)
         socket.readyRead.connect(self._ready_read)
         socket.errorOccurred.connect(self._error)
@@ -211,12 +244,16 @@ class SocketClient(Client):
             self._end(socket)
 
     def _read(self, socket: QLocalSocket) -> None:
-        self._buffer += socket.readAll().data()
-        while not self._over and b"\n" in self._buffer:
-            line, _, rest = self._buffer.partition(b"\n")
-            self._buffer = bytearray(rest)
+        try:
+            lines = self._lines.feed(socket.readAll().data())
+        except ipc.ProtocolError as err:
+            self._fail(f"Cannot read wallpaper_py's events: {err}")
+            return
+        for line in lines:
+            if self._over:
+                return
             try:
-                message = ipc.decode_event(bytes(line))
+                message = ipc.decode_event(line)
             except ipc.ProtocolError as err:  # e.g. an event added later
                 log.info("Skipping a line from the daemon: %s", err)
                 continue
@@ -253,6 +290,8 @@ class SocketClient(Client):
         if self._over or not self._subscribed:
             return
         self._read(socket)
+        if self._over:  # what was left failed it (a line too long)
+            return
         log.info("The daemon closed the connection")
         self.close()
         self.ended.emit()

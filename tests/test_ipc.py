@@ -8,7 +8,7 @@ from PySide6.QtCore import QObject
 from pytestqt.qtbot import QtBot
 
 from wallpaper_py.app import ipc
-from wallpaper_py.app.ipc import CommandServer, LineRequest, ProtocolError
+from wallpaper_py.app.ipc import CommandServer, LineBuffer, LineRequest, ProtocolError
 from wallpaper_py.core.service import Change
 from wallpaper_py.protocol import (
     ChangedEvent,
@@ -117,6 +117,19 @@ def test_bad_reply_is_rejected() -> None:
         ipc.decode_reply(b'{"code": 0, "out": "text"}')
     with pytest.raises(ProtocolError, match="Malformed event"):
         ipc.decode_event(b'{"event": "later_added"}')
+
+
+def test_line_framing() -> None:
+    """Lines come out whole, however the bytes arrive; too long ones fail."""
+    lines = LineBuffer(8, "Reply")
+    assert not lines.feed(b"one")
+    assert lines.feed(b"\ntwo\nthr") == [b"one", b"two"]
+    assert lines.feed(memoryview(b"ee\n")) == [b"three"]
+    assert lines.feed(b"\n") == [b""]
+    with pytest.raises(ProtocolError, match="Reply too long"):
+        lines.feed(b"123456789")  # not complete yet, and already too long
+    with pytest.raises(ProtocolError, match="Request too long"):
+        LineBuffer(8, "Request").feed(b"123456789\nok\n")  # complete, too long
 
 
 def test_no_daemon_running(name: str) -> None:

@@ -10,7 +10,8 @@ this thread touches it.
 Everything reaches the service through `ServiceWorker.execute`, one at a
 time, between ticks: socket requests directly (the socket lives on this
 thread), the tray through `ServiceThread`. After `save_settings` it ticks,
-so that the monitors show the new settings before the reply.
+so that the monitors show the new settings before the reply. A command or
+tick over `SLOW_S` is logged with its time.
 Nothing on this thread may block waiting for a client or spin a nested
 event loop. Events (a change, a new overview) go to the main thread as
 signals and to socket subscribers (the window process) as lines, both from
@@ -61,6 +62,8 @@ from ..protocol import (
 from .ipc import CommandServer
 
 log = logging.getLogger(__name__)
+
+SLOW_S = 0.1  # seconds: a command or tick that takes longer is logged
 
 ReplyCallback = Callable[[Reply], None]
 
@@ -137,6 +140,11 @@ class ServiceWorker(QObject):
 
     @Slot()
     def tick(self) -> None:
+        started = time.monotonic()
+        self._tick()
+        _log_if_slow("Tick", started)
+
+    def _tick(self) -> None:
         if self._service is None:
             self._open()  # down: try again (a list file may be fixed now)
         if self._service is not None:
@@ -151,6 +159,12 @@ class ServiceWorker(QObject):
 
     def execute(self, request: CommandRequest) -> Reply:
         """Run one command: the only way in for socket, tray and windows."""
+        started = time.monotonic()
+        reply = self._execute(request)
+        _log_if_slow(f"Command {request.command}", started)
+        return reply
+
+    def _execute(self, request: CommandRequest) -> Reply:
         reply: Reply
         render = False  # monitors to render again: tick before the reply
         if self._service is None:
@@ -169,7 +183,7 @@ class ServiceWorker(QObject):
         if render:
             # Renders the monitors whose playlist, look or folder changed,
             # then publishes the overview: both before the reply.
-            self.tick()
+            self._tick()
         else:
             self._publish()
         return reply
@@ -290,6 +304,12 @@ class ServiceWorker(QObject):
         if stamp != self._lists_stamp:
             self._lists_stamp = stamp
             self._broadcast(MarksChangedEvent())
+
+
+def _log_if_slow(what: str, started: float) -> None:
+    took = time.monotonic() - started
+    if took > SLOW_S:
+        log.info("%s took %d ms", what, round(took * 1000))
 
 
 class ServiceThread(QObject):

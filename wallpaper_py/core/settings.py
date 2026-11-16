@@ -6,8 +6,10 @@ They live in the state database (core.store), written only by the daemon: the
 settings window reads them with the `settings` command and writes them with
 `save_settings` (docs/architecture.md). `Settings` is that whole edit, as
 stored and as sent; its fields are typed by pydantic, and what the values
-mean (unique names, durations, folders, list files) is checked by
-`check_settings`, `check_folders` and `check_list_files`.
+mean (unique names, durations, folders, list files) is checked once, here:
+`settings_problems`, `folder_problems` and `list_file_problems` find every
+problem with its place (the Settings page shows them), `check_settings`,
+`check_folders` and `check_list_files` raise the first (the daemon).
 
 Per monitor or per playlist: how an image looks on a screen (`Look`) is per
 monitor; which image and when (folder, order, interval) is per playlist.
@@ -21,6 +23,7 @@ from __future__ import annotations
 import os
 import re
 import uuid
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Annotated
@@ -152,109 +155,176 @@ class Settings(BaseModel):
         ]
 
 
-def check_settings(settings: Settings) -> None:
-    """
-    What the values mean, beyond their types (see also `check_folders`).
+# -- checks --------------------------------------------------------------------
+#
+# Each check finds every problem with its place (`*_problems`), for the
+# Settings page to show next to its field, and the daemon raises the first
+# (`check_*`) when it saves.
 
-    Raises:
-        SettingsError: the first problem, in words.
-    """
-    ids = _check_playlists(settings.playlists)
+# A problem's field: a playlist's or a general setting's (as named in the
+# models), or the monitors' rows.
+NAME, ID, DIRECTORY, INTERVAL = "name", "id", "directory", "interval"
+IDLE, FAVOURITES, TO_REMOVE = "pause_when_idle", "favourites_file", "to_remove_file"
+MONITORS = "monitors"
+FIELD_NAMES = {  # as the texts call them
+    NAME: "name",
+    ID: "id",
+    DIRECTORY: "folder",
+    INTERVAL: "interval",
+    IDLE: "idle pause",
+    FAVOURITES: "favourites file",
+    TO_REMOVE: "to-remove file",
+    MONITORS: "monitors",
+}
+SAME_LISTS = "The favourites and to-remove lists can't be the same file"
+
+
+@dataclass(frozen=True)
+class Problem:
+    """A value that can't be used: where, and why (said next to the field)."""
+
+    playlist: PlaylistId | None  # its id; None: a general setting or a monitor
+    field: str  # NAME, DIRECTORY, IDLE, ...
+    message: str  # "At least 10s"
+
+    def where(self, name: str | None) -> str:
+        """In words: "konachan, folder", "Idle pause". `name`: its playlist's."""
+        if self.playlist is None:
+            return FIELD_NAMES[self.field].capitalize()
+        return f"{(name or '').strip() or 'a playlist'}, {FIELD_NAMES[self.field]}"
+
+
+def settings_problems(settings: Settings) -> list[Problem]:
+    """What the values mean, beyond their types (see also `folder_problems`)."""
+    found = _playlist_problems(settings.playlists)
+    ids = {p.id for p in settings.playlists}
     seen: set[MonitorId] = set()
     for monitor in settings.monitors:
-        if not monitor.id.key:
-            raise SettingsError("A monitor's id is empty")
-        if monitor.id in seen:
-            raise SettingsError(f"Monitor {monitor.id} is listed twice")
+        found += [
+            Problem(None, MONITORS, message)
+            for message in _monitor_problems(monitor, ids, seen)
+        ]
         seen.add(monitor.id)
-        if monitor.playlist is not None and monitor.playlist not in ids:
-            raise SettingsError(
-                f"Monitor {monitor.id} is on playlist id {monitor.playlist!r}, "
-                f"which doesn't exist"
-            )
-        _check_look(monitor)
     idle = settings.pause_when_idle
     if idle is not None and idle <= 0:  # would pause for ever
-        raise SettingsError("The idle pause must be more than 0, or never")
-    for what, file in (
-        ("favourites", settings.favourites_file),
-        ("to-remove", settings.to_remove_file),
+        found.append(
+            Problem(None, IDLE, "Must be more than 0; untick it to never pause")
+        )
+    for field, file in (
+        (FAVOURITES, settings.favourites_file),
+        (TO_REMOVE, settings.to_remove_file),
     ):
         if file is not None and not file.is_absolute():
-            raise SettingsError(f"The {what} list must be a full path")
+            found.append(Problem(None, field, "Use the file's full path"))
+    return found
 
 
-def _check_look(monitor: MonitorSettings) -> None:
+def _playlist_problems(playlists: tuple[PlaylistSettings, ...]) -> list[Problem]:
+    found: list[Problem] = []
+    ids: set[str] = set()
+    names: dict[str, str] = {}  # case-folded -> as written
+    for playlist in playlists:
+        name, key = playlist.name, playlist.id
+        if not name.strip():
+            found.append(Problem(key, NAME, "Give it a name"))
+        elif name != name.strip():
+            found.append(Problem(key, NAME, "Can't start or end with spaces"))
+        elif (other := names.get(name.casefold())) is not None:
+            found.append(Problem(key, NAME, f"Another playlist is called {other}"))
+        else:
+            names[name.casefold()] = name
+        if not key.strip() or key in ids:
+            found.append(Problem(key, ID, "Needs an id no other playlist has"))
+        ids.add(key)
+        if not playlist.directory.is_absolute():
+            found.append(Problem(key, DIRECTORY, "Use the folder's full path"))
+        interval = playlist.interval
+        if interval is not None and interval < MIN_INTERVAL_S:
+            minimum = format_duration(MIN_INTERVAL_S)
+            found.append(Problem(key, INTERVAL, f"At least {minimum}"))
+    return found
+
+
+def _monitor_problems(
+    monitor: MonitorSettings, ids: set[str], seen: set[MonitorId]
+) -> list[str]:
+    found: list[str] = []
+    if not monitor.id.key:
+        found.append("A monitor's id is empty")
+    if monitor.id in seen:
+        found.append(f"Monitor {monitor.id} is listed twice")
+    if monitor.playlist is not None and monitor.playlist not in ids:
+        found.append(
+            f"Monitor {monitor.id} is on playlist id {monitor.playlist!r}, "
+            f"which doesn't exist"
+        )
     look = monitor.look
     if not MIN_BLUR <= look.blur <= MAX_BLUR:
-        raise SettingsError(
+        found.append(
             f"Monitor {monitor.id}: the blur must be from {MIN_BLUR} to {MAX_BLUR}"
         )
     if not 0 <= look.darken <= MAX_DARKEN:
-        raise SettingsError(
+        found.append(
             f"Monitor {monitor.id}: the darkening must be from 0 to {MAX_DARKEN}"
         )
+    return found
 
 
-def _check_playlists(playlists: tuple[PlaylistSettings, ...]) -> set[str]:
-    """Their ids."""
-    ids: set[str] = set()
-    names: set[str] = set()
-    for playlist in playlists:
-        name = playlist.name
-        if not name.strip():
-            raise SettingsError("Every playlist needs a name")
-        if name != name.strip():
-            raise SettingsError(f"{name!r}: a name can't start or end with spaces")
-        if not playlist.id.strip() or playlist.id in ids:
-            raise SettingsError(f"{name}: needs an id no other playlist has")
-        ids.add(playlist.id)
-        if name.casefold() in names:
-            raise SettingsError(f"Two playlists are named {name!r}")
-        names.add(name.casefold())
-        if not playlist.directory.is_absolute():
-            raise SettingsError(f"{name}: the folder must be a full path")
-        interval = playlist.interval
-        if interval is not None and interval < MIN_INTERVAL_S:
-            raise SettingsError(
-                f"{name}: the interval must be at least "
-                f"{format_duration(MIN_INTERVAL_S)}, or manual"
-            )
-    return ids
+def folder_problems(settings: Settings, old: Settings) -> list[Problem]:
+    """
+    A playlist's folder that is new or changed since `old` must exist. (One
+    that was there may be gone for a while, e.g. a drive not mounted: the
+    playlist then has nothing to show until it is back.)
+    """
+    before = {p.id: p.directory for p in old.playlists}
+    return [
+        Problem(p.id, DIRECTORY, f"No such folder: {p.directory}")
+        for p in settings.playlists
+        if before.get(p.id) != p.directory and not p.directory.is_dir()
+    ]
+
+
+def list_file_problems(settings: Settings, data_dir: Path) -> list[Problem]:
+    """
+    The favourites and to-remove lists are two files (the defaults are in
+    `data_dir`): with one, every favourite would be listed for removal.
+    """
+    favourites, to_remove = settings.list_files(data_dir)
+    if same_path(favourites, to_remove):
+        return [Problem(None, TO_REMOVE, SAME_LISTS)]
+    return []
+
+
+def check_settings(settings: Settings) -> None:
+    """
+    Raises:
+        SettingsError: the first of `settings_problems`, in words.
+    """
+    _raise_first(settings_problems(settings), settings)
 
 
 def check_folders(settings: Settings, old: Settings) -> None:
     """
-    A playlist's folder that is new or changed since `old` exists. (One
-    that was there may be gone for a while, e.g. a drive not mounted: the
-    playlist then has nothing to show until it is back.)
-
     Raises:
-        SettingsError: the first folder that doesn't.
+        SettingsError: the first of `folder_problems`.
     """
-    before = {p.id: p.directory for p in old.playlists}
-    for playlist in settings.playlists:
-        directory = playlist.directory
-        if before.get(playlist.id) != directory and not directory.is_dir():
-            raise SettingsError(
-                f"{playlist.name}: the folder {directory} doesn't exist"
-            )
-
-
-SAME_LISTS = "The favourites and to-remove lists can't be the same file"
+    _raise_first(folder_problems(settings, old), settings)
 
 
 def check_list_files(settings: Settings, data_dir: Path) -> None:
     """
-    The favourites and to-remove lists are two files (the defaults are in
-    `data_dir`): with one, every favourite would be listed for removal.
-
     Raises:
-        SettingsError: they are one file.
+        SettingsError: the lists are one file (`list_file_problems`).
     """
-    favourites, to_remove = settings.list_files(data_dir)
-    if same_path(favourites, to_remove):
-        raise SettingsError(SAME_LISTS)
+    _raise_first(list_file_problems(settings, data_dir), settings)
+
+
+def _raise_first(problems: list[Problem], settings: Settings) -> None:
+    if problems:
+        first = problems[0]
+        names = {p.id: p.name for p in settings.playlists}
+        where = first.where(names.get(first.playlist or ""))
+        raise SettingsError(f"{where}: {first.message}")
 
 
 def same_path(a: Path, b: Path) -> bool:

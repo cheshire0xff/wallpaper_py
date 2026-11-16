@@ -3,7 +3,9 @@ The service on its worker thread, driven like the daemon does: through
 ServiceThread (the tray) and through its command socket.
 """
 
+import logging
 import threading
+import time
 from collections.abc import Iterator
 from contextlib import nullcontext
 from pathlib import Path
@@ -306,6 +308,26 @@ def test_unexpected_tick_errors_are_survived(
     tick(qtbot, service_thread)
     backend.before_monitors = None
     assert shown(submit(qtbot, service_thread, Request(command="next"))) == "b.jpg"
+
+
+def test_slow_commands_and_ticks_are_logged_with_their_time(
+    qtbot: QtBot,
+    service_thread: ServiceThread,
+    backend: FakeBackend,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """What a click could wait for shows in the daemon's log."""
+    start(qtbot, service_thread)
+    caplog.set_level(logging.INFO, logger="wallpaper_py.app.worker")
+    submit(qtbot, service_thread, StatusRequest())
+    assert "took" not in caplog.text  # a quick one: not logged
+    backend.before_monitors = lambda _: time.sleep(0.15)
+    submit(qtbot, service_thread, Request(command="next"))
+    tick(qtbot, service_thread)
+    backend.before_monitors = None
+    slow = [r.getMessage() for r in caplog.records if "took" in r.getMessage()]
+    assert [m.split(" took ")[0] for m in slow] == ["Command next", "Tick"]
+    assert all(int(m.split(" took ")[1].removesuffix(" ms")) >= 150 for m in slow)
 
 
 def test_shutdown_before_start_is_harmless() -> None:

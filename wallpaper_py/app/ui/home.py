@@ -21,7 +21,6 @@ monitor previews are rendered from are read from the files by
 from __future__ import annotations
 
 import time
-import weakref
 from collections.abc import Callable
 from pathlib import Path
 from typing import cast, override
@@ -37,12 +36,10 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from shiboken6 import Shiboken
 
 from ...core.settings import PlaylistId
 from ...protocol import (
     ErrorReply,
-    MonitorView,
     Overview,
     PlaylistDetails,
     PlaylistView,
@@ -54,9 +51,10 @@ from ...protocol import (
     TargetCommand,
     target_request,
 )
+from ...texts import members, not_rotating, rounded_duration
 from . import theme
 from .arrangement import MonitorsView
-from .client import Client
+from .client import Client, OneAtATime, ReplyTo
 from .thumbnails import ROW_THUMBNAIL, ImageInfo, Thumbnail, ThumbnailLoader
 
 COUNTDOWN_MS = 1000
@@ -77,44 +75,6 @@ def format_size(size: int) -> str:
     return f"{value:.1f} GB"
 
 
-def format_duration(seconds: float) -> str:
-    """
-    As the settings write durations: 45s, 5m50s (under 10 minutes), 21m,
-    1h, 1h5m, 2d, 2d3h.
-    """
-    whole = max(round(seconds), 0)
-    if whole < 60:
-        return f"{whole}s"
-    if whole < 600:
-        minutes, rest = divmod(whole, 60)
-        return f"{minutes}m{rest}s" if rest else f"{minutes}m"
-    minutes = round(whole / 60)
-    if minutes < 60:
-        return f"{minutes}m"
-    hours, minutes = divmod(minutes, 60)
-    if hours < 24:
-        return f"{hours}h{minutes}m" if minutes else f"{hours}h"
-    days, hours = divmod(hours, 24)
-    return f"{days}d{hours}h" if hours else f"{days}d"
-
-
-def members_text(view: PlaylistView) -> str:
-    """The playlist's monitors: "AW3225QF + PLX2783H (off)"."""
-    return " + ".join(_member(m) for m in view.monitors)
-
-
-def _member(monitor: MonitorView) -> str:
-    if monitor.attached is None:
-        return f"{monitor.name} (not found)"
-    return monitor.name if monitor.attached else f"{monitor.name} (off)"
-
-
-def chip_text(view: PlaylistView) -> str | None:
-    if view.manual:
-        return "Manual"
-    return "Held" if view.held else None
-
-
 def counting(view: PlaylistView, paused: str | None) -> bool:
     """Whether its time left runs down right now (as the daemon counts it)."""
     return not view.manual and not view.held and view.attached and paused is None
@@ -132,10 +92,10 @@ def schedule_text(
     order = details.order.value
     if view.manual or details.interval is None:
         return f"{order} · manual"
-    text = f"{order}, every {format_duration(details.interval)}"
+    text = f"{order}, every {rounded_duration(details.interval)}"
     if left is None:
         return text
-    remaining = format_duration(max(left, 0.0))
+    remaining = rounded_duration(max(left, 0.0))
     if view.held:
         return f"{text} · {remaining} left once resumed"
     if not view.attached:
@@ -310,11 +270,11 @@ class PlaylistRow(QWidget):
             self._thumbnail = None
         self._view = view
         self.title.setText(view.name)
-        self.monitors.setText(members_text(view))
-        self.monitors.setToolTip(members_text(view))
+        self.monitors.setText(members(view))
+        self.monitors.setToolTip(members(view))
         self.link.setVisible(len(view.monitors) > 1)  # a mirrored group
-        chip = chip_text(view)
-        self.chip.setText(chip or "")
+        chip = not_rotating(view)  # "manual", "held"
+        self.chip.setText(chip.capitalize() if chip else "")
         self.chip.setVisible(chip is not None)
         current = view.current
         self.file.setText(current.name if current else "Nothing shown yet")
@@ -464,22 +424,6 @@ class PlaylistRow(QWidget):
 # -- the page ---------------------------------------------------------------------
 
 
-class _ReplyTo:
-    """
-    A reply callback for `Client.run` that holds the page weakly: the window
-    may close (and be deleted) before the reply arrives.
-    """
-
-    def __init__(self, page: HomePage, playlist: str | None) -> None:
-        self._page = weakref.ref(page)
-        self._playlist = playlist
-
-    def __call__(self, reply: Reply) -> None:
-        page = self._page()
-        if page is not None and Shiboken.isValid(page):
-            page.replied(self._playlist, reply)
-
-
 class HomePage(QWidget):
     """See the module docstring. `page_wanted`: a page to switch to."""
 
@@ -500,19 +444,14 @@ class HomePage(QWidget):
         self._overview: Overview | None = None
         self._details: dict[PlaylistId, PlaylistDetails] = {}
         self._details_at = 0.0
-        self._status_running = False
-        self._status_again = False
+        self._status_asks = OneAtATime()
         self._closed = False
         self.rows: dict[PlaylistId, PlaylistRow] = {}
 
         self.loader = loader  # the window's, shared with Settings; it closes it
         self.loader.loaded.connect(self._thumbnail_loaded)
 
-        self.banner = QLabel(self)
-        self.banner.setWordWrap(True)
-        self.banner.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
-        )
+        self.banner = theme.Banner(self)
         self.monitors_heading = theme.heading("Monitors", self)
         self.monitors_view = MonitorsView(self)
         self.monitors_view.set_heights(220, 360, 0.3)
@@ -533,7 +472,7 @@ class HomePage(QWidget):
         if client.overview is not None:
             self.show_overview(client.overview)
         else:
-            self._set_banner("Connecting to wallpaper_py…")
+            self.banner.set_message("Connecting to wallpaper_py…")
 
     def _build(self) -> None:
         panel = theme.Panel(self)
@@ -584,7 +523,7 @@ class HomePage(QWidget):
         if self._closed:
             return
         self._overview = overview
-        self._set_banner(f"Error: {overview.error}" if overview.error else None)
+        self.banner.set_message(f"Error: {overview.error}" if overview.error else None)
         self.monitors_heading.setText(f"Monitors ({len(overview.monitors)})")
         self.monitors_view.show_overview(overview)
         self._update_rows(overview)
@@ -597,14 +536,11 @@ class HomePage(QWidget):
 
     @Slot(str)
     def show_error(self, message: str) -> None:
-        self._set_banner(f"Error: {message}")
+        self.banner.set_message(f"Error: {message}")
 
-    def replied(self, playlist: PlaylistId | None, reply: Reply) -> None:
-        """A command's reply (`playlist`: its id; None: the status request)."""
+    def replied(self, playlist: PlaylistId, reply: Reply) -> None:
+        """A playlist command's reply (`playlist`: its id)."""
         if self._closed:
-            return
-        if playlist is None:
-            self._status_replied(reply)
             return
         row = self.rows.get(playlist)
         if row is None:
@@ -669,7 +605,7 @@ class HomePage(QWidget):
         if row is not None:
             row.show_message(None)
         request = target_request(cast(TargetCommand, command), playlist)
-        self._client.run(request, _ReplyTo(self, playlist))
+        self._client.run(request, ReplyTo(self, HomePage.replied, playlist))
 
     # -- thumbnails --------------------------------------------------------------
 
@@ -689,19 +625,16 @@ class HomePage(QWidget):
     # -- the schedule (status) ---------------------------------------------------
 
     def _ask_status(self) -> None:
-        """One status request at a time; ask again if more came meanwhile."""
+        """One status request at a time; asked again if more came meanwhile."""
         if self._overview is None or self._overview.error:
             return
-        if self._status_running:
-            self._status_again = True
-            return
-        self._status_running = True
-        self._client.run(StatusRequest(), _ReplyTo(self, None))
+        if self._status_asks.ask():
+            self._client.run(StatusRequest(), ReplyTo(self, HomePage.status_replied))
 
-    def _status_replied(self, reply: Reply) -> None:
-        self._status_running = False
-        if self._status_again:  # the overview changed meanwhile: ask again
-            self._status_again = False
+    def status_replied(self, reply: Reply) -> None:
+        if self._closed:
+            return
+        if self._status_asks.done():  # the overview changed meanwhile
             self._ask_status()
         if isinstance(reply, StatusResult):
             self._details = {p.id: p for p in reply.playlists}
@@ -736,7 +669,3 @@ class HomePage(QWidget):
     def refresh_schedule(self) -> None:
         """Redraw the time left (the countdown timer calls it every second)."""
         self._refresh_details()
-
-    def _set_banner(self, text: str | None) -> None:
-        self.banner.setText(text or "")
-        self.banner.setVisible(bool(text))

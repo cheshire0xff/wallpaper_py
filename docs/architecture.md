@@ -23,8 +23,9 @@ app/                          PySide6 (Qt only here); two processes
   runtime.py     the daemon: lock, service thread, screens, tray
   worker.py      ServiceWorker (owns the service and the socket, on its own
                  QThread) + ServiceThread (the main thread's proxy)
-  ipc.py         sockets: line framing (LineServer, LineRequest, blocking send),
-                 the daemon's CommandServer (commands, subscriptions)
+  ipc.py         sockets: line framing (LineBuffer, for LineServer, LineRequest,
+                 blocking send), the daemon's CommandServer (commands,
+                 subscriptions)
   processes.py   command lines, starting detached, logging, Ctrl+C (both processes)
   instance.py    single instance: a QLockFile next to the state database
   screens.py     Qt screen signals -> one debounced extra tick
@@ -34,7 +35,8 @@ app/                          PySide6 (Qt only here); two processes
   ui/            the window process (`wallpaper ui`), on demand
     process.py   run_ui: single instance, the window, quits with the daemon / window
     launcher.py  its own socket: "show this page" (UiServer, WindowOpener)
-    client.py    Client: all the pages may use (commands, events); SocketClient
+    client.py    Client: all the pages may use (commands, events); SocketClient;
+                 ReplyTo, OneAtATime (a request asked again only once)
     window.py    MainWindow: the sidebar (NavButton per page, the daemon's status)
                  and the pages; asks before closing with unsaved settings
     home.py      Home: the monitors on a panel, then a row per playlist
@@ -55,7 +57,8 @@ app/                          PySide6 (Qt only here); two processes
                  row), field problems
     settings_look.py  LookEditor: the selected monitor's look rows (mode,
                  background, blur and darkening)
-    settings_draft.py  the edit without widgets (Draft): problems per field,
+    settings_draft.py  the edit without widgets (Draft): problems per field
+                 (its texts read here, the rest core/settings.py's checks),
                  monitor labels, what changed
     arrangement.py  the monitors drawn to scale (arrange(): pure geometry),
                  each with its preview (the renderer's, at a small output)
@@ -65,7 +68,7 @@ app/                          PySide6 (Qt only here); two processes
                  and details, off the main thread
     theme.py     the shared look: tones derived from the palette, spacing,
                  tinted icons, the focus ring, painted widgets (IconButton,
-                 TextButton, Tabs, Divider, Panel, Chip, ImageView)
+                 TextButton, Tabs, Divider, Panel, Banner, Chip, ImageView)
     controls.py  the controls painted in code: FieldCombo (drop-down and its
                  list), Segments, Switch, Button, Slider
     icons/       bundled Lucide SVGs (ISC licence alongside), package data
@@ -74,6 +77,8 @@ commands.py                   runs a request on the service (one `match`, a case
                               overview(). Qt-free
 protocol.py                   the socket protocol as pydantic models: requests, one
                               result per command, errors, events, Overview. Qt-free
+texts.py                      what the tray, Home and the CLI say about a playlist or
+                              a monitor, made from those models. Qt-free
         │
 core/                         pure Python, no Qt, no platform APIs
   model.py       Monitor, MonitorId, Rectangle, ImageMode, Look, error types
@@ -87,7 +92,8 @@ core/                         pure Python, no Qt, no platform APIs
                  tile size, named by path, mtime and size; prune
   paths.py       per-user data, log and cache locations (per OS, never shared)
   settings.py    Settings (pydantic): playlists, monitors (playlist, look), pausing,
-                 list files; their checks and warnings; durations
+                 list files; their checks (every problem with its place, for the
+                 form and the daemon alike) and warnings; durations
   library.py     recursive image scan (natural order, cached), path keys
   order.py       next image: sorted walk, or the persisted shuffle deck
   store.py       SQLite: the settings, history, deck, per-playlist and
@@ -118,7 +124,8 @@ Rules:
 - **Platform modules are guarded** with `assert sys.platform == "win32"`, so
   mypy skips them on other platforms and importing them elsewhere fails fast.
 - Qt is used only in `app/` (and by the CLI's socket client, `app/ipc.py`).
-  `protocol.py`, `commands.py` and `core` stay Qt-free and synchronous.
+  `protocol.py`, `commands.py`, `texts.py` and `core` stay Qt-free and
+  synchronous.
 - `app/__init__.py` loads `protocol.py` (all of pydantic) before any Qt
   module: PySide6's import hook breaks pydantic's lazy imports if pydantic
   was only partly loaded before Qt.
@@ -148,7 +155,9 @@ actions and ticks all run there through `ServiceWorker.execute`, one at a
 time, so the core needs no locks; nothing there may block on a client or
 spin a nested event loop, which would hold up the ticks and every other
 client. The socket is made once and closed at stop, so it keeps answering
-(with the error) while `PlaylistService` is stopped.
+(with the error) while `PlaylistService` is stopped. As everything there
+waits its turn, a command or tick over 100 ms is logged with its time:
+the daemon's log shows what a click could have waited for.
 
 **The tick is the source of truth.** Every 5 s it re-reads the real
 state; Qt's screen signals only trigger one extra tick (screens.py), and
@@ -217,6 +226,13 @@ it, with no new schema; renaming or removing one still needs one (unknown
 fields are refused). What changes piece by piece (each playlist's state,
 history, the shuffle decks, the applied images) stays in tables
 (store.py).
+
+**The settings are checked once**, in core/settings.py: each check finds
+every problem with its place (playlist, field). The Settings page shows
+them next to their fields before it sends anything, and the daemon raises
+the first when it saves: one wording, and the page can't let through what
+the daemon refuses. The page itself only reads its texts (durations, a
+folder chosen, a list file that is a folder).
 
 ## Playlist service
 

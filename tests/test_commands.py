@@ -548,7 +548,7 @@ def test_settings_and_save_settings(service: PlaylistService) -> None:
     ).reply
     assert isinstance(invalid, ErrorReply)
     assert invalid.error.kind == "invalid_settings"
-    assert "idle pause" in invalid.error.message
+    assert invalid.error.message.startswith("Idle pause: Must be more than 0")
 
 
 def test_save_settings_request_is_strict() -> None:

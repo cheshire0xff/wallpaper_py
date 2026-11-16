@@ -51,7 +51,6 @@ from ..core.autostart import Autostart
 from ..protocol import (
     ErrorReply,
     MarkRequest,
-    MonitorView,
     Overview,
     PlaylistView,
     Reply,
@@ -59,6 +58,7 @@ from ..protocol import (
     TargetCommand,
     target_request,
 )
+from ..texts import members, playlist_label
 from .icon import IconState, app_icon
 from .ui.launcher import PageName
 from .worker import ServiceThread
@@ -156,8 +156,7 @@ def _add_playlist(menu: QMenu, playlist: PlaylistView) -> None:
     def run(text: str, command: TargetCommand) -> QAction:
         return _add(menu, text, target_request(command, playlist.id))
 
-    monitors = " + ".join(_monitor_label(m) for m in playlist.monitors)
-    header = menu.addAction(_label(f"{_playlist_label(playlist)} · {monitors}"))
+    header = menu.addAction(_label(f"{playlist_label(playlist)} · {members(playlist)}"))
     header.setEnabled(False)
     font = header.font()
     font.setBold(True)
@@ -181,19 +180,6 @@ def _add_playlist(menu: QMenu, playlist: PlaylistView) -> None:
         hold = run("Hold", "resume" if playlist.held else "hold")
         hold.setCheckable(True)
         hold.setChecked(playlist.held)
-
-
-def _playlist_label(playlist: PlaylistView) -> str:
-    """The name, and whether it rotates by itself."""
-    if playlist.manual:
-        return f"{playlist.name} (manual)"
-    return f"{playlist.name} (held)" if playlist.held else playlist.name
-
-
-def _monitor_label(monitor: MonitorView) -> str:
-    if monitor.attached is None:
-        return f"{monitor.name} (not found)"
-    return monitor.name if monitor.attached else f"{monitor.name} (off)"
 
 
 def _elide(text: str, limit: int) -> str:
@@ -220,7 +206,7 @@ def tooltip(overview: Overview | None) -> str:
     else:
         for playlist in overview.playlists:
             name = playlist.current.name if playlist.current else "-"
-            lines.append(f"{_playlist_label(playlist)}: {name}")
+            lines.append(f"{playlist_label(playlist)}: {name}")
         if overview.paused:
             lines.append(f"Paused: {overview.paused}")
     # Windows cuts tray tooltips at 127 characters.

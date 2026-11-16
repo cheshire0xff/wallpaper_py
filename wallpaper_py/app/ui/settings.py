@@ -42,7 +42,6 @@ from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtGui import QDesktopServices, QFont
 from PySide6.QtWidgets import (
     QHBoxLayout,
-    QLabel,
     QLineEdit,
     QStackedWidget,
     QVBoxLayout,
@@ -51,7 +50,7 @@ from PySide6.QtWidgets import (
 
 from ...core import paths
 from ...core.model import Look, MonitorId
-from ...core.settings import MonitorSettings, Settings, SettingsError, check_settings
+from ...core.settings import FAVOURITES, IDLE, TO_REMOVE, MonitorSettings, Settings
 from ...protocol import (
     DesktopMonitor,
     ErrorReply,
@@ -70,9 +69,6 @@ from .client import Client, ReplyTo
 from .controls import Button, Switch
 from .settings_draft import (
     DEFAULT_IDLE,
-    FAVOURITES,
-    IDLE,
-    TO_REMOVE,
     Draft,
     Field,
     MonitorEntry,
@@ -184,10 +180,8 @@ class SettingsPage(QWidget):
 
     # -- building ----------------------------------------------------------------
 
-    def _build_banner(self) -> tuple[QLabel, theme.TextButton]:
-        banner = QLabel(self)
-        banner.setWordWrap(True)
-        banner.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+    def _build_banner(self) -> tuple[theme.Banner, theme.TextButton]:
+        banner = theme.Banner(self)
         button = theme.TextButton("Load the settings again", self)
         button.clicked.connect(self.load)
         return banner, button
@@ -588,10 +582,6 @@ class SettingsPage(QWidget):
             return "Nothing changed"
         if self.problems:
             return problem_summary(self.problems, edited)
-        try:
-            check_settings(edited.settings())
-        except SettingsError as err:
-            return f"Can't save: {err}"
         return None
 
     def _show_buttons(self, dirty: bool) -> None:
@@ -619,8 +609,7 @@ class SettingsPage(QWidget):
         self, text: str | None, kind: BannerKind | None = None, *, button: bool = False
     ) -> None:
         self._banner_kind = kind if text else None
-        self.banner.setText(text or "")
-        self.banner.setVisible(bool(text))
+        self.banner.set_message(text)
         self.banner_button.setVisible(bool(text) and button)
 
     # -- the selected monitor ----------------------------------------------------

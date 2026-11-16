@@ -8,10 +8,12 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 
 import pytest
+from PySide6.QtCore import QObject
+from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from pytestqt.qtbot import QtBot
 
 from wallpaper_py.app import ipc
-from wallpaper_py.app.ui.client import SocketClient
+from wallpaper_py.app.ui.client import OneAtATime, ReplyTo, SocketClient
 from wallpaper_py.app.worker import ServiceThread
 from wallpaper_py.core.service import Change
 from wallpaper_py.protocol import (
@@ -20,6 +22,7 @@ from wallpaper_py.protocol import (
     MarkRequest,
     NextResult,
     Overview,
+    OverviewChangedEvent,
     Reply,
     Request,
     StatusRequest,
@@ -175,3 +178,66 @@ def test_commands_without_a_daemon_are_unreachable(
     client = make_client(clients, name)
     reply = run(qtbot, client, StatusRequest())
     assert reply == ErrorReply.make("unreachable", "wallpaper_py is not running")
+
+
+def test_a_line_too_long_left_at_the_end_fails_without_ending(
+    qtbot: QtBot,
+    clients: list[SocketClient],
+    name: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The window shows the error rather than quitting as if the daemon had."""
+    monkeypatch.setattr(ipc, "MAX_REPLY", 64 * 1024)
+    server = QLocalServer()
+    assert server.listen(name)
+    client = make_client(clients, name)
+    ended: list[bool] = []
+    client.ended.connect(lambda: ended.append(True))
+    client.start()
+    qtbot.waitUntil(server.hasPendingConnections)
+    daemon = server.nextPendingConnection()
+    assert isinstance(daemon, QLocalSocket)
+    with qtbot.waitSignal(client.overview_changed):
+        daemon.write(ipc.encode(OverviewChangedEvent(overview=Overview())))
+    # Read only once the daemon is gone: the line is left for the end.
+    socket = client._socket  # pylint: disable=protected-access
+    assert socket is not None
+    socket.readyRead.disconnect(client._ready_read)  # pylint: disable=protected-access
+    with qtbot.waitSignal(client.failed) as failed:
+        daemon.write(b"x" * (ipc.MAX_REPLY + 1))  # no newline: never complete
+        daemon.flush()
+        daemon.disconnectFromServer()
+    assert "Event too long" in failed.args[0]
+    qtbot.wait(100)
+    assert not ended
+    server.close()
+
+
+class Page(QObject):
+    def __init__(self) -> None:
+        super().__init__()
+        self.got: list[tuple[str, Reply]] = []
+
+    def replied(self, playlist: str, reply: Reply) -> None:
+        self.got.append((playlist, reply))
+
+
+def test_a_reply_reaches_its_page_with_the_requests_data() -> None:
+    reply = ErrorReply.make("failed", "no")
+    page = Page()
+    callback = ReplyTo(page, Page.replied, "walls-id")
+    callback(reply)
+    assert page.got == [("walls-id", reply)]
+    page.deleteLater()  # a closed window: the reply goes nowhere
+    del page
+    callback(reply)
+
+
+def test_one_request_at_a_time() -> None:
+    asks = OneAtATime()
+    assert asks.ask()  # sent
+    assert not asks.ask() and not asks.ask()  # while it runs: once more after
+    assert asks.done()  # asked again now
+    assert asks.ask()
+    assert not asks.done()  # nothing came meanwhile
+    assert asks.ask()

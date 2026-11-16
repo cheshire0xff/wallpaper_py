@@ -711,13 +711,13 @@ def test_save_settings_refuses_a_stale_or_invalid_edit(env: Env) -> None:
     with pytest.raises(StaleSettingsError):
         env.service.save_settings(edit, revision)  # made on the old revision
     twin = env.fantasy.model_copy(update={"name": "ANIME"})
-    with pytest.raises(SettingsError, match="Two playlists are named"):
+    with pytest.raises(SettingsError, match="Another playlist is called anime"):
         env.service.save_settings(
             env.settings.model_copy(update={"playlists": (renamed, twin)}),
             revision + 1,
         )
     gone = env.fantasy.model_copy(update={"directory": env.tmp / "nope"})
-    with pytest.raises(SettingsError, match="doesn't exist"):
+    with pytest.raises(SettingsError, match="No such folder"):
         env.service.save_settings(
             env.settings.model_copy(update={"playlists": (renamed, gone)}),
             revision + 1,
