@@ -58,7 +58,7 @@ def decode_text(data: bytes, path: Path) -> str:
     """
     # A UTF-8 BOM decodes without error, to an invisible U+FEFF before the
     # first line: a first path that never matches. Refused with a message
-    # that says what to do, not stripped, so the app reads what every other
+    # that says what to do, not stripped, so the daemon reads what every other
     # tool (scripts, on both systems) reads. The UTF-16 BOMs would fail to
     # decode anyway; checked here for the clearer message (Notepad offers
     # "UTF-16 LE").
@@ -162,7 +162,7 @@ class MarkFile:
                 has it open, or not allowed); it is left as it was.
         """
         # Written beside it, then swapped in: os.replace is all or nothing,
-        # so a reader (the app, an editor, a script) sees the old list or
+        # so a reader (the daemon, an editor, a script) sees the old list or
         # the new one, never half a file, and a crash midway loses nothing.
         # On Windows the swap fails while another program has the file
         # open without allowing it to be replaced (Excel, a script reading

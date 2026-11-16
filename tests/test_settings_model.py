@@ -13,8 +13,10 @@ from wallpaper_py.core.settings import (
     PlaylistSettings,
     Settings,
     SettingsError,
+    Problem,
     check_folders,
     check_settings,
+    settings_problems,
     format_duration,
     parse_duration,
 )
@@ -139,27 +141,57 @@ def test_read_strictly_from_json() -> None:
 @pytest.mark.parametrize(
     ("change", "message"),
     [
-        ({"name": " "}, "needs a name"),
-        ({"name": "walls "}, "start or end with spaces"),
-        ({"id": ""}, "needs an id"),
-        ({"directory": Path("relative")}, "must be a full path"),
-        ({"interval": 9.0}, "at least 10s, or manual"),
+        ({"name": " "}, "a playlist, name: Give it a name"),
+        ({"name": "walls "}, "walls, name: Can't start or end with spaces"),
+        ({"id": ""}, "walls, id: Needs an id no other playlist has"),
+        ({"directory": Path("relative")}, "walls, folder: Use the folder's full path"),
+        ({"interval": 9.0}, "walls, interval: At least 10s"),
     ],
 )
 def test_a_playlist_value_that_cant_be_used(
     tmp_path: Path, change: dict[str, Any], message: str
 ) -> None:
-    with pytest.raises(SettingsError, match=message):
+    with pytest.raises(SettingsError) as raised:
         check_settings(settings(playlist(tmp_path, **change)))
+    assert str(raised.value) == message
 
 
 def test_names_and_ids_are_unique(tmp_path: Path) -> None:
     walls = playlist(tmp_path)
-    with pytest.raises(SettingsError, match="Two playlists are named 'WALLS'"):
+    with pytest.raises(
+        SettingsError, match="WALLS, name: Another playlist is called walls"
+    ):
         check_settings(settings(walls, playlist(tmp_path, id="2", name="WALLS")))
-    with pytest.raises(SettingsError, match="needs an id no other playlist has"):
+    with pytest.raises(
+        SettingsError, match="other, id: Needs an id no other playlist has"
+    ):
         check_settings(settings(walls, playlist(tmp_path, name="other")))
     check_settings(settings(walls, playlist(tmp_path, id="2", name="other")))
+
+
+def test_every_problem_is_found_with_its_place(tmp_path: Path) -> None:
+    """The Settings page shows each next to its field; the daemon raises the first."""
+    walls = playlist(tmp_path, interval=5.0)
+    twin = playlist(tmp_path, id="2", name="Walls", directory=Path("relative"))
+    found = settings_problems(
+        settings(
+            walls,
+            twin,
+            monitors=(MonitorSettings(id=MonitorId("m"), playlist="9"),),
+            pause_when_idle=0.0,
+        )
+    )
+    assert found == [
+        Problem("1", "interval", "At least 10s"),
+        Problem("2", "name", "Another playlist is called walls"),
+        Problem("2", "directory", "Use the folder's full path"),
+        Problem(
+            None, "monitors", "Monitor m is on playlist id '9', which doesn't exist"
+        ),
+        Problem(
+            None, "pause_when_idle", "Must be more than 0; untick it to never pause"
+        ),
+    ]
 
 
 def test_monitors_are_listed_once_on_a_playlist_that_exists(tmp_path: Path) -> None:
@@ -205,9 +237,9 @@ def test_the_ends_of_the_looks_ranges_can_be_used() -> None:
 @pytest.mark.parametrize(
     ("values", "message"),
     [
-        ({"pause_when_idle": 0.0}, "more than 0, or never"),
-        ({"favourites_file": Path("f.txt")}, "favourites list must be a full path"),
-        ({"to_remove_file": Path("r.txt")}, "to-remove list must be a full path"),
+        ({"pause_when_idle": 0.0}, "Idle pause: Must be more than 0"),
+        ({"favourites_file": Path("f.txt")}, "Favourites file: Use the file's full"),
+        ({"to_remove_file": Path("r.txt")}, "To-remove file: Use the file's full"),
     ],
 )
 def test_a_general_value_that_cant_be_used(
@@ -223,9 +255,9 @@ def test_only_a_new_or_changed_folder_must_exist(tmp_path: Path) -> None:
     check_folders(old, old)  # it was there before: it may come back
     renamed = settings(playlist(tmp_path, directory=gone, name="other"))
     check_folders(renamed, old)
-    with pytest.raises(SettingsError, match="doesn't exist"):
+    with pytest.raises(SettingsError, match="walls, folder: No such folder"):
         check_folders(old, Settings())  # new
-    with pytest.raises(SettingsError, match="doesn't exist"):
+    with pytest.raises(SettingsError, match="No such folder"):
         check_folders(settings(playlist(tmp_path, directory=gone / "x")), old)
     check_folders(settings(playlist(tmp_path)), old)  # changed, and there
 

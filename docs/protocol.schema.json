@@ -27,6 +27,10 @@
     },
     "Change": {
       "properties": {
+        "playlist_id": {
+          "title": "Playlist Id",
+          "type": "string"
+        },
         "playlist": {
           "title": "Playlist",
           "type": "string"
@@ -64,6 +68,7 @@
         }
       },
       "required": [
+        "playlist_id",
         "playlist",
         "image",
         "reason",
@@ -152,8 +157,9 @@
               "resume": "#/$defs/Request",
               "save_settings": "#/$defs/SaveSettingsRequest",
               "settings": "#/$defs/SettingsRequest",
+              "show_window": "#/$defs/ShowWindowRequest",
               "stats": "#/$defs/StatsRequest",
-              "status": "#/$defs/Request",
+              "status": "#/$defs/StatusRequest",
               "subscribe": "#/$defs/Subscribe",
               "unfav": "#/$defs/MarkRequest",
               "unremove": "#/$defs/MarkRequest",
@@ -162,6 +168,9 @@
             "propertyName": "command"
           },
           "oneOf": [
+            {
+              "$ref": "#/$defs/StatusRequest"
+            },
             {
               "$ref": "#/$defs/Request"
             },
@@ -185,6 +194,9 @@
             },
             {
               "$ref": "#/$defs/SaveSettingsRequest"
+            },
+            {
+              "$ref": "#/$defs/ShowWindowRequest"
             },
             {
               "$ref": "#/$defs/Subscribe"
@@ -253,6 +265,9 @@
         },
         {
           "$ref": "#/$defs/MarksChangedEvent"
+        },
+        {
+          "$ref": "#/$defs/ShowPageEvent"
         }
       ],
       "discriminator": {
@@ -260,7 +275,8 @@
         "mapping": {
           "changed": "#/$defs/ChangedEvent",
           "overview_changed": "#/$defs/OverviewChangedEvent",
-          "marks_changed": "#/$defs/MarksChangedEvent"
+          "marks_changed": "#/$defs/MarksChangedEvent",
+          "show_page": "#/$defs/ShowPageEvent"
         }
       }
     },
@@ -318,8 +334,10 @@
     "HoldResult": {
       "properties": {
         "command": {
-          "const": "hold",
-          "default": "hold",
+          "enum": [
+            "hold",
+            "resume"
+          ],
           "title": "Command",
           "type": "string"
         },
@@ -337,6 +355,7 @@
         }
       },
       "required": [
+        "command",
         "playlist",
         "held",
         "changed"
@@ -1160,9 +1179,6 @@
               "$ref": "#/$defs/HoldResult"
             },
             {
-              "$ref": "#/$defs/ResumeResult"
-            },
-            {
               "$ref": "#/$defs/StatsResult"
             },
             {
@@ -1173,6 +1189,9 @@
             },
             {
               "$ref": "#/$defs/SaveSettingsResult"
+            },
+            {
+              "$ref": "#/$defs/ShowWindowResult"
             }
           ],
           "discriminator": {
@@ -1188,11 +1207,12 @@
               "pick": "#/$defs/PickResult",
               "upcoming": "#/$defs/UpcomingResult",
               "hold": "#/$defs/HoldResult",
-              "resume": "#/$defs/ResumeResult",
+              "resume": "#/$defs/HoldResult",
               "stats": "#/$defs/StatsResult",
               "reset_cycle": "#/$defs/ResetCycleResult",
               "settings": "#/$defs/SettingsResult",
-              "save_settings": "#/$defs/SaveSettingsResult"
+              "save_settings": "#/$defs/SaveSettingsResult",
+              "show_window": "#/$defs/ShowWindowResult"
             }
           }
         },
@@ -1252,35 +1272,6 @@
         "unseen"
       ],
       "title": "ResetCycleResult",
-      "type": "object"
-    },
-    "ResumeResult": {
-      "properties": {
-        "command": {
-          "const": "resume",
-          "default": "resume",
-          "title": "Command",
-          "type": "string"
-        },
-        "playlist": {
-          "title": "Playlist",
-          "type": "string"
-        },
-        "held": {
-          "title": "Held",
-          "type": "boolean"
-        },
-        "changed": {
-          "title": "Changed",
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "playlist",
-        "held",
-        "changed"
-      ],
-      "title": "ResumeResult",
       "type": "object"
     },
     "SaveSettingsRequest": {
@@ -1440,6 +1431,77 @@
       "title": "SettingsResult",
       "type": "object"
     },
+    "ShowPageEvent": {
+      "description": "Only to the window: come to the front on `page`.",
+      "properties": {
+        "event": {
+          "const": "show_page",
+          "default": "show_page",
+          "title": "Event",
+          "type": "string"
+        },
+        "page": {
+          "enum": [
+            "home",
+            "library",
+            "settings"
+          ],
+          "title": "Page",
+          "type": "string"
+        }
+      },
+      "required": [
+        "page"
+      ],
+      "title": "ShowPageEvent",
+      "type": "object"
+    },
+    "ShowWindowRequest": {
+      "additionalProperties": false,
+      "description": "Bring the window to the front on `page`, if a window process has it\n(`Subscribe.window`). Starting one if not is the asker's job.",
+      "properties": {
+        "command": {
+          "const": "show_window",
+          "default": "show_window",
+          "title": "Command",
+          "type": "string"
+        },
+        "page": {
+          "enum": [
+            "home",
+            "library",
+            "settings"
+          ],
+          "title": "Page",
+          "type": "string"
+        }
+      },
+      "required": [
+        "page"
+      ],
+      "title": "ShowWindowRequest",
+      "type": "object"
+    },
+    "ShowWindowResult": {
+      "description": "`show_window`'s reply, and a window subscription's refusal: True if\nthe window process that has the window was asked to show the page.",
+      "properties": {
+        "command": {
+          "const": "show_window",
+          "default": "show_window",
+          "title": "Command",
+          "type": "string"
+        },
+        "shown": {
+          "title": "Shown",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "shown"
+      ],
+      "title": "ShowWindowResult",
+      "type": "object"
+    },
     "StatsRequest": {
       "additionalProperties": false,
       "description": "What playlists pick up from their folders, and the lists' counts.",
@@ -1502,6 +1564,20 @@
       "title": "StatsResult",
       "type": "object"
     },
+    "StatusRequest": {
+      "additionalProperties": false,
+      "description": "The playlists with their schedule.",
+      "properties": {
+        "command": {
+          "const": "status",
+          "default": "status",
+          "title": "Command",
+          "type": "string"
+        }
+      },
+      "title": "StatusRequest",
+      "type": "object"
+    },
     "StatusResult": {
       "properties": {
         "command": {
@@ -1546,13 +1622,30 @@
     },
     "Subscribe": {
       "additionalProperties": false,
-      "description": "Keep the connection open and receive one `Event` per line.",
+      "description": "Keep the connection open and receive one `Event` per line.\n\nWith `window`: \"I am the window\", shown on that page. Only the first\nsuch subscriber is; a later one has its page shown there instead\n(`show_page`), gets `ShowWindowResult(shown=True)` in place of the\nevents, and is closed.",
       "properties": {
         "command": {
           "const": "subscribe",
           "default": "subscribe",
           "title": "Command",
           "type": "string"
+        },
+        "window": {
+          "anyOf": [
+            {
+              "enum": [
+                "home",
+                "library",
+                "settings"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Window"
         }
       },
       "title": "Subscribe",

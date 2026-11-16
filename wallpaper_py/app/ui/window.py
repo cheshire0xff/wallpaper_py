@@ -4,10 +4,11 @@ status at its bottom) and the selected page (docs/design/README.md,
 "The look").
 
 `open_page` shows the window on a page and brings it to the front: the
-UI process calls it at start and for each "show" request on its socket
-(`wallpaper ui <page>`, the tray's entries). Pages stay alive while the
-window is open, so switching pages keeps unsaved settings; closing with
-unsaved settings asks Save / Discard / Cancel on the Settings page.
+window process calls it at start and for each `show_page` from the daemon
+(`wallpaper ui <page>`, the tray's entries, while the window is open).
+Pages stay alive while the window is open, so switching pages keeps
+unsaved settings; closing with unsaved settings asks Save / Discard /
+Cancel on the Settings page.
 
 The tones come from the application's palette (theme.derive_tones), set
 on the window as palette roles, and are derived again when the palette
@@ -35,11 +36,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...protocol import Overview
+from ...protocol import Overview, PageName
+from ..client import Client
 from . import theme
-from .client import Client
 from .home import HomePage
-from .launcher import PageName
 from .library import LibraryPage
 from .settings import SettingsPage
 from .thumbnails import Sizes, ThumbnailLoader
@@ -259,7 +259,7 @@ class MainWindow(QWidget):
         self.home.page_wanted.connect(self.show_page)
         self.settings.modified.connect(self._modified)
         client.overview_changed.connect(self._show_status)
-        client.failed.connect(self._show_failure)
+        client.failed.connect(self.show_failure)
         self._show_status(client.overview)
 
     # -- pages -----------------------------------------------------------------
@@ -292,7 +292,8 @@ class MainWindow(QWidget):
         self.sidebar.set_status(text, kind, detail or "")
 
     @Slot(str)
-    def _show_failure(self, message: str) -> None:
+    def show_failure(self, message: str) -> None:
+        """Nothing more comes from the daemon (`Client.failed`)."""
         self.sidebar.set_status("Not connected", "error", message)
 
     @Slot(bool)
@@ -337,7 +338,7 @@ class MainWindow(QWidget):
     def shutdown(self) -> None:
         """
         Stop the pages' work and the image threads (waits for them): when
-        the window closes, or the process quits with it open (the app quit).
+        the window closes, or the process quits with it open (the daemon quit).
         """
         if self._shut_down:
             return

@@ -5,9 +5,9 @@ import pytest
 from PIL import Image
 
 from wallpaper_py import cli
-from wallpaper_py.app.instance import InstanceLock
-from wallpaper_py.app.ui.launcher import PAGE_NAMES
+from wallpaper_py.commands import error_reply, execute, open_service
 from wallpaper_py.core import paths
+from wallpaper_py.core.model import AppError
 from wallpaper_py.core.backend import Backend
 from wallpaper_py.core.service import Change, ListStats, PlaylistStats
 from wallpaper_py.core.settings import Order, Settings
@@ -16,8 +16,9 @@ from wallpaper_py.protocol import (
     ErrorReply,
     MarkResult,
     PlaylistDetails,
+    Reply,
     RemoveResult,
-    Request,
+    StatusRequest,
     ResetCycleRequest,
     ResetCycleResult,
     StatsRequest,
@@ -132,11 +133,21 @@ class TestPlaylistCommands:
         return write_settings(tmp_path)
 
     def run(self, backend: FakeBackend, *argv: str) -> int:
-        """No app is running: playlist commands run here, as in real use."""
+        """Playlist commands go to a client running them against the fakes."""
+
+        def daemon_client(request: CommandRequest) -> Reply:
+            """What the daemon does for a command (but no tick first)."""
+            try:
+                with open_service(backend, FakePresence()) as service:
+                    return execute(service, request).reply
+            except AppError as err:
+                return error_reply(err)
+
         return cli.main(
             list(argv),
             backend_factory=lambda: backend,
             presence_factory=FakePresence,
+            daemon_client=daemon_client,
         )
 
     @pytest.mark.usefixtures("settings")
@@ -193,7 +204,7 @@ class TestPlaylistCommands:
         assert capsys.readouterr().out.splitlines() == [
             f"Added {image} to {tmp_path / 'data' / 'favourites.txt'}",
             f"Listed {image} in {to_remove} (not deleted)",
-            "A playlist showing it moves on once the app runs",  # run here: no tick
+            "A playlist showing it moves on within a few seconds",
             str(tmp_path / "walls" / "a.jpg"),  # not b.jpg: it is listed
             str(tmp_path / "walls" / "c.jpg"),
             f"Removed {image} from {to_remove}",
@@ -212,7 +223,7 @@ class TestPlaylistCommands:
         assert "walls  (sorted, every 10m)" in out
         assert "monitors:  Main (attached, fill)" in out
         assert "upcoming:  b.jpg, c.jpg, a.jpg" in out
-        assert out.rstrip().endswith(cli.NOT_RUNNING)  # run here: no app
+        assert out.rstrip().endswith("Rotation active")
 
     @pytest.mark.usefixtures("settings")
     def test_pick_hold_resume(
@@ -257,8 +268,7 @@ class TestPlaylistCommands:
     ) -> None:
         """A new state database: nothing set up in Settings yet."""
         assert not paths.state_db().exists()
-        argv = ["next"]
-        assert cli.main(argv, lambda: backend, FakePresence) == 1
+        assert self.run(backend, "next") == 1
         assert "`wallpaper ui settings`" in capsys.readouterr().err
 
     @pytest.mark.usefixtures("settings")
@@ -284,7 +294,7 @@ class TestPlaylistCommands:
             f"to remove: {tmp_path / 'data' / 'to-remove.txt'}: 0 listed, "
             "0 available",
         ]
-        # Sorted: nothing to ask, and the app refuses.
+        # Sorted: nothing to ask, and the daemon refuses.
         assert self.run(backend, "reset-cycle", "walls") == 1
         assert "walls is sorted" in capsys.readouterr().err
 
@@ -297,39 +307,16 @@ class TestPlaylistCommands:
         assert "attached" in capsys.readouterr().err
 
 
-def test_playlist_command_gives_up_while_the_lock_stays_held(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+def test_playlist_command_without_a_daemon_says_so(
+    caplog: pytest.LogCaptureFixture, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """No app answers, yet the lock is held (a stuck app or command)."""
-    monkeypatch.setattr(cli, "WAIT_TIMEOUT_S", 0.5)
-    lock = InstanceLock(paths.instance_lock())
-    assert lock.acquire()
-    try:
-        assert cli.main(["next"]) == 1
-    finally:
-        lock.release()
-    assert capsys.readouterr().err == (
-        "error: wallpaper_py is starting or busy and did not answer; try again "
-        f"(see {paths.log_file()})\n"
-    )
-
-
-def test_verbose_tells_how_the_command_ran(
-    backend: FakeBackend, caplog: pytest.LogCaptureFixture
-) -> None:
+    """Nothing answers on the socket: the CLI refuses, and starts nothing."""
     with caplog.at_level(logging.INFO, logger="wallpaper_py"):
-        # No playlists yet: the command fails, but only after it ran here.
-        assert cli.main(["--verbose", "next"], backend_factory=lambda: backend) == 1
+        assert cli.main(["--verbose", "next"]) == 1
+    assert capsys.readouterr().err == f"error: {cli.NOT_RUNNING}\n"
     messages = [record.getMessage() for record in caplog.records]
-    assert messages[0].startswith("Asking the running app (socket wallpaper_py-")
-    assert messages[1] == "No app is running: running the command here"
-
-
-def test_answers_run_here_say_so() -> None:
-    status = StatusResult(playlists=(), paused=None)
-    assert cli.format_answer(cli.Answer(status)).out == "Rotation active"
-    here = cli.format_answer(cli.Answer(status, here=True))
-    assert here.out == cli.NOT_RUNNING
+    assert messages[0].startswith("Asking the running daemon (socket wallpaper_py-")
+    assert len(messages) == 1
 
 
 def test_status_of_a_manual_playlist() -> None:
@@ -387,7 +374,7 @@ def test_reply_texts() -> None:
         f"Listed {image} in {file} (not deleted)",
         "w: changes once a monitor is attached",
     ]
-    missed = Change("w", image, "next", ("A",), ("B",))
+    missed = Change("w-id", "w", image, "next", ("A",), ("B",))
     assert removed("w", missed)[1] == "w: a.jpg on A (later on B)"
     assert removed(None, None, changed=False) == [
         "a.jpg is already listed for removal",
@@ -408,24 +395,23 @@ def test_reply_texts() -> None:
     )
 
 
-def test_ui_pages_match_the_launcher() -> None:
-    assert cli.PAGES == PAGE_NAMES
+def test_ui_opens_home_by_default() -> None:
     args = cli.build_parser().parse_args(["ui"])
     assert args.page == "home"
     assert cli.build_parser().parse_args(["ui", "library"]).page == "library"
 
 
-def test_commands_go_to_the_app_client(capsys: pytest.CaptureFixture[str]) -> None:
+def test_commands_go_to_the_daemon_client(capsys: pytest.CaptureFixture[str]) -> None:
     sent: list[CommandRequest] = []
 
-    def app_client(request: CommandRequest, _: cli.RunHere) -> cli.Answer:
+    def daemon_client(request: CommandRequest) -> Reply:
         sent.append(request)
         status = StatusResult(playlists=(), paused=None, warnings=("w",))
-        return cli.Answer(status)
+        return status
 
-    assert cli.main(["status"], app_client=app_client) == 0
+    assert cli.main(["status"], daemon_client=daemon_client) == 0
     assert capsys.readouterr() == ("Rotation active\n", "Warning: w\n")
-    assert sent == [Request(command="status")]
+    assert sent == [StatusRequest()]
 
 
 def test_ui_opens_the_page(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -445,13 +431,13 @@ def test_ui_opens_the_page(monkeypatch: pytest.MonkeyPatch) -> None:
     assert options == [process.UiOptions("settings")]
 
 
-class FakeApp:
-    """An app that knows one shuffle playlist, "konachan"; records requests."""
+class FakeDaemon:
+    """A daemon that knows one shuffle playlist, "konachan"; records requests."""
 
     def __init__(self) -> None:
         self.sent: list[CommandRequest] = []
 
-    def __call__(self, request: CommandRequest, _: cli.RunHere) -> cli.Answer:
+    def __call__(self, request: CommandRequest) -> Reply:
         self.sent.append(request)
         if isinstance(request, StatsRequest):
             stats = PlaylistStats(
@@ -467,16 +453,14 @@ class FakeApp:
                 to_remove_here=48,
             )
             lists = ListStats(file=Path("/data/list.txt"), listed=3, available=2)
-            return cli.Answer(
-                StatsResult(playlists=(stats,), favourites=lists, to_remove=lists)
-            )
-        return cli.Answer(ResetCycleResult(playlist="konachan", unseen=20_383))
+            return StatsResult(playlists=(stats,), favourites=lists, to_remove=lists)
+        return ResetCycleResult(playlist="konachan", unseen=20_383)
 
 
 def test_stats_text(capsys: pytest.CaptureFixture[str]) -> None:
-    app = FakeApp()
-    assert cli.main(["stats", "konachan"], app_client=app) == 0
-    assert app.sent == [StatsRequest(target="konachan")]
+    daemon = FakeDaemon()
+    assert cli.main(["stats", "konachan"], daemon_client=daemon) == 0
+    assert daemon.sent == [StatsRequest(target="konachan")]
     out = capsys.readouterr().out.splitlines()
     assert out[:6] == [
         "konachan  (shuffle; this cycle: 6 % seen)",
@@ -515,9 +499,9 @@ def test_reset_cycle_asks_first(  # pylint: disable=too-many-arguments,too-many-
         return answer
 
     monkeypatch.setattr("builtins.input", fake_input)
-    app = FakeApp()
-    assert cli.main(["reset-cycle", *argv], app_client=app) == code
-    assert [type(r) for r in app.sent] == sent
+    daemon = FakeDaemon()
+    assert cli.main(["reset-cycle", *argv], daemon_client=daemon) == code
+    assert [type(r) for r in daemon.sent] == sent
     out = capsys.readouterr().out
     if "--yes" in argv:
         assert not asked

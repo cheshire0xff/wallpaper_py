@@ -74,7 +74,7 @@ def get_presence() -> Presence:
 
 def allow_foreground() -> None:
     """
-    Let another process (the UI process) bring its window to the front;
+    Let another process (the window process) bring its window to the front;
     call it right after the user's click. Only Windows needs this.
     """
     if sys.platform == "win32":

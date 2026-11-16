@@ -3,7 +3,7 @@ The Settings page, through a fake Client (never a real app): it loads the
 saved settings with `settings`, edits them monitor-first and saves them
 with `save_settings`; Save / Revert / close-with-changes, problems next to
 their fields, one playlist open at a time, the About tab. At the end, the
-same with the real app's service and socket.
+same with the real daemon's service and socket.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from pytestqt.qtbot import QtBot
 from wallpaper_py.app import ipc
 from wallpaper_py.app.ui import theme
 from wallpaper_py.app.ui.about import existing_folder, version_text
-from wallpaper_py.app.ui.client import ReplyCallback, SocketClient
+from wallpaper_py.app.client import ReplyCallback, SocketClient
 from wallpaper_py.app.ui.controls import Segments
 from wallpaper_py.app.ui.settings import SettingsPage
 from wallpaper_py.app.ui.settings_dialogs import Choice, Dialogs
@@ -45,7 +45,7 @@ from wallpaper_py.protocol import (
     Overview,
     PlaylistView,
     Reply,
-    Request,
+    StatusRequest,
     SaveSettingsRequest,
     SaveSettingsResult,
     SettingsRequest,
@@ -55,7 +55,7 @@ from wallpaper_py.protocol import (
 
 from .fake_client import FakeClient
 from .fakes import FakeBackend, make_monitor, write_settings
-from .hosts import make_host
+from .hosts import make_service_thread
 
 AW = DesktopMonitor(
     id=MonitorId("aw-id"),
@@ -252,7 +252,7 @@ def test_loads_the_saved_settings(window: SettingsPage, tmp_path: Path) -> None:
     assert not window.dirty() and window.status.text() == "No unsaved changes."
 
 
-def test_waits_for_the_app_and_reads_again_on_request(
+def test_waits_for_the_daemon_and_reads_again_on_request(
     qtbot: QtBot, dialogs: FakeDialogs, saved: Settings, loader: ThumbnailLoader
 ) -> None:
     client = FakeClient()
@@ -328,7 +328,7 @@ def test_a_monitor_changes_playlist_then_save(
             )
         }
     )
-    # While the app saves: nothing more to send.
+    # While the daemon saves: nothing more to send.
     assert not window.save_button.isEnabled() and window.status.text() == "Saving…"
     answer(client, SaveSettingsRequest, SaveSettingsResult(revision=REVISION + 1))
     assert not window.dirty() and window.status.text() == "No unsaved changes."
@@ -742,7 +742,7 @@ def test_revert(window: SettingsPage) -> None:
 # -- saving --------------------------------------------------------------------------
 
 
-def test_what_the_app_says_to_a_save(
+def test_what_the_daemon_says_to_a_save(
     window: SettingsPage, client: FakeClient, saved: Settings
 ) -> None:
     editor(window, "konachan").interval_edit.setText("2m")
@@ -781,7 +781,7 @@ def test_closing_with_unsaved_changes_asks(
     assert not window.confirm_close()
     dialogs.unsaved_answer = "discard"
     assert window.confirm_close()
-    # Save: the window stays until the app has saved, then closes.
+    # Save: the window stays until the daemon has saved, then closes.
     dialogs.unsaved_answer = "save"
     window.show()
     assert not window.confirm_close()
@@ -916,20 +916,20 @@ def test_version_text() -> None:
     assert text and text[0].isdigit()  # "0.3.0", then the commit in a checkout
 
 
-# -- with the app ----------------------------------------------------------------------
+# -- with the daemon -------------------------------------------------------------------
 
 
-def test_edits_the_running_apps_settings(
+def test_edits_the_running_daemons_settings(
     qtbot: QtBot, tmp_path: Path, dialogs: FakeDialogs, loader: ThumbnailLoader
 ) -> None:
     write_settings(tmp_path)
     name = ipc.server_name(tmp_path)
     backend = FakeBackend([make_monitor("Main")])
-    host = make_host(lambda: backend, name)
+    service_thread = make_service_thread(lambda: backend, name)
     client = SocketClient(name, None)
     try:
-        with qtbot.waitSignal(host.overview_changed):
-            host.start()
+        with qtbot.waitSignal(service_thread.client.overview_changed):
+            service_thread.start()
         window = SettingsPage(client, dialogs.dialogs(), loader=loader, version="1")
         qtbot.addWidget(window)
         with qtbot.waitSignal(client.overview_changed):
@@ -942,11 +942,11 @@ def test_edits_the_running_apps_settings(
         window.save_button.click()
         qtbot.waitUntil(lambda: window.status.text() == "No unsaved changes.")
         replies: list[Reply] = []
-        client.run(Request(command="status"), replies.append)
+        client.run(StatusRequest(), replies.append)
         qtbot.waitUntil(lambda: bool(replies))
         status = replies[0]
         assert isinstance(status, StatusResult)
-        assert status.playlists[0].interval == 3600  # the app runs on them now
+        assert status.playlists[0].interval == 3600  # the daemon runs on them now
     finally:
         client.close()
-        assert host.shutdown(5_000)
+        assert service_thread.shutdown(5_000)

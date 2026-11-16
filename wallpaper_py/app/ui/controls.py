@@ -231,7 +231,7 @@ class _EntryList(QWidget):
     is no room below), as wide as it or its longest entry. The entry under
     the pointer (or picked with the arrow keys) has the hover tone, the
     current one the accent mark; a click, Enter or Space chooses one,
-    Escape or a click elsewhere closes it. All entries show (the app's
+    Escape or a click elsewhere closes it. All entries show (the daemon's
     lists are short).
     """
 

@@ -151,7 +151,7 @@ def add_playlists(store: Store, *ids: str) -> Store:
 
 
 def save_settings(settings: Settings) -> Settings:
-    """`settings` in the state database (paths.state_db), as the app keeps them."""
+    """`settings` in the state database (paths.state_db), as the daemon keeps them."""
     with Store(state_db()) as store:
         store.save_settings(settings, revision=None)
     return settings

@@ -1,11 +1,11 @@
-"""A `Client` for window tests: records requests, never reaches an app."""
+"""A `Client` for tray and window tests: records requests, never reaches a daemon."""
 
 from __future__ import annotations
 
 from typing import override
 
-from wallpaper_py.app.ui.client import Client, ReplyCallback
-from wallpaper_py.protocol import CommandRequest, Overview
+from wallpaper_py.app.client import Client, ReplyCallback
+from wallpaper_py.protocol import ClientRequest, Overview, OverviewChangedEvent
 
 
 class FakeClient(Client):
@@ -13,15 +13,15 @@ class FakeClient(Client):
 
     def __init__(self) -> None:
         super().__init__()
-        self.calls: list[tuple[CommandRequest, ReplyCallback]] = []
+        self.calls: list[tuple[ClientRequest, ReplyCallback]] = []
 
     @override
-    def run(self, request: CommandRequest, on_reply: ReplyCallback) -> None:
+    def run(self, request: ClientRequest, on_reply: ReplyCallback) -> None:
         self.calls.append((request, on_reply))
 
     def publish(self, overview: Overview) -> None:
-        """As if the app sent a new overview."""
-        self._set_overview(overview)
+        """As if the daemon sent a new overview."""
+        self._dispatch(OverviewChangedEvent(overview=overview))
 
-    def commands(self) -> list[CommandRequest]:
+    def commands(self) -> list[ClientRequest]:
         return [r for r, _ in self.calls if r.command != "status"]

@@ -1,17 +1,24 @@
 """
-The app's socket protocol as pydantic models: what goes over the wire, and
+The daemon's socket protocol as pydantic models: what goes over the wire, and
 nothing else (no logic, no Qt). See docs/protocol.md.
 
-- In: an `Envelope` holding a `Request` (a playlist command), a
-  `MarkRequest` (put an image on a list or take it off), a `PickRequest`
-  (`pick`, which also carries an image), an `UpcomingRequest` (the images
-  to come), a `StatsRequest` / `ResetCycleRequest` (count a library /
-  start its shuffle cycle over), a `SettingsRequest` /
-  `SaveSettingsRequest` (read / write the settings) or `Subscribe`.
+- In: an `Envelope` holding a `StatusRequest`, a `Request` (a command on a
+  playlist), a `MarkRequest` (put an image on a list or take it off), a
+  `PickRequest` (`pick`, which also carries an image), an `UpcomingRequest`
+  (the images to come), a `StatsRequest` / `ResetCycleRequest` (count a
+  library / start its shuffle cycle over), a `SettingsRequest` /
+  `SaveSettingsRequest` (read / write the settings), `Subscribe`, or
+  `ShowWindowRequest`. Each command's request model says whether it
+  `changes` anything (a class variable). `subscribe` and `show_window` are
+  the socket's own (`ipc.CommandServer`), not commands: they also work
+  while `PlaylistService` is stopped.
 - Out: a `Reply`, which is data only: one result model per command, tagged
   on `command`, or an `ErrorReply`. The CLI formats its text from these;
-  the tray and the UI process show them.
+  the tray and the window process show them.
 - Out, on a subscription: one `Event` per line, tagged on `event`.
+
+The window process subscribes as the window (`Subscribe.window`); only the
+first such subscriber is, and `show_window` and `show_page` reach it.
 
 `commands.py` runs requests, `app/ipc.py` carries the lines. The protocol
 only ever adds commands, fields, error kinds and events; clients ignore
@@ -25,7 +32,7 @@ docs/protocol.schema.json is generated from these models
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated, Any, Literal, get_args
+from typing import Annotated, Any, ClassVar, Literal, get_args
 
 from pydantic import (
     BaseModel,
@@ -45,7 +52,7 @@ from .core.settings import Order, PlaylistId, Settings
 PROTOCOL = 3
 
 # The commands a plain `Request` carries.
-Command = Literal["status", "next", "prev", "hold", "resume"]
+PlaylistCommand = Literal["next", "prev", "hold", "resume"]
 # The commands a `MarkRequest` carries: an image on a list, or off it.
 MarkCommand = Literal["fav", "unfav", "remove", "unremove"]
 MARK_COMMANDS: tuple[MarkCommand, ...] = get_args(MarkCommand)
@@ -54,29 +61,19 @@ MARK_COMMANDS: tuple[MarkCommand, ...] = get_args(MarkCommand)
 # (`target_request`).
 TargetCommand = Literal["next", "prev", "fav", "unfav", "remove", "hold", "resume"]
 TARGET_COMMANDS: tuple[TargetCommand, ...] = get_args(TargetCommand)
-# Every command: also these, which have request models of their own.
-AnyCommand = Literal[
-    Command,
-    MarkCommand,
-    "pick",
-    "upcoming",
-    "stats",
-    "reset_cycle",
-    "settings",
-    "save_settings",
-]
-COMMANDS: tuple[AnyCommand, ...] = get_args(AnyCommand)
 MAX_UPCOMING = 1000  # images an `upcoming` request may ask for
+PageName = Literal["home", "library", "settings"]  # the window's pages
+PAGE_NAMES: tuple[PageName, ...] = get_args(PageName)
 
 
 class Message(BaseModel):
-    """Sent by the app; read leniently, so newer fields are ignored."""
+    """Sent by the daemon; read leniently, so newer fields are ignored."""
 
     model_config = ConfigDict(frozen=True, extra="ignore")
 
 
 class Strict(BaseModel):
-    """Sent to the app; checked strictly."""
+    """Sent to the daemon; checked strictly."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -84,11 +81,19 @@ class Strict(BaseModel):
 # -- requests ------------------------------------------------------------------
 
 
-class Request(Strict):
-    """A playlist command."""
+class StatusRequest(Strict):
+    """The playlists with their schedule."""
 
-    command: Command
-    target: str | None = None  # playlist name, or a monitor it drives
+    changes: ClassVar[bool] = False
+    command: Literal["status"] = "status"
+
+
+class Request(Strict):
+    """A command on a playlist."""
+
+    changes: ClassVar[bool] = True
+    command: PlaylistCommand
+    target: str | None = None  # playlist id or name, or a monitor it drives
 
 
 class MarkRequest(Strict):
@@ -101,9 +106,10 @@ class MarkRequest(Strict):
     listed for long.
     """
 
+    changes: ClassVar[bool] = True
     command: MarkCommand
-    target: str | None = None  # playlist name, or a monitor it drives
-    image: Path | None = None  # absolute: the app doesn't know the client's directory
+    target: str | None = None  # playlist id or name, or a monitor it drives
+    image: Path | None = None  # absolute: the daemon has no client directory
 
     @field_validator("image")
     @classmethod
@@ -122,9 +128,10 @@ class MarkRequest(Strict):
 class PickRequest(Strict):
     """Show a chosen image on a playlist now (from any directory)."""
 
+    changes: ClassVar[bool] = True
     command: Literal["pick"] = "pick"
-    target: str | None = None  # playlist name, or a monitor it drives
-    image: Path  # absolute: the app doesn't know the client's directory
+    target: str | None = None  # playlist id or name, or a monitor it drives
+    image: Path  # absolute: the daemon doesn't know the client's directory
 
     @field_validator("image")
     @classmethod
@@ -141,14 +148,16 @@ def _absolute(image: Path) -> Path:
 class UpcomingRequest(Strict):
     """The images a playlist shows next, in order."""
 
+    changes: ClassVar[bool] = False
     command: Literal["upcoming"] = "upcoming"
-    target: str | None = None  # playlist name, or a monitor it drives
+    target: str | None = None  # playlist id or name, or a monitor it drives
     limit: Annotated[StrictInt, Field(ge=1, le=MAX_UPCOMING)] = 100
 
 
 class StatsRequest(Strict):
     """What playlists pick up from their folders, and the lists' counts."""
 
+    changes: ClassVar[bool] = False
     command: Literal["stats"] = "stats"
     target: str | None = None  # one playlist (or a monitor it drives); None: all
     rescan: StrictBool = False  # scan the folders again first
@@ -157,13 +166,15 @@ class StatsRequest(Strict):
 class ResetCycleRequest(Strict):
     """Start a shuffle playlist's cycle over: every image unseen again."""
 
+    changes: ClassVar[bool] = True
     command: Literal["reset_cycle"] = "reset_cycle"
-    target: str | None = None  # playlist name, or a monitor it drives
+    target: str | None = None  # playlist id or name, or a monitor it drives
 
 
 class SettingsRequest(Strict):
     """The stored settings, and their revision (for `save_settings`)."""
 
+    changes: ClassVar[bool] = False
     command: Literal["settings"] = "settings"
 
 
@@ -174,6 +185,7 @@ class SaveSettingsRequest(Strict):
     the one the edit was made on.
     """
 
+    changes: ClassVar[bool] = True
     command: Literal["save_settings"] = "save_settings"
     settings: Settings
     revision: int
@@ -181,7 +193,8 @@ class SaveSettingsRequest(Strict):
 
 # Every request answered with one reply (what `commands.execute` takes).
 CommandRequest = (
-    Request
+    StatusRequest
+    | Request
     | MarkRequest
     | PickRequest
     | UpcomingRequest
@@ -189,15 +202,6 @@ CommandRequest = (
     | ResetCycleRequest
     | SettingsRequest
     | SaveSettingsRequest
-)
-# Of those, the ones that name a target (playlist or monitor).
-TargetRequest = (
-    Request
-    | MarkRequest
-    | PickRequest
-    | UpcomingRequest
-    | StatsRequest
-    | ResetCycleRequest
 )
 
 
@@ -210,10 +214,32 @@ def target_request(command: TargetCommand, target: str | None) -> Request | Mark
             return Request(command=command, target=target)
 
 
+class ShowWindowRequest(Strict):
+    """
+    Bring the window to the front on `page`, if a window process has it
+    (`Subscribe.window`). Starting one if not is the asker's job.
+    """
+
+    command: Literal["show_window"] = "show_window"
+    page: PageName
+
+
+# Every request answered with one reply: what `Client.run` sends.
+ClientRequest = CommandRequest | ShowWindowRequest
+
+
 class Subscribe(Strict):
-    """Keep the connection open and receive one `Event` per line."""
+    """
+    Keep the connection open and receive one `Event` per line.
+
+    With `window`: "I am the window", shown on that page. Only the first
+    such subscriber is; a later one has its page shown there instead
+    (`show_page`), gets `ShowWindowResult(shown=True)` in place of the
+    events, and is closed.
+    """
 
     command: Literal["subscribe"] = "subscribe"
+    window: PageName | None = None
 
 
 class Envelope(Strict):
@@ -221,7 +247,7 @@ class Envelope(Strict):
 
     v: int = PROTOCOL
     request: Annotated[
-        CommandRequest | Subscribe,
+        CommandRequest | ShowWindowRequest | Subscribe,
         Field(discriminator="command"),
     ]
 
@@ -241,7 +267,7 @@ def check_protocol(version: int, receiver: str) -> int:
     return version
 
 
-# -- what the app reports ------------------------------------------------------
+# -- what the daemon reports ---------------------------------------------------
 
 
 class MonitorView(Message):
@@ -415,17 +441,20 @@ class SaveSettingsResult(Message):
 
 
 class HoldResult(Message):
-    command: Literal["hold"] = "hold"
+    command: Literal["hold", "resume"]
     playlist: str
-    held: bool  # now: always True
-    changed: bool  # False: it was held already
+    held: bool  # now: True after `hold`, False after `resume`
+    changed: bool  # False: it was held already (`hold`) / wasn't held (`resume`)
 
 
-class ResumeResult(Message):
-    command: Literal["resume"] = "resume"
-    playlist: str
-    held: bool  # now: always False
-    changed: bool  # False: it wasn't held
+class ShowWindowResult(Message):
+    """
+    `show_window`'s reply, and a window subscription's refusal: True if
+    the window process that has the window was asked to show the page.
+    """
+
+    command: Literal["show_window"] = "show_window"
+    shown: bool
 
 
 Result = Annotated[
@@ -437,17 +466,17 @@ Result = Annotated[
     | PickResult
     | UpcomingResult
     | HoldResult
-    | ResumeResult
     | StatsResult
     | ResetCycleResult
     | SettingsResult
-    | SaveSettingsResult,
+    | SaveSettingsResult
+    | ShowWindowResult,
     Field(discriminator="command"),
 ]
 
 ErrorKind = Literal[
     "protocol",  # malformed request, or another protocol version
-    "config_error",  # a list file can't be used; the app waits for a fix
+    "config_error",  # a list file can't be used; the daemon waits for a fix
     "unknown_target",  # no such playlist or monitor, or several and none named
     "not_attached",  # none of the playlist's monitors is attached
     "no_images",  # nothing to show in the playlist's directory
@@ -456,8 +485,8 @@ ErrorKind = Literal[
     "invalid_settings",  # save_settings: a value can't be used; nothing saved
     "stale_settings",  # save_settings: changed since they were read; nothing saved
     "failed",  # any other expected failure; see the message
-    "internal",  # a bug; the app logged it
-    "unreachable",  # client side only: no app, or it did not answer
+    "internal",  # a bug; the daemon logged it
+    "unreachable",  # client side only: no daemon, or it did not answer
 ]
 ERROR_KINDS: tuple[ErrorKind, ...] = get_args(ErrorKind)
 
@@ -504,8 +533,15 @@ class MarksChangedEvent(Message):
     event: Literal["marks_changed"] = "marks_changed"
 
 
+class ShowPageEvent(Message):
+    """Only to the window: come to the front on `page`."""
+
+    event: Literal["show_page"] = "show_page"
+    page: PageName
+
+
 Event = Annotated[
-    ChangedEvent | OverviewChangedEvent | MarksChangedEvent,
+    ChangedEvent | OverviewChangedEvent | MarksChangedEvent | ShowPageEvent,
     Field(discriminator="event"),
 ]
 
@@ -515,7 +551,7 @@ Event = Annotated[
 
 def json_schema() -> dict[str, Any]:
     """
-    One document for the whole protocol: `Request` (what the app reads),
+    One document for the whole protocol: `Request` (what the daemon reads),
     `Reply` and `Event` (what it writes), with shared definitions.
     """
     roots: dict[str, TypeAdapter[Any]] = {

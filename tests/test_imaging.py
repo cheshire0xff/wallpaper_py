@@ -342,7 +342,7 @@ def test_a_preview_from_the_small_copy_is_the_wallpaper_smaller(
 ) -> None:
     """
     What the windows show (a small copy, rendered small) is the wallpaper
-    the app sets (the file, rendered at the screen's size), smaller: for
+    the daemon sets (the file, rendered at the screen's size), smaller: for
     every look, on any screen shape.
     """
     img = scene(2700, 1200)

@@ -1,5 +1,5 @@
 """
-Images for the windows: read from the files off the UI thread, cached by
+Images for the windows: read from the files off the main thread, cached by
 path (never dropping a wanted one), and a result for an image that is no
 longer wanted is dropped.
 """
@@ -57,7 +57,7 @@ class Decoder:
 
 class Loaded:
     """
-    `loaded` signals, and whether each arrived on the UI thread (a plain
+    `loaded` signals, and whether each arrived on the main thread (a plain
     callable runs in the emitting thread, so this sees where it was emitted).
     """
 
@@ -98,7 +98,7 @@ def test_decodes_off_the_ui_thread_and_caches(
     loader.want([A])
     assert loader.get(A) is None and loader.pending() == {A}
     qtbot.waitUntil(lambda: loaded.paths == [A])
-    assert threading.get_ident() not in decoder.threads  # never the UI thread
+    assert threading.get_ident() not in decoder.threads  # never the main thread
     assert loaded.on_ui_thread == [True]  # delivered back on it
     thumbnail = loader.get(A)
     assert thumbnail is not None and thumbnail.pixmap is not None

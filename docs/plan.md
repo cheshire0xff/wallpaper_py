@@ -11,11 +11,12 @@ thin. See [architecture.md](architecture.md) for the layers.
 | 1 | Core model, safe setter, Windows backend, CLI `list`/`set`, tooling, CI | done |
 | 2 | Playlists, mirrored groups, scheduler, history, favourites, to-remove | done |
 | 3 | App shell: tray, single instance, IPC, autostart | done |
-| 4 | UI process, one window (Home, Library, Settings), pick / hold / manual | done |
+| 4 | Window process, one window (Home, Library, Settings), pick / hold / manual | done |
 | 4b | Settings in the database, per-monitor looks, previews, backgrounds | done |
 | 4c | More backgrounds for Fit: dominant, blur | done |
 | 4d | Blur strength and darkening per monitor; the look stored as one value | done |
-| 5 | Library page: overview (stats), grids, enlarged view | next |
+| S | Simplification: words, protocol and plumbing, tray / CLI / window as clients | done |
+| 5 | Library page: overview (stats), grids, enlarged view | steps 1–4 done; 5 next, then 6 |
 | 6 | KDE backend | backend done; Kubuntu and the checks by hand left |
 | 7 | Polish | |
 
@@ -26,7 +27,8 @@ monitor identity, looks), [app-wiring.md](app-wiring.md),
 What is still to try by hand: [desktop-checks.md](desktop-checks.md). The
 plans of the finished phases, with the notes made while building them, are
 in git: `git show d771a26:docs/plan.md` (Phase 4b step 5's: `92837ce`;
-Phase 4c's: `cd44203`; Phase 4d's: `280a3ef`).
+Phase 4c's: `cd44203`; Phase 4d's: `280a3ef`; the Simplification's
+and Phase 5 steps 1–4's notes: `5696a9f`).
 
 ## Decided against (until missed)
 
@@ -43,6 +45,10 @@ Phase 4c's: `cd44203`; Phase 4d's: `280a3ef`).
 - **Stylesheets.** The colours come from the palette, and the controls are
   painted in code (Phase 5, "Controls"; [design/](design/README.md)).
 - **Golden-image tests** (see Phase 7).
+- **QML for the windows.** Qt Quick would give bindings, animations and an
+  asynchronous image grid, but it means rewriting ~6,000 lines and their
+  offscreen tests, mypy can't check QML, and the Qt for Python rules
+  become other rules. Only if the windows keep growing a lot.
 
 ## Phase 5: Library page
 
@@ -74,7 +80,7 @@ say they come later).
   app: their tabs show the whole list, with an *Only <playlist>* toggle
   (off by default) for the entries in the playlist's folder.
 - Remembered: the playlist, the tab, each tab's sort, the toggles. In
-  `ui-state.json` in the data directory, written only by the UI process
+  `ui-state.json` in the data directory, written only by the window process
   (a pydantic model; missing or unreadable: the defaults, logged, never
   an error shown). It is view state, not settings: no revision, no
   socket, nothing the app reads. Not `QSettings`: that is the registry on
@@ -144,10 +150,10 @@ Lists (shared by all playlists)
   [-n N]`, and `--image PATH` on `fav` / `unfav` / `remove` / `unremove`.
 - docs/protocol.md gets the new commands and the event.
 
-### What the UI process reads itself
+### What the window process reads itself
 
 Writes are always commands: the service stays the only writer. For the
-grids, the UI process reads these itself, off the UI thread:
+grids, the window process reads these itself, off the main thread:
 
 - The playlist's folder: `core.library.scan`, plus each file's "added"
   time for sorting: the creation time on Windows (of the link itself for
@@ -178,7 +184,7 @@ images), built from the Phase 0 spike (`spikes/grid_prototype.py`):
   dropped before decoding. A tile fades in from the panel tone when its
   thumbnail arrives (as in the phone app).
 - In memory: an LRU with a byte budget, built in and generous (~1.5 GB,
-  no setting). The thumbnails live only in the UI process: closing the
+  no setting). The thumbnails live only in the window process: closing the
   window ends it and gives everything back, so no "Free memory" button;
   the always-running app never holds or makes thumbnails.
 - On disk: `paths.thumbnail_dir()`, one JPEG per image at tile size x
@@ -223,7 +229,7 @@ Over the page (not a window of its own), on the panel tone:
 
 - Fitted at first; the wheel zooms at the pointer (up to ~5x), a
   double-click toggles zoom / fit, dragging pans. Decoded at full size
-  off the UI thread; the thumbnail stands in until then.
+  off the main thread; the thumbnail stands in until then.
 - An info overlay (a click hides / shows it): the full path (selectable,
   with *Copy path*), dimensions, file size.
 - Toggles for favourite and to remove (by path, so un-favourite and
@@ -278,61 +284,10 @@ no stylesheet.
 
 ### Steps, one session each
 
-1. **Overview** (done): `stats`, `reset_cycle` and their CLI; the page
-   (title, playlist drop-down, tab bar, `ui-state.json`) with the Overview
-   tab; About's line goes. The grid tabs say they come later. *Reset
-   cycle…* sits beside Seen, as *Rescan* beside Images; a sorted walk's
-   place is the newest image it showed (where it goes on), which is the
-   current one unless *Previous* went back.
-2. **Controls** (done), from design/controls.dc.html: drop-down,
-   segmented buttons, switches, buttons and slider, used in Settings and
-   the Library page; the 2 px focus ring everywhere; the accent from
-   `Highlight` on Linux; the docs say Fusion. Decided while building:
-   the drop-down's open list is a popup of our own (restyling Qt's would
-   mean overriding Qt's non-event methods, AGENTS.md rule 3), placed
-   under the box (above if there is no room), with all entries (the
-   app's lists are short); a click drops the focus ring until the next
-   Tab; the ring lies on the control's edge with the fill inside it (Qt
-   can't paint outside a widget), and a switch keeps 4 px around its
-   pill for it; *Changes* (Every / Manually) stays a drop-down beside the
-   interval field. Mode's icons are our own, drawn like Lucide's.
-3. **Data for the grids** (done): marks by `image`, `unremove`,
-   `marks_changed`, `upcoming` (and their CLI); the UI-side scan with
-   "added" times (`library.scan_files`); the read-only history reader
-   (`store.read_history`). Decided while building: the list commands are
-   a request model of their own (`MarkRequest`), an `image` or a `target`,
-   never both; `unremove` needs an `image` (the current image is never
-   listed for long); `remove` replies `changed` too; the tray and Home
-   build their buttons' requests with `protocol.target_request`.
-   `marks_changed` carries no fields and goes only to subscribers; the
-   Overview tab asks for its numbers again on it. `scan_files` reads the
-   times from the directory listing (free on Windows, an `lstat` each on
-   Linux) and shares its walk with `scan`. The history reader takes a
-   playlist's id: step 5 gets it from the `settings` command, or adds
-   `id` to the overview's playlists.
-4. **Thumbnails** (done): the grid pipeline, the disk cache,
-   pre-generation and pruning; tested offscreen with generated images
-   (`tests/generate_test_images.py`, `generate_library`). Decided while
-   building: All images already shows its folder in the grid (name order,
-   no toolbar, count or badges yet), so the pipeline can be tried by hand.
-   Tiles are 192 x 108 with 8 px between them; a thumbnail is the image
-   filling the tile (cropped to the middle; chosen by the user over
-   fitting, as the phone app does: every tile alike) at the sharpest
-   screen's scale, a JPEG at quality 88 (`core.thumbnail_cache`,
-   `imaging.load_filled`); the style is part of the file's name.
-   Four tile threads; the grid tells the loader the rows on screen and one
-   more above and below, found by bisection over the item rectangles. The
-   overview now carries each playlist's `id` and `directory` and the two
-   list files, which the pre-generation follows (and step 5's History
-   can use). A pass prunes only after reading every folder and list (a
-   folder not mounted keeps its thumbnails), never from an overview with
-   an error, and keeps files written since it started. Threads are
-   `QRunnable`s on each object's own `QThreadPool` (the pre-generation's:
-   one thread, low priority), as `ThumbnailLoader`'s, all through one
-   helper (`Jobs`: a pool, results on the UI thread); the Qt-rules test
-   now allows an item model's `rowCount` / `data` and a delegate's
-   `paint` / `sizeHint` (AGENTS.md rule 3). The window stops the threads
-   when it closes, and on `aboutToQuit` when the app quits with it open.
+1. **Overview** (done).
+2. **Controls** (done).
+3. **Data for the grids** (done).
+4. **Thumbnails** (done).
 5. **Grid tabs**: the five tabs, toolbars, badges, counts, fast-scroll;
    Overview becomes Stats, last.
 6. **Enlarged view**.
@@ -389,7 +344,7 @@ process may not), on any change the playlist makes: scheduled, next / prev
 custom sound file per playlist only if missed.
 
 Sizes on disk of the render and thumbnail caches in About: never worked
-out on the UI thread (walking a 20k-image thumbnail cache would stall
+out on the main thread (walking a 20k-image thumbnail cache would stall
 it). (The library stats moved to Phase 5's Overview tab.)
 
 Virtual backend and page renders (nice to have, for testing; not needed
@@ -401,7 +356,7 @@ before anything else):
   or not) and "sets" wallpapers by recording them, never touching the
   desktop. It runs with its own data dir and socket names, so it never
   meets a real running app. Much of it exists in `tests/fakes.py`.
-- End-to-end tests on it: the real app process, the real UI process
+- End-to-end tests on it: the real app process, the real window process
   and the CLI over real sockets (today each process is tested alone
   against fakes; the wiring between them only by hand). Monitor
   scenarios become data: the OLED switched off and back, 4K + a

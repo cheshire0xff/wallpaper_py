@@ -8,7 +8,6 @@ thread) would never get to accept the connection.
 
 import subprocess
 import sys
-from pathlib import Path
 
 from pytestqt.qtbot import QtBot
 
@@ -20,14 +19,15 @@ else:
     NO_WINDOW = 0
 
 # argv: server name, command, timeout. Prints the reply as JSON,
-# NONE (no app running) or ERROR <message>.
+# NONE (no daemon running) or ERROR <message>.
 SEND = """
 import sys
 from pathlib import Path
 from wallpaper_py.app import ipc
-from wallpaper_py.protocol import Envelope, Request
+from wallpaper_py.protocol import Envelope, Request, StatusRequest
 name, command, timeout = sys.argv[1:4]
-envelope = Envelope(request=Request(command=command))
+request = StatusRequest() if command == "status" else Request(command=command)
+envelope = Envelope(request=request)
 try:
     reply = ipc.send(name, envelope, timeout=float(timeout))
 except ipc.WallpaperError as err:
@@ -52,8 +52,8 @@ print(data.decode().strip())
 """
 
 # argv: data dir, then CLI arguments. The backend factory fails, which
-# proves that a playlist command went to the running app (run here, it
-# would need one).
+# proves that a playlist command went to the running daemon (the CLI has no
+# backend of its own for it).
 CLI = """
 import sys
 from pathlib import Path
@@ -64,45 +64,6 @@ paths.data_dir = lambda: data_dir
 def no_backend():
     raise SystemExit("backend used: the command did not go to the app")
 sys.exit(cli.main(sys.argv[2:], backend_factory=no_backend))
-"""
-
-# argv: data dir, then CLI arguments. Like CLI, but with a fake backend
-# (one monitor "Main"), for commands run here when no app is running.
-CLI_HERE = f"""
-import sys
-from pathlib import Path
-sys.path.insert(0, {str(Path(__file__).parents[1])!r})
-from wallpaper_py import cli
-from wallpaper_py.core import paths
-from tests.fakes import FakeBackend, FakePresence, make_monitor
-data_dir = Path(sys.argv[1])
-for name in ("data_dir", "cache_dir"):
-    setattr(paths, name, lambda: data_dir)
-paths.log_file = lambda: data_dir / "wallpaper.log"
-backend = FakeBackend([make_monitor("Main")])
-sys.exit(
-    cli.main(
-        sys.argv[2:],
-        backend_factory=lambda: backend,
-        presence_factory=FakePresence,
-    )
-)
-"""
-
-# argv: data dir, seconds. Holds the app's lock that long (like a starting
-# app, or a CLI command run here); prints "locked" once it has it.
-HOLD_LOCK = """
-import sys
-import time
-from pathlib import Path
-from wallpaper_py.app.instance import InstanceLock
-from wallpaper_py.core import paths
-paths.data_dir = lambda: Path(sys.argv[1])
-lock = InstanceLock(paths.instance_lock())
-assert lock.acquire()
-print("locked", flush=True)
-time.sleep(float(sys.argv[2]))
-lock.release()
 """
 
 

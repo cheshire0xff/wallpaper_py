@@ -154,9 +154,9 @@ def env(tmp_path: Path) -> Env:
         tmp=tmp_path,
         backend=FakeBackend(
             [
-                make_monitor("AW3225QF", size=(3840, 2160)),
-                make_monitor("PLX2783H", x=-1920),
-                make_monitor("ZeroMOD", x=3840, size=(1920, 480)),
+                make_monitor("AW3225QF", size=(384, 216)),
+                make_monitor("PLX2783H", x=-192, size=(192, 108)),
+                make_monitor("ZeroMOD", x=384, size=(192, 48)),
             ]
         ),
         clock=FakeClock(),
@@ -239,7 +239,7 @@ def test_detached_group_is_postponed_without_losing_the_image(env: Env) -> None:
     env.backend.detach("AW3225QF")
     env.backend.detach("PLX2783H")
     assert not [c for c in env.tick_for(5 * INTERVAL) if c.playlist == "konachan"]
-    env.backend.update("PLX2783H", rect=make_monitor("x").rect)
+    env.backend.update("PLX2783H", rect=make_monitor("x", size=(192, 108)).rect)
     back = [c for c in env.tick_for(INTERVAL - STEP) if c.playlist == "konachan"]
     assert [c.reason for c in back] == ["restored"]  # its current image first
     [change] = [c for c in env.tick_for(STEP) if c.playlist == "konachan"]
@@ -388,22 +388,22 @@ def test_every_image_is_rendered_with_the_monitor_look(env: Env) -> None:
     zero = next(m for m in env.backend.monitors() if m.name == "ZeroMOD")
     assert zero.wallpaper is not None and zero.wallpaper.parent == env.tmp / "rendered"
     with Image.open(zero.wallpaper) as render:
-        assert render.size == (1920, 480)
-        assert render.getpixel((5, 240)) == (0, 0, 0)  # fit: a bar on each side
+        assert render.size == (192, 48)
+        assert render.getpixel((5, 24)) == (0, 0, 0)  # fit: a bar on each side
     assert env.shown("ZeroMOD") == env.tmp / "fantasy" / "f1.png"
 
 
 def test_a_resolution_change_renders_again(env: Env) -> None:
     env.service.tick()
     shown = env.shown("ZeroMOD")
-    env.backend.update("ZeroMOD", rect=Rectangle(3840, 0, 3840 + 2560, 1440))
+    env.backend.update("ZeroMOD", rect=Rectangle(384, 0, 384 + 256, 144))
     changes = env.service.tick()
     assert [(c.playlist, c.reason) for c in changes] == [("fantasy", "restored")]
     assert env.shown("ZeroMOD") == shown  # the same image, rendered again
     zero = next(m for m in env.backend.monitors() if m.name == "ZeroMOD")
     assert zero.wallpaper is not None
     with Image.open(zero.wallpaper) as render:
-        assert render.size == (2560, 1440)
+        assert render.size == (256, 144)
     assert not env.service.tick()  # once
 
 
@@ -615,7 +615,7 @@ def test_held_playlist_still_replaces_a_removed_image(env: Env) -> None:
     env.backend.detach("PLX2783H")
     image, _, change = env.service.remove(env.konachan)
     assert change is None  # nowhere to show the next one yet
-    env.backend.update("PLX2783H", rect=make_monitor("x").rect)
+    env.backend.update("PLX2783H", rect=make_monitor("x", size=(192, 108)).rect)
     [change] = [c for c in env.service.tick() if c.playlist == "konachan"]
     assert change.image != image and change.reason == "scheduled"
 
@@ -654,7 +654,9 @@ def test_a_monitor_on_another_port_waits_to_be_assigned(env: Env) -> None:
     env.service.tick()
     old = env.backend.unlist("ZeroMOD")
     env.backend.relist(replace(old, rect=None))  # the old port, detached
-    env.backend.relist(make_monitor("ZeroMOD", x=3840, pnp="ZEROMOD-DP2"))
+    env.backend.relist(
+        make_monitor("ZeroMOD", x=384, size=(192, 48), pnp="ZEROMOD-DP2")
+    )
     shown = len(env.backend.set_calls)
     env.tick_for(INTERVAL)
     assert all(
@@ -709,13 +711,13 @@ def test_save_settings_refuses_a_stale_or_invalid_edit(env: Env) -> None:
     with pytest.raises(StaleSettingsError):
         env.service.save_settings(edit, revision)  # made on the old revision
     twin = env.fantasy.model_copy(update={"name": "ANIME"})
-    with pytest.raises(SettingsError, match="Two playlists are named"):
+    with pytest.raises(SettingsError, match="Another playlist is called anime"):
         env.service.save_settings(
             env.settings.model_copy(update={"playlists": (renamed, twin)}),
             revision + 1,
         )
     gone = env.fantasy.model_copy(update={"directory": env.tmp / "nope"})
-    with pytest.raises(SettingsError, match="doesn't exist"):
+    with pytest.raises(SettingsError, match="No such folder"):
         env.service.save_settings(
             env.settings.model_copy(update={"playlists": (renamed, gone)}),
             revision + 1,
@@ -796,7 +798,7 @@ def test_a_postponed_playlist_renamed_resumes_once(
     edit = env.settings.model_copy(update={"playlists": (env.konachan, renamed)})
     env.service.save_settings(edit, env.service.revision())
     env.service.tick()
-    env.backend.update("ZeroMOD", rect=make_monitor("x").rect)
+    env.backend.update("ZeroMOD", rect=make_monitor("x", size=(192, 108)).rect)
     env.service.tick()
     lines = [r.getMessage() for r in caplog.records if "rotation" in r.getMessage()]
     assert lines == [

@@ -3,9 +3,9 @@ The Settings page, monitor-first (docs/architecture.md, "App shell";
 docs/design/settings-monitors.dc.html): settings as rows, sub-tabs, and
 Save / Revert with the status line in a footer bar.
 
-The app keeps the settings (in its state database); the page reads them
+The daemon keeps the settings (in its state database); the page reads them
 with the `settings` command and saves the whole edit with
-`save_settings`, with the revision it read: the app refuses the save if
+`save_settings`, with the revision it read: the daemon refuses the save if
 they changed since (`stale_settings`), and checks what the values mean
 again. The page never reads the database itself.
 
@@ -29,7 +29,7 @@ Save and Revert work only while something changed. Problems show next to
 their field and keep Save disabled; the line beside it says why (else what
 changed). Unsaved edits stay while other pages are shown; closing the
 window with them asks Save / Discard / Cancel (`confirm_close`): Save
-closes the window once the app has saved. The dialogs it opens are
+closes the window once the daemon has saved. The dialogs it opens are
 settings_dialogs.py's.
 """
 
@@ -42,7 +42,6 @@ from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtGui import QDesktopServices, QFont
 from PySide6.QtWidgets import (
     QHBoxLayout,
-    QLabel,
     QLineEdit,
     QStackedWidget,
     QVBoxLayout,
@@ -51,7 +50,7 @@ from PySide6.QtWidgets import (
 
 from ...core import paths
 from ...core.model import Look, MonitorId
-from ...core.settings import MonitorSettings, Settings, SettingsError, check_settings
+from ...core.settings import FAVOURITES, IDLE, TO_REMOVE, MonitorSettings, Settings
 from ...protocol import (
     DesktopMonitor,
     ErrorReply,
@@ -63,16 +62,13 @@ from ...protocol import (
     SettingsRequest,
     SettingsResult,
 )
+from ..client import Client, ReplyTo
 from . import theme
 from .about import AboutPage, OpenUrl, data_locations, version_text
 from .arrangement import MonitorsView
-from .client import Client, ReplyTo
 from .controls import Button, Switch
 from .settings_draft import (
     DEFAULT_IDLE,
-    FAVOURITES,
-    IDLE,
-    TO_REMOVE,
     Draft,
     Field,
     MonitorEntry,
@@ -142,7 +138,7 @@ class SettingsPage(QWidget):
         self._saving: Settings | None = None  # sent, not answered yet
         self._close_when_saved = False
         self._listed: tuple[DesktopMonitor, ...] = ()
-        self._shown: tuple[PlaylistView, ...] = ()  # the app's, for their images
+        self._shown: tuple[PlaylistView, ...] = ()  # the daemon's, for their images
         self._drawn: frozenset[Path] = frozenset()  # the images drawn now
         self.entries: list[MonitorEntry] = []
         self.selected: MonitorId | None = None
@@ -184,10 +180,8 @@ class SettingsPage(QWidget):
 
     # -- building ----------------------------------------------------------------
 
-    def _build_banner(self) -> tuple[QLabel, theme.TextButton]:
-        banner = QLabel(self)
-        banner.setWordWrap(True)
-        banner.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+    def _build_banner(self) -> tuple[theme.Banner, theme.TextButton]:
+        banner = theme.Banner(self)
         button = theme.TextButton("Load the settings again", self)
         button.clicked.connect(self.load)
         return banner, button
@@ -392,7 +386,7 @@ class SettingsPage(QWidget):
         row.addStretch(1)
         return row
 
-    # -- from the app ------------------------------------------------------------
+    # -- from the daemon ------------------------------------------------------------
 
     @Slot(object)
     def show_overview(self, overview: Overview) -> None:
@@ -588,10 +582,6 @@ class SettingsPage(QWidget):
             return "Nothing changed"
         if self.problems:
             return problem_summary(self.problems, edited)
-        try:
-            check_settings(edited.settings())
-        except SettingsError as err:
-            return f"Can't save: {err}"
         return None
 
     def _show_buttons(self, dirty: bool) -> None:
@@ -619,8 +609,7 @@ class SettingsPage(QWidget):
         self, text: str | None, kind: BannerKind | None = None, *, button: bool = False
     ) -> None:
         self._banner_kind = kind if text else None
-        self.banner.setText(text or "")
-        self.banner.setVisible(bool(text))
+        self.banner.set_message(text)
         self.banner_button.setVisible(bool(text) and button)
 
     # -- the selected monitor ----------------------------------------------------
@@ -729,7 +718,7 @@ class SettingsPage(QWidget):
         self.save()
 
     def save(self) -> bool:
-        """Send the changes to the app; False if they can't be saved now."""
+        """Send the changes to the daemon; False if they can't be saved now."""
         edited = self.edited()
         if edited is None or self._blocker is not None:
             return False
@@ -741,7 +730,7 @@ class SettingsPage(QWidget):
         return True
 
     def saved(self, reply: Reply) -> None:
-        """The app's answer to a save."""
+        """The daemon's answer to a save."""
         sent, self._saving = self._saving, None
         close, self._close_when_saved = self._close_when_saved, False
         if isinstance(reply, SaveSettingsResult) and sent is not None:
@@ -775,7 +764,7 @@ class SettingsPage(QWidget):
         """
         The window is closing: with unsaved changes, ask Save / Discard /
         Cancel. False keeps the window open: Cancel, a Save that can't
-        happen (the status line says why), or a Save sent to the app (the
+        happen (the status line says why), or a Save sent to the daemon (the
         window closes once it has saved).
         """
         if not self.dirty():

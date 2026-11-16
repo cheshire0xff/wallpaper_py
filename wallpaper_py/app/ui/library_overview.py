@@ -13,7 +13,7 @@ as in the phone app's Information dialog (docs/plan.md, "Overview tab").
 
 A sorted playlist has no cycle: "This walk", where it is ("at 1,205 of
 20,383"), and no *Reset cycle…*. The tab only shows what it is given and
-reports the buttons; the page asks the app (library.py). A button's
+reports the buttons; the page asks the daemon (library.py). A button's
 failure shows under the numbers (`show_notice`) until the next click or
 playlist.
 """

@@ -2,13 +2,15 @@
 
 from collections.abc import Iterator
 from pathlib import Path
+from typing import cast
 
 import pytest
 from PySide6.QtCore import QObject
+from PySide6.QtNetwork import QLocalSocket
 from pytestqt.qtbot import QtBot
 
 from wallpaper_py.app import ipc
-from wallpaper_py.app.ipc import CommandServer, LineRequest, ProtocolError
+from wallpaper_py.app.ipc import CommandServer, LineBuffer, LineRequest, ProtocolError
 from wallpaper_py.core.service import Change
 from wallpaper_py.protocol import (
     ChangedEvent,
@@ -17,15 +19,20 @@ from wallpaper_py.protocol import (
     NextResult,
     Overview,
     OverviewChangedEvent,
+    PageName,
     PrevResult,
     Request,
+    ShowPageEvent,
+    ShowWindowRequest,
+    ShowWindowResult,
+    StatusRequest,
     Subscribe,
 )
 
 from .clients import RAW, SEND, run_python
 from .hosts import connect, read_lines
 
-CHANGE = Change("walls", Path("/p/a.jpg"), "next", ("Main",))
+CHANGE = Change("walls-id", "walls", Path("/p/a.jpg"), "next", ("Main",))
 
 
 @pytest.fixture(name="name")
@@ -60,27 +67,35 @@ def send(qtbot: QtBot, name: str, command: str, timeout: float = 30) -> str:
     return result.stdout.strip()
 
 
-def test_server_name_is_per_directory_and_role(tmp_path: Path) -> None:
+def test_server_name_is_per_directory(tmp_path: Path) -> None:
     name = ipc.server_name(tmp_path)
     assert name == ipc.server_name(tmp_path / "x" / "..")
     assert name != ipc.server_name(tmp_path / "other")
     assert name.startswith("wallpaper_py-") and "/" not in name and "\\" not in name
-    assert ipc.server_name(tmp_path, "ui") == f"{name}-ui"
 
 
 def test_messages_round_trip() -> None:
     envelope = Envelope(request=Request(command="next", target="konachan"))
     assert ipc.decode_request(ipc.encode(envelope).strip()) == envelope
-    subscribe = Envelope(request=Subscribe())
-    assert ipc.decode_request(ipc.encode(subscribe)) == subscribe
+    for request in (
+        Subscribe(),
+        Subscribe(window="settings"),
+        ShowWindowRequest(page="library"),
+    ):
+        wrapped = Envelope(request=request)
+        assert ipc.decode_request(ipc.encode(wrapped)) == wrapped
     for reply in (
         NextResult(playlist="walls", change=CHANGE),
         ErrorReply.make("not_attached", "None attached"),
+        ShowWindowResult(shown=False),
     ):
         assert ipc.decode_reply(ipc.encode(reply)) == reply
     for event in (
         ChangedEvent(change=CHANGE),
         OverviewChangedEvent(overview=Overview(paused="idle")),
+        ShowPageEvent(page="home"),
+        ErrorReply.make("protocol", "refused"),
+        ShowWindowResult(shown=True),  # a window subscription, refused
     ):
         assert ipc.decode_event(ipc.encode(event)) == event
 
@@ -102,6 +117,8 @@ def test_replies_ignore_unknown_fields() -> None:
         (b'{"request": {"command": "reload"}}', "'reload'"),
         (b'{"request": {"command": "settings", "target": "a"}}', "target"),
         (b'{"request": {"command": "next", "x": 1}}', "x"),
+        (b'{"request": {"command": "subscribe", "window": "kitchen"}}', "window"),
+        (b'{"request": {"command": "show_window"}}', "page"),
         (b"\xff", "Invalid JSON"),
     ],
 )
@@ -118,8 +135,21 @@ def test_bad_reply_is_rejected() -> None:
         ipc.decode_event(b'{"event": "later_added"}')
 
 
-def test_no_app_running(name: str) -> None:
-    envelope = Envelope(request=Request(command="status"))
+def test_line_framing() -> None:
+    """Lines come out whole, however the bytes arrive; too long ones fail."""
+    lines = LineBuffer(8, "Reply")
+    assert not lines.feed(b"one")
+    assert lines.feed(b"\ntwo\nthr") == [b"one", b"two"]
+    assert lines.feed(memoryview(b"ee\n")) == [b"three"]
+    assert lines.feed(b"\n") == [b""]
+    with pytest.raises(ProtocolError, match="Reply too long"):
+        lines.feed(b"123456789")  # not complete yet, and already too long
+    with pytest.raises(ProtocolError, match="Request too long"):
+        LineBuffer(8, "Request").feed(b"123456789\nok\n")  # complete, too long
+
+
+def test_no_daemon_running(name: str) -> None:
+    envelope = Envelope(request=StatusRequest())
     assert ipc.send(name, envelope) is None
 
 
@@ -230,7 +260,7 @@ def test_line_request_times_out(qtbot: QtBot, name: str, owner: QObject) -> None
     server.listen()
     failures: list[tuple[bool, str]] = []
     try:
-        line = ipc.encode(Envelope(request=Request(command="status")))
+        line = ipc.encode(Envelope(request=StatusRequest()))
         LineRequest(
             name,
             line,
@@ -243,3 +273,52 @@ def test_line_request_times_out(qtbot: QtBot, name: str, owner: QObject) -> None
     finally:
         server.close()
     assert failures == [(False, "The running app did not answer in time")]
+
+
+def subscribe_window(qtbot: QtBot, name: str, page: PageName) -> QLocalSocket:
+    return connect(qtbot, name, ipc.encode(Envelope(request=Subscribe(window=page))))
+
+
+def show_window(qtbot: QtBot, name: str, page: PageName) -> ShowWindowResult:
+    """`show_window` from another process, as any client of the socket."""
+    line = ipc.encode(Envelope(request=ShowWindowRequest(page=page))).decode()
+    result = run_python(qtbot, RAW, name, line.strip())
+    return cast(ShowWindowResult, ipc.decode_reply(result.stdout.strip().encode()))
+
+
+def test_the_first_window_subscriber_is_the_window(
+    qtbot: QtBot, server: CommandServer, name: str
+) -> None:
+    subscribed: list[int] = []
+    server.subscribed.connect(subscribed.append)
+    assert show_window(qtbot, name, "home") == ShowWindowResult(shown=False)
+
+    first = subscribe_window(qtbot, name, "home")
+    qtbot.waitUntil(lambda: len(subscribed) == 1)
+    assert show_window(qtbot, name, "library") == ShowWindowResult(shown=True)
+    [line] = read_lines(qtbot, first, 1)
+    assert ipc.decode_event(line) == ShowPageEvent(page="library")
+
+    # A second one: its page is shown in the first, and it is refused.
+    second = subscribe_window(qtbot, name, "settings")
+    [line] = read_lines(qtbot, second, 1)
+    assert ipc.decode_event(line) == ShowWindowResult(shown=True)
+    [line] = read_lines(qtbot, first, 1)
+    assert ipc.decode_event(line) == ShowPageEvent(page="settings")
+    assert len(subscribed) == 1
+
+    # A subscriber that isn't the window never gets show_page.
+    plain = connect(qtbot, name, ipc.encode(Envelope(request=Subscribe())))
+    qtbot.waitUntil(lambda: len(subscribed) == 2)
+    assert server.show_window("home")
+    server.broadcast(ChangedEvent(change=CHANGE))
+    [line] = read_lines(qtbot, plain, 1)
+    assert ipc.decode_event(line) == ChangedEvent(change=CHANGE)
+
+    # The window leaves: from then on there is none, and the next is it.
+    with qtbot.waitSignal(first.disconnected):
+        first.disconnectFromServer()
+    qtbot.waitUntil(lambda: show_window(qtbot, name, "home").shown is False)
+    third = subscribe_window(qtbot, name, "library")
+    qtbot.waitUntil(lambda: len(subscribed) == 3)
+    assert third.state() == QLocalSocket.LocalSocketState.ConnectedState

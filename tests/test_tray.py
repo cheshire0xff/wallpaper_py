@@ -1,7 +1,6 @@
 """The tray menu drawn from an Overview, and what its items do."""
 
 from collections.abc import Callable
-from contextlib import nullcontext
 from importlib import resources
 from pathlib import Path
 
@@ -19,22 +18,23 @@ from wallpaper_py.app.tray import (
     icon_state,
     tooltip,
 )
-from wallpaper_py.app.ui.launcher import PageName
-from wallpaper_py.app.worker import ServiceHost, ServiceSettings
 from wallpaper_py.core.model import MonitorId
 from wallpaper_py.protocol import (
     ErrorReply,
     MarkRequest,
     MonitorView,
     Overview,
+    PageName,
     PlaylistView,
-    Reply,
     Request,
+    ShowWindowRequest,
+    ShowWindowResult,
     TargetCommand,
     target_request,
 )
 
-from .fakes import FakeAutostart, FakeBackend, FakePresence
+from .fake_client import FakeClient
+from .fakes import FakeAutostart
 
 
 def monitor(name: str, attached: bool | None) -> MonitorView:
@@ -151,11 +151,11 @@ def test_hold_toggle(menu: QMenu) -> None:
     hold = find(menu, "Hold")
     assert hold.isChecked() and hold.isEnabled()
     hold.trigger()
-    assert actions.calls == [queued("resume", "walls")]  # held: the toggle resumes
+    assert actions.calls == [queued("resume", "walls-id")]  # held: the toggle resumes
 
     fill(menu, Overview(playlists=(WALLS,)), actions)
     find(menu, "Hold").trigger()
-    assert actions.calls[-1] == queued("hold", "walls")
+    assert actions.calls[-1] == queued("hold", "walls-id")
 
 
 def test_items_queue_commands(menu: QMenu) -> None:
@@ -171,10 +171,10 @@ def test_items_queue_commands(menu: QMenu) -> None:
         find(menu, text).trigger()
     assert actions.calls == [
         WALLS.current,
-        queued("next", "walls"),
-        queued("prev", "walls"),
-        queued("unfav", "walls"),  # already a favourite: the toggle unmarks
-        queued("remove", "walls"),
+        queued("next", "walls-id"),
+        queued("prev", "walls-id"),
+        queued("unfav", "walls-id"),  # already a favourite: the toggle unmarks
+        queued("remove", "walls-id"),
     ]
 
 
@@ -185,7 +185,7 @@ def test_favourite_marks_when_not_marked(menu: QMenu) -> None:
     favourite = find(menu, "Favourite")
     assert not favourite.isChecked()
     favourite.trigger()
-    assert actions.calls == [queued("fav", "walls")]
+    assert actions.calls == [queued("fav", "walls-id")]
 
 
 def test_favourite_is_off_while_the_list_is_unknown(menu: QMenu) -> None:
@@ -298,23 +298,50 @@ def test_app_icon_keeps_transparency_and_tray_states() -> None:
     assert error.pixelColor(54, 48).name() == "#e03c31"
 
 
-def test_tray_follows_the_overview() -> None:
-    host = ServiceHost(  # never started: requests just queue up
-        ServiceSettings(lambda: FakeBackend([]), FakePresence, nullcontext)
+def make_tray(
+    client: FakeClient,
+    *,
+    autostart: FakeAutostart | None = None,
+    started: list[PageName] | None = None,
+    quit_daemon: Callable[[], None] = lambda: None,
+) -> Tray:
+    """A tray on `client`; the window processes it starts go to `started`."""
+    return Tray(
+        client,
+        autostart or FakeAutostart(),
+        ["py", "tray"],
+        quit_daemon,
+        start_window=(started if started is not None else []).append,
     )
+
+
+def opened(client: FakeClient, reply: ShowWindowResult | ErrorReply) -> list[PageName]:
+    """Answers the tray's `show_window` requests with `reply`; their pages."""
+    pages = [r.page for r, _ in client.calls if isinstance(r, ShowWindowRequest)]
+    for request, on_reply in client.calls:
+        if isinstance(request, ShowWindowRequest):
+            on_reply(reply)
+    client.calls = [c for c in client.calls if not isinstance(c[0], ShowWindowRequest)]
+    return pages
+
+
+NOT_SHOWN = ShowWindowResult(shown=False)
+
+
+def test_tray_follows_the_overview() -> None:
+    client = FakeClient()
     autostart = FakeAutostart()
     quits: list[bool] = []
-    pages: list[PageName] = []
-    tray = Tray(
-        host,
-        autostart,
-        ["py", "tray"],
-        lambda: quits.append(True),
-        open_window=pages.append,
+    started: list[PageName] = []
+    tray = make_tray(
+        client,
+        autostart=autostart,
+        started=started,
+        quit_daemon=lambda: quits.append(True),
     )
     assert items(tray.menu)[0].text() == "Starting..."
 
-    host.overview_changed.emit(Overview(playlists=(WALLS,)))
+    client.publish(Overview(playlists=(WALLS,)))
     assert items(tray.menu)[0].text() == "walls · AW3225QF + PLX2783H (off)"
 
     find(tray.menu, "Start at login").trigger()
@@ -324,85 +351,112 @@ def test_tray_follows_the_overview() -> None:
     find(tray.menu, "Open wallpaper_py").trigger()
     find(tray.menu, "Library").trigger()
     find(tray.menu, "Settings…").trigger()
-    assert pages == ["home", "library", "settings"]
+    assert opened(client, NOT_SHOWN) == ["home", "library", "settings"]
+    assert started == ["home", "library", "settings"]  # no window had them
     find(tray.menu, "Quit").trigger()
     assert quits == [True]
 
 
+def test_menu_items_run_through_the_client() -> None:
+    client = FakeClient()
+    tray = make_tray(client)
+    client.publish(Overview(playlists=(WALLS,)))
+    find(tray.menu, "Next").trigger()
+    assert [request for request, _ in client.calls] == [queued("next", "walls-id")]
+
+
 def test_left_click_opens_home_window() -> None:
-    host = ServiceHost(
-        ServiceSettings(lambda: FakeBackend([]), FakePresence, nullcontext)
-    )
-    pages: list[PageName] = []
-    tray = Tray(host, FakeAutostart(), [], lambda: None, open_window=pages.append)
+    client = FakeClient()
+    tray = make_tray(client)
 
     tray._activated(  # pylint: disable=protected-access
         QSystemTrayIcon.ActivationReason.Trigger
     )
 
-    assert pages == ["home"]
+    assert opened(client, NOT_SHOWN) == ["home"]
+
+
+def test_an_open_window_is_shown_not_started_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = FakeClient()
+    started: list[PageName] = []
+    tray = make_tray(client, started=started)
+    notes: list[str] = []
+    monkeypatch.setattr(tray, "notify", notes.append)
+    tray.open_window("library")
+    assert opened(client, ShowWindowResult(shown=True)) == ["library"]
+    assert not started and not notes
+
+
+def test_a_window_that_cannot_open_is_notified(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def cannot_start(page: PageName) -> None:
+        raise OSError(f"no python for {page}")
+
+    client = FakeClient()
+    tray = Tray(
+        client, FakeAutostart(), ["py"], lambda: None, start_window=cannot_start
+    )
+    notes: list[str] = []
+    monkeypatch.setattr(tray, "notify", notes.append)
+    tray.open_window("settings")
+    opened(client, NOT_SHOWN)
+    tray.open_window("home")
+    opened(client, ErrorReply.make("internal", "a bug"))
+    assert notes == [
+        "Cannot open the window (settings): no python for settings",
+        "a bug",
+    ]
 
 
 def test_tray_notifies_failed_commands(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    host = ServiceHost(
-        ServiceSettings(lambda: FakeBackend([]), FakePresence, nullcontext)
-    )
-    error = ErrorReply.make("not_attached", "None attached")
-
-    def submit(_: Request, callback: Callable[[Reply], None]) -> None:
-        callback(error)  # as the service thread would answer
-
-    monkeypatch.setattr(host, "submit", submit)
-    tray = Tray(host, FakeAutostart(), [], lambda: None, open_window=print)
+    client = FakeClient()
+    tray = make_tray(client)
     notes: list[str] = []
     monkeypatch.setattr(tray, "notify", notes.append)
-    tray.run(queued("next", "walls"))
+    tray.run(queued("next", "walls-id"))
+    _, on_reply = client.calls[-1]
+    on_reply(ErrorReply.make("not_attached", "None attached"))  # as the daemon answers
     assert notes == ["None attached"]
 
 
 def test_starting_without_playlists_notifies_once_and_opens_settings(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    host = ServiceHost(
-        ServiceSettings(lambda: FakeBackend([]), FakePresence, nullcontext)
-    )
-    pages: list[PageName] = []
-    tray = Tray(host, FakeAutostart(), [], lambda: None, open_window=pages.append)
+    client = FakeClient()
+    tray = make_tray(client)
     shown: list[str] = []
     monkeypatch.setattr(tray, "_show_message", lambda m, _: shown.append(m))
-    host.overview_changed.emit(
+    client.publish(
         Overview(error="favourites.txt is not UTF-8 text")
     )  # not started yet
-    host.overview_changed.emit(Overview())
-    host.overview_changed.emit(Overview())
+    client.publish(Overview())
+    client.publish(Overview())
     assert shown == ["favourites.txt is not UTF-8 text", NO_PLAYLISTS_NOTE]  # once
     tray._message_clicked()  # pylint: disable=protected-access
-    assert pages == ["settings"]
+    assert opened(client, NOT_SHOWN) == ["settings"]
 
 
 def test_other_notifications_open_nothing_when_clicked() -> None:
-    host = ServiceHost(
-        ServiceSettings(lambda: FakeBackend([]), FakePresence, nullcontext)
-    )
-    pages: list[PageName] = []
-    tray = Tray(host, FakeAutostart(), [], lambda: None, open_window=pages.append)
-    host.overview_changed.emit(Overview())  # the no-playlists note
+    client = FakeClient()
+    tray = make_tray(client)
+    client.publish(Overview())  # the no-playlists note
     tray.notify("None attached")  # shown over it
     tray._message_clicked()  # pylint: disable=protected-access
-    assert not pages
+    assert not opened(client, NOT_SHOWN)
 
 
 def test_starting_with_playlists_does_not_notify(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    host = ServiceHost(
-        ServiceSettings(lambda: FakeBackend([]), FakePresence, nullcontext)
-    )
-    tray = Tray(host, FakeAutostart(), [], lambda: None, open_window=print)
+    client = FakeClient()
+    tray = make_tray(client)
     shown: list[str] = []
     monkeypatch.setattr(tray, "_show_message", lambda m, _: shown.append(m))
-    host.overview_changed.emit(Overview(playlists=(WALLS,)))
-    host.overview_changed.emit(Overview())  # the playlists deleted later
+    client.publish(Overview(playlists=(WALLS,)))
+    client.publish(Overview())  # the playlists deleted later
     assert not shown

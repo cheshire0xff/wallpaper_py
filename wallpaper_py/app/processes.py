@@ -1,12 +1,12 @@
 """
-Process plumbing shared by the app, the UI process and the CLI: the command
+Process plumbing shared by the daemon, the window process and the CLI: the command
 lines that start them, starting one detached, logging, Ctrl+C.
 
-Two long-lived processes exist: the app (`wallpaper tray` / `run`: the
-service, the tray, the command socket) and, on demand, the UI process
+Two long-lived processes exist: the daemon (`wallpaper tray` / `run`: the
+service, the tray, the command socket) and, on demand, the window process
 (`wallpaper ui`: the window). Each starts the other when needed: the tray
-opens windows, the UI process starts the app if it isn't running. (The CLI
-never starts the app: without one, it runs its command itself.)
+opens windows, the window process starts the daemon if it isn't running. (The CLI
+never starts the daemon.)
 
 No Qt at import time except in `quit_on_interrupt`, so the CLI can use the
 rest cheaply.
@@ -44,13 +44,13 @@ def _python_command() -> list[str]:
 
 def autostart_command() -> list[str]:
     """
-    How login (and the UI process, if no app runs) starts the tray app.
+    How login (and the window process, if no daemon runs) starts the tray daemon.
     """
     return [*_python_command(), "tray"]
 
 
 def ui_command(page: str) -> list[str]:
-    """How the tray starts the UI process, its window on `page`."""
+    """How the tray starts the window process, its window on `page`."""
     return [*_python_command(), "ui", page]
 
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wallpaper_py"
-version = "0.4.0"
+version = "0.5.0"
 description = "Per-monitor wallpaper playlists for Windows and KDE Plasma"
 readme = "README.md"
 requires-python = ">=3.12"

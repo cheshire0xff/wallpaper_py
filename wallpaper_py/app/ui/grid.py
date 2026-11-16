@@ -15,7 +15,7 @@ its thumbnail asks for it, and the grid tells the loader which tiles are
 on screen after every scroll, resize or new list, so requests for tiles
 scrolled away are dropped.
 
-`FolderScan` lists a folder's images off the UI thread for the grid.
+`FolderScan` lists a folder's images off the main thread for the grid.
 """
 
 from __future__ import annotations
@@ -305,7 +305,7 @@ class ImageGrid(QListView):
         self.viewport().update()
 
 
-# -- listing a folder off the UI thread -------------------------------------------
+# -- listing a folder off the main thread -------------------------------------------
 
 
 class FolderScan(QObject):

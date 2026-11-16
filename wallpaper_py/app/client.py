@@ -1,17 +1,26 @@
 """
-How windows talk to the app: `Client`, the only thing they may use.
+How the tray and the windows talk to the daemon: `Client`, the only thing
+they may use.
 
     client.run(request, on_reply)   a command; its Reply comes back later
     client.overview_changed         the latest Overview (also client.overview)
     client.changed                  a wallpaper changed (a Change)
     client.marks_changed            favourites or to-remove changed
-    client.failed                   the app can't be reached; nothing more comes
+    client.show_requested           come to the front on a page (only to the window)
+    client.failed                   the daemon can't be reached; nothing more comes
+                                    (SocketClient only: the daemon's own can't lose it)
 
-Windows never see the service, `ServiceWorker` or a socket. `SocketClient`
-implements it over the app's socket for the UI process: it subscribes (and
-starts the app first if none runs, which the CLI never does), and runs each command on
-a connection of its own. Everything is event driven: the UI thread never
-waits.
+Neither sees `PlaylistService`, `ServiceWorker` or a socket. Two
+implementations, each passing the protocol's events to `Client._dispatch`:
+
+- `LocalClient` (worker.py), the tray's, in the daemon: queued signals to
+  and from the service thread, the models as they are.
+- `SocketClient`, the window process's, over the daemon's socket: it
+  subscribes (and starts the daemon first if none runs, which the CLI never
+  does), as the window if asked to, and runs each command on a connection
+  of its own.
+
+Everything is event driven: the main thread never waits.
 """
 
 from __future__ import annotations
@@ -20,99 +29,160 @@ import logging
 import time
 import weakref
 from collections.abc import Callable
-from typing import override
+from typing import assert_never, override
 
 from PySide6.QtCore import QObject, QTimer, Signal, Slot
 from PySide6.QtNetwork import QLocalSocket
 from shiboken6 import Shiboken
 
-from ...core import paths
-from ...protocol import (
+from ..core import paths
+from ..protocol import (
     ChangedEvent,
-    CommandRequest,
+    ClientRequest,
     Envelope,
     ErrorReply,
+    Event,
     MarksChangedEvent,
     Overview,
     OverviewChangedEvent,
+    PageName,
     Reply,
+    ShowPageEvent,
+    ShowWindowResult,
     Subscribe,
 )
-from .. import ipc
+from . import ipc
 
 log = logging.getLogger(__name__)
 
 ReplyCallback = Callable[[Reply], None]
 
-START_TIMEOUT_S = 10.0  # for a started app to answer
+START_TIMEOUT_S = 10.0  # for a started daemon to answer
 RETRY_INTERVAL_MS = 200
 
 
-class ReplyTo[P: QObject]:
+class ReplyTo[P: QObject, *Ts]:
     """
-    A `Client.run` callback that calls `method(page, reply)`, holding the
-    page weakly: the window may close (and be deleted) before the reply.
+    A `Client.run` callback that calls `method(page, *args, reply)`, holding
+    the page weakly: the window may close (and be deleted) before the reply.
+    `args`: what the page needs to know about the request (plain data).
     """
 
-    def __init__(self, page: P, method: Callable[[P, Reply], None]) -> None:
+    def __init__(
+        self, page: P, method: Callable[[P, *Ts, Reply], None], *args: *Ts
+    ) -> None:
         self._page = weakref.ref(page)
         self._method = method
+        self._args = args
 
     def __call__(self, reply: Reply) -> None:
         page = self._page()
         if page is not None and Shiboken.isValid(page):
-            self._method(page, reply)
+            self._method(page, *self._args, reply)
+
+
+class OneAtATime:
+    """
+    For a request whose latest answer is all that counts (Home's `status`,
+    the Library's `stats`): one runs at a time, and asking while it runs
+    asks once more after its reply, so the last answer is never stale.
+
+        if asks.ask():          send it
+        ...reply: if asks.done(): ask again (more came meanwhile)
+    """
+
+    def __init__(self) -> None:
+        self._running = False
+        self._again = False
+
+    def ask(self) -> bool:
+        """True: send it now. False: one runs; it is asked again after it."""
+        if self._running:
+            self._again = True
+            return False
+        self._running = True
+        return True
+
+    def done(self) -> bool:
+        """Its reply came; True if it should be asked again now."""
+        self._running = False
+        again, self._again = self._again, False
+        return again
 
 
 class Client(QObject):
-    """The narrow interface windows depend on (see the module docstring)."""
+    """What the tray and the windows depend on (see the module docstring)."""
 
     overview_changed = Signal(object)  # protocol.Overview
     changed = Signal(object)  # core.service.Change
     marks_changed = Signal()  # read the list files again
+    show_requested = Signal(str)  # protocol.PageName; only to the window
     failed = Signal(str)  # message
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self.overview: Overview | None = None  # None until the first arrives
 
-    def run(self, request: CommandRequest, on_reply: ReplyCallback) -> None:
-        """Run `request` in the app; `on_reply` gets the reply (this thread)."""
+    def run(self, request: ClientRequest, on_reply: ReplyCallback) -> None:
+        """Run `request` in the daemon; `on_reply` gets the reply (this thread)."""
         raise NotImplementedError
 
-    def _set_overview(self, overview: Overview) -> None:
-        self.overview = overview
-        self.overview_changed.emit(overview)
+    @Slot(object)
+    def _dispatch(self, event: Event) -> None:
+        """An event from the daemon, as this client's signal."""
+        match event:
+            case OverviewChangedEvent(overview=overview):
+                self.overview = overview
+                self.overview_changed.emit(overview)
+            case ChangedEvent(change=change):
+                self.changed.emit(change)
+            case MarksChangedEvent():
+                self.marks_changed.emit()
+            case ShowPageEvent(page=page):
+                self.show_requested.emit(page)
+            case _:  # a new event: mypy says it is missing here
+                assert_never(event)
 
 
 class SocketClient(Client):
     """
-    `Client` over the app's socket. `start()` subscribes; if no app runs,
-    it calls `start_app` once and retries for START_TIMEOUT_S. `ended`
-    fires when an established subscription closes (the app quit). `idle`
-    fires when the last command in flight has its reply (see `busy`).
+    `Client` over the daemon's socket. `start()` subscribes; if no daemon runs,
+    it calls `start_daemon` once (`daemon_started`) and retries for
+    START_TIMEOUT_S. `accepted` fires with the subscription's first event,
+    `ended` when it closes later (the daemon quit). `idle` fires when the
+    last command in flight has its reply (see `busy`).
+
+    With `window`, it subscribes as the window, on that page: refused when
+    another process has the window, which shows that page instead
+    (`shown_elsewhere`; nothing more happens).
     """
 
     # pylint: disable=too-many-instance-attributes
 
+    accepted = Signal()
+    daemon_started = Signal()
+    shown_elsewhere = Signal()
     ended = Signal()
     idle = Signal()
 
+    # pylint: disable-next=too-many-arguments
     def __init__(
         self,
         name: str,
-        start_app: Callable[[], None] | None,
+        start_daemon: Callable[[], None] | None,
         *,
+        window: PageName | None = None,
         start_timeout_s: float = START_TIMEOUT_S,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
         self._name = name
-        self._start_app = start_app
+        self._start_daemon = start_daemon
+        self._window = window
         self._start_timeout_s = start_timeout_s
-        self._deadline: float | None = None  # set once the app was started
+        self._deadline: float | None = None  # set once the daemon was started
         self._socket: QLocalSocket | None = None
-        self._buffer = bytearray()
+        self._lines = ipc.LineBuffer(ipc.MAX_REPLY, "Event")
         self._subscribed = False
         self._over = False  # failed, ended or closed: nothing more happens
         self._in_flight = 0  # commands sent by `run` and not answered yet
@@ -121,6 +191,7 @@ class SocketClient(Client):
         self._connect()
 
     def close(self) -> None:
+        """End the subscription now; commands in flight still get replies."""
         self._over = True
         self._drop_socket()
 
@@ -132,7 +203,7 @@ class SocketClient(Client):
         return self._in_flight > 0
 
     @override
-    def run(self, request: CommandRequest, on_reply: ReplyCallback) -> None:
+    def run(self, request: ClientRequest, on_reply: ReplyCallback) -> None:
         # The callbacks live in the LineRequest, which Qt owns: they hold
         # this client weakly, or it would never be freed (see AGENTS.md).
         client = weakref.ref(self)
@@ -172,7 +243,7 @@ class SocketClient(Client):
 
     # -- the subscription ------------------------------------------------------
 
-    # Slots are bound methods (no lambdas holding `self`, see ipc.LineServer).
+    # Slots are bound methods (no lambdas holding `self`, see ipc.CommandServer).
     # A socket replaced by a retry may still signal, so each slot first
     # checks that the sender is the current socket.
 
@@ -182,7 +253,7 @@ class SocketClient(Client):
             return
         socket = QLocalSocket(self)
         self._socket = socket
-        self._buffer.clear()
+        self._lines = ipc.LineBuffer(ipc.MAX_REPLY, "Event")
         socket.connected.connect(self._subscribe)
         socket.readyRead.connect(self._ready_read)
         socket.errorOccurred.connect(self._error)
@@ -197,7 +268,7 @@ class SocketClient(Client):
     @Slot()
     def _subscribe(self) -> None:
         if (socket := self._current()) is not None:
-            envelope = Envelope(request=Subscribe())
+            envelope = Envelope(request=Subscribe(window=self._window))
             socket.write(ipc.encode(envelope))
 
     @Slot()
@@ -211,27 +282,32 @@ class SocketClient(Client):
             self._end(socket)
 
     def _read(self, socket: QLocalSocket) -> None:
-        self._buffer += socket.readAll().data()
-        while not self._over and b"\n" in self._buffer:
-            line, _, rest = self._buffer.partition(b"\n")
-            self._buffer = bytearray(rest)
+        try:
+            lines = self._lines.feed(socket.readAll().data())
+        except ipc.ProtocolError as err:
+            self._fail(f"Cannot read wallpaper_py's events: {err}")
+            return
+        for line in lines:
+            if self._over:
+                return
             try:
-                message = ipc.decode_event(bytes(line))
+                message = ipc.decode_event(line)
             except ipc.ProtocolError as err:  # e.g. an event added later
-                log.info("Skipping a line from the app: %s", err)
+                log.info("Skipping a line from the daemon: %s", err)
                 continue
-            if isinstance(message, ErrorReply):  # the app refused
+            if isinstance(message, ErrorReply):  # the daemon refused
                 self._fail(message.error.message)
+                return
+            if isinstance(message, ShowWindowResult):  # another has the window
+                log.info("The window is open in another process: shown there")
+                self.close()
+                self.shown_elsewhere.emit()
                 return
             if not self._subscribed:
                 self._subscribed = True
-                log.info("Connected to the app")
-            if isinstance(message, OverviewChangedEvent):
-                self._set_overview(message.overview)
-            elif isinstance(message, ChangedEvent):
-                self.changed.emit(message.change)
-            elif isinstance(message, MarksChangedEvent):
-                self.marks_changed.emit()
+                log.info("Connected to the daemon")
+                self.accepted.emit()
+            self._dispatch(message)
 
     @Slot(QLocalSocket.LocalSocketError)
     def _error(self, error: QLocalSocket.LocalSocketError) -> None:
@@ -253,21 +329,24 @@ class SocketClient(Client):
         if self._over or not self._subscribed:
             return
         self._read(socket)
-        log.info("The app closed the connection")
+        if self._over:  # what was left failed it (a line too long)
+            return
+        log.info("The daemon closed the connection")
         self.close()
         self.ended.emit()
 
     def _retry(self) -> None:
         if self._deadline is None:
-            if self._start_app is None:
+            if self._start_daemon is None:
                 self._fail("wallpaper_py is not running")
                 return
             try:
-                self._start_app()
+                self._start_daemon()
             except OSError as err:
                 self._fail(f"Cannot start wallpaper_py: {err}")
                 return
             self._deadline = time.monotonic() + self._start_timeout_s
+            self.daemon_started.emit()
         elif time.monotonic() >= self._deadline:
             self._fail(f"could not start wallpaper_py; see {paths.log_file()}")
             return

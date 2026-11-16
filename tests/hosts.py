@@ -1,4 +1,4 @@
-"""The app's service thread and socket in the test process, and clients for it."""
+"""The daemon's service thread and socket in the test process, and clients for it."""
 
 from collections.abc import Callable
 from contextlib import nullcontext
@@ -6,15 +6,17 @@ from contextlib import nullcontext
 from PySide6.QtNetwork import QLocalSocket
 from pytestqt.qtbot import QtBot
 
-from wallpaper_py.app.worker import ServiceHost, ServiceSettings
+from wallpaper_py.app.worker import ServiceSettings, ServiceThread
 from wallpaper_py.core.backend import Backend
 
 from .fakes import FakePresence
 
 
-def make_host(backend_factory: Callable[[], Backend], server_name: str) -> ServiceHost:
+def make_service_thread(
+    backend_factory: Callable[[], Backend], server_name: str
+) -> ServiceThread:
     """Not started; ticks only at start and on request. Shut it down after."""
-    return ServiceHost(
+    return ServiceThread(
         ServiceSettings(
             backend_factory=backend_factory,
             presence_factory=FakePresence,

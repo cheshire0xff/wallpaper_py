@@ -39,7 +39,7 @@ def fixture_dark() -> Iterator[theme.Tones]:
 
 
 @pytest.fixture(name="host")
-def fixture_host(qtbot: QtBot) -> Callable[[QWidget], QWidget]:
+def fixture_service_thread(qtbot: QtBot) -> Callable[[QWidget], QWidget]:
     """Puts a control in a shown, active window (for focus and the pointer)."""
     windows: list[QWidget] = []  # kept alive until the test ends
 

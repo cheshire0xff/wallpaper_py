@@ -31,7 +31,6 @@ from wallpaper_py.core.settings import (
     Settings,
 )
 from wallpaper_py.protocol import (
-    Command,
     CommandRequest,
     DesktopMonitor,
     Envelope,
@@ -50,9 +49,9 @@ from wallpaper_py.protocol import (
     RemoveResult,
     Reply,
     Request,
+    StatusRequest,
     ResetCycleRequest,
     ResetCycleResult,
-    ResumeResult,
     SaveSettingsRequest,
     SaveSettingsResult,
     SettingsRequest,
@@ -124,16 +123,16 @@ def fixture_service(tmp_path: Path, backend: FakeBackend) -> Iterator[PlaylistSe
 
 
 def request(
-    command: Command | TargetCommand, target: str | None = None
+    command: Literal["status"] | TargetCommand, target: str | None = None
 ) -> CommandRequest:
     if command == "status":
-        return Request(command="status")
+        return StatusRequest()
     return target_request(command, target)
 
 
 def run(
     service: PlaylistService,
-    command: Command | TargetCommand,
+    command: Literal["status"] | TargetCommand,
     target: str | None = None,
 ) -> Reply:
     return execute(service, request(command, target)).reply
@@ -141,12 +140,36 @@ def run(
 
 def walls_change(tmp_path: Path, name: str, reason: ChangeReason = "next") -> Change:
     # Side is detached already: only members detaching mid-change are "missed".
-    return Change("walls", tmp_path / "walls" / name, reason, ("Main",))
+    return Change("walls-id", "walls", tmp_path / "walls" / name, reason, ("Main",))
 
 
 def test_unknown_command_is_rejected() -> None:
     with pytest.raises(ValueError):
         Request(command="delete")  # type: ignore[arg-type]
+
+
+def test_status_takes_no_target() -> None:
+    with pytest.raises(ValueError):
+        StatusRequest(target="walls")  # type: ignore[call-arg]
+
+
+def test_a_playlist_is_found_by_its_id_or_its_name(service: PlaylistService) -> None:
+    by_id = execute(service, Request(command="hold", target="walls-id")).reply
+    assert by_id == HoldResult(
+        command="hold", playlist="walls", held=True, changed=True
+    )
+    by_name = execute(service, Request(command="resume", target="WALLS")).reply
+    assert by_name == HoldResult(
+        command="resume", playlist="walls", held=False, changed=True
+    )
+
+
+def test_an_id_wins_over_a_name_that_looks_like_it(service: PlaylistService) -> None:
+    walls = service.settings.playlists[0]
+    other = service.settings.playlists[1].model_copy(update={"name": walls.id})
+    settings = service.settings.model_copy(update={"playlists": (other, walls)})
+    service.save_settings(settings, service.revision())
+    assert service.find_playlist(walls.id).id == walls.id
 
 
 def test_commands_reply_with_data(service: PlaylistService, tmp_path: Path) -> None:
@@ -307,7 +330,7 @@ def test_commands_that_change_wallpapers_return_the_change(
     assert change("prev") is None  # nothing earlier
     assert change("fav") is None and change("unfav") is None
     assert change("remove") == ("b.jpg", "next")
-    assert execute(service, Request(command="status")).change is None
+    assert execute(service, StatusRequest()).change is None
 
 
 @pytest.mark.parametrize(
@@ -340,21 +363,21 @@ def test_pick_hold_resume_reply_with_data(
     image.parent.mkdir()
     Image.new("RGB", (8, 8)).save(image)
     outcome = execute(service, PickRequest(target="walls", image=image))
-    change = Change("walls", image, "picked", ("Main",))
+    change = Change("walls-id", "walls", image, "picked", ("Main",))
     assert outcome == Outcome(PickResult(playlist="walls", change=change), change)
 
     assert run(service, "hold", "walls") == HoldResult(
-        playlist="walls", held=True, changed=True
+        command="hold", playlist="walls", held=True, changed=True
     )
     assert run(service, "hold", "main") == HoldResult(
-        playlist="walls", held=True, changed=False
+        command="hold", playlist="walls", held=True, changed=False
     )
     assert overview(service).playlists[0].held
-    assert run(service, "resume", "walls") == ResumeResult(
-        playlist="walls", held=False, changed=True
+    assert run(service, "resume", "walls") == HoldResult(
+        command="resume", playlist="walls", held=False, changed=True
     )
-    assert run(service, "resume", "walls") == ResumeResult(
-        playlist="walls", held=False, changed=False
+    assert run(service, "resume", "walls") == HoldResult(
+        command="resume", playlist="walls", held=False, changed=False
     )
     assert execute(service, Request(command="hold", target="walls")).change is None
 
@@ -511,7 +534,7 @@ def test_settings_and_save_settings(service: PlaylistService) -> None:
     )
     saved = outcome.reply
     assert isinstance(saved, SaveSettingsResult)
-    assert outcome.render  # the app ticks before replying
+    assert outcome.render  # the daemon ticks before replying
     assert saved.revision == reply.revision + 1
     assert len(saved.warnings) == 2  # 10m is shorter than the idle pause
     assert service.settings == edit
@@ -525,7 +548,7 @@ def test_settings_and_save_settings(service: PlaylistService) -> None:
     ).reply
     assert isinstance(invalid, ErrorReply)
     assert invalid.error.kind == "invalid_settings"
-    assert "idle pause" in invalid.error.message
+    assert invalid.error.message.startswith("Idle pause: Must be more than 0")
 
 
 def test_save_settings_request_is_strict() -> None:

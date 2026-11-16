@@ -1,11 +1,11 @@
 """
-Playlist commands run on the service: a `Request` in, a result (or an
+Playlist commands run on the service: a request in, a result (or an
 error) out, as the data models of `protocol.py`; no text. The CLI formats
 its output from them, the tray and the windows show them.
 
-`execute()` runs a command on the app's service thread, whether it came over
-the socket (CLI, UI process) or from the tray. Besides the reply it returns
-the wallpaper change the command made, if any, so the app announces it like
+`execute()` runs a command on the daemon's service thread, whether it came over
+the socket (CLI, window process) or from the tray. Besides the reply it returns
+the wallpaper change the command made, if any, so the daemon announces it like
 a tick's. Qt-free, like the core.
 
 `open_service()` runs the service on the settings in the state database;
@@ -19,10 +19,10 @@ lists what comes next. The list commands (`fav`, `unfav`, `remove`,
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import NamedTuple, get_args
+from typing import NamedTuple
 
 from .core import paths
 from .core.backend import Backend
@@ -48,7 +48,6 @@ from .core.service import (
 from .core.settings import PlaylistSettings, SettingsError, StaleSettingsError
 from .core.store import Store
 from .protocol import (
-    Command,
     DesktopMonitor,
     ErrorKind,
     Geometry,
@@ -69,7 +68,6 @@ from .protocol import (
     Reply,
     ResetCycleRequest,
     ResetCycleResult,
-    ResumeResult,
     SaveSettingsRequest,
     SaveSettingsResult,
     CommandRequest,
@@ -77,6 +75,7 @@ from .protocol import (
     SettingsResult,
     StatsRequest,
     StatsResult,
+    StatusRequest,
     StatusResult,
     UpcomingRequest,
     UpcomingResult,
@@ -87,7 +86,7 @@ class Outcome(NamedTuple):
     """
     What a command did: its reply, the wallpaper change it made, and
     whether monitors wait to be rendered again (their playlist, look or
-    folder changed): the app then ticks before it replies.
+    folder changed): the daemon then ticks before it replies.
     """
 
     reply: Reply
@@ -117,7 +116,9 @@ def open_service(
         yield service
 
 
-def execute(service: PlaylistService, request: CommandRequest) -> Outcome:
+def execute(  # pylint: disable=too-many-return-statements
+    service: PlaylistService, request: CommandRequest
+) -> Outcome:
     """
     An expected failure is an error reply, except a broken list file.
 
@@ -127,31 +128,64 @@ def execute(service: PlaylistService, request: CommandRequest) -> Outcome:
             with the error until the file can be read (see app/worker.py).
     """
     try:
-        if isinstance(request, SettingsRequest | SaveSettingsRequest):
-            return _settings_command(service, request)
-        if request.command == "status":
-            return Outcome(_status(service))
-        if isinstance(request, StatsRequest | ResetCycleRequest):
-            return Outcome(_library_command(service, request))
-        if isinstance(request, MarkRequest):
-            return _mark_command(service, request)
-        return _playlist_command(service, request)
+        match request:
+            case StatusRequest():
+                return Outcome(_status(service))
+            case Request():
+                return _playlist_command(service, request)
+            case MarkRequest():
+                return _mark_command(service, request)
+            case PickRequest():
+                playlist = service.find_playlist(request.target)
+                change = service.pick(playlist, request.image)
+                return Outcome(
+                    PickResult(playlist=playlist.name, change=change), change
+                )
+            case UpcomingRequest():
+                playlist = service.find_playlist(request.target)
+                images = tuple(service.upcoming(playlist, request.limit))
+                return Outcome(UpcomingResult(playlist=playlist.name, images=images))
+            case StatsRequest():
+                return Outcome(_stats(service, request))
+            case ResetCycleRequest():
+                playlist = service.find_playlist(request.target)
+                unseen = service.reset_cycle(playlist)
+                return Outcome(ResetCycleResult(playlist=playlist.name, unseen=unseen))
+            case SettingsRequest():
+                return Outcome(
+                    SettingsResult(
+                        settings=service.settings, revision=service.revision()
+                    )
+                )
+            case SaveSettingsRequest():
+                # Monitors whose settings changed are rendered by the caller's tick.
+                return Outcome(_save_settings(service, request), render=True)
     except WallpaperError as err:  # not a ConfigError: that one goes up
         return Outcome(error_reply(err))
 
 
-def _playlist_command(
-    service: PlaylistService, request: Request | PickRequest | UpcomingRequest
-) -> Outcome:
-    """The commands on one playlist (not `status`, which has no target)."""
+def _playlist_command(service: PlaylistService, request: Request) -> Outcome:
+    """`next`, `prev`, `hold` and `resume` on one playlist."""
     playlist = service.find_playlist(request.target)
-    if isinstance(request, PickRequest):
-        change = service.pick(playlist, request.image)
-        return Outcome(PickResult(playlist=playlist.name, change=change), change)
-    if isinstance(request, UpcomingRequest):
-        images = tuple(service.upcoming(playlist, request.limit))
-        return Outcome(UpcomingResult(playlist=playlist.name, images=images))
-    return _TARGET_HANDLERS[request.command](service, playlist)
+    match request.command:
+        case "next":
+            change = service.next(playlist)
+            return Outcome(NextResult(playlist=playlist.name, change=change), change)
+        case "prev":
+            earlier = service.previous(playlist)
+            return Outcome(PrevResult(playlist=playlist.name, change=earlier), earlier)
+        case "hold":
+            changed = service.hold(playlist)
+            held = HoldResult(
+                command="hold", playlist=playlist.name, held=True, changed=changed
+            )
+            return Outcome(held)
+        case "resume":
+            changed = service.resume(playlist)
+            resumed = HoldResult(
+                command="resume", playlist=playlist.name, held=False, changed=changed
+            )
+            return Outcome(resumed)
 
 
 # Most specific first: the first match names the kind.
@@ -177,39 +211,13 @@ def error_reply(err: Exception) -> ErrorReply:
     return ErrorReply.make("internal", f"Unexpected error: {err}")
 
 
-def _settings_command(
-    service: PlaylistService,
-    request: SettingsRequest | SaveSettingsRequest,
-) -> Outcome:
-    """The commands on the settings."""
-    match request:
-        case SettingsRequest():
-            return Outcome(
-                SettingsResult(settings=service.settings, revision=service.revision())
-            )
-        case SaveSettingsRequest():
-            return Outcome(_save_settings(service, request), render=True)
-
-
 def _save_settings(
     service: PlaylistService, request: SaveSettingsRequest
 ) -> SaveSettingsResult:
-    """Monitors whose settings changed are rendered by the caller's tick."""
     revision = service.save_settings(request.settings, request.revision)
     return SaveSettingsResult(
         revision=revision, warnings=tuple(service.settings.warnings())
     )
-
-
-def _library_command(
-    service: PlaylistService, request: StatsRequest | ResetCycleRequest
-) -> StatsResult | ResetCycleResult:
-    """The commands on a playlist's library: count it, start its cycle over."""
-    if isinstance(request, StatsRequest):
-        return _stats(service, request)
-    playlist = service.find_playlist(request.target)
-    unseen = service.reset_cycle(playlist)
-    return ResetCycleResult(playlist=playlist.name, unseen=unseen)
 
 
 def _stats(service: PlaylistService, request: StatsRequest) -> StatsResult:
@@ -234,16 +242,6 @@ def _status(service: PlaylistService) -> StatusResult:
         paused=service.pause_reason(),
         warnings=tuple(service.settings.warnings()),
     )
-
-
-def _next(service: PlaylistService, playlist: PlaylistSettings) -> Outcome:
-    change = service.next(playlist)
-    return Outcome(NextResult(playlist=playlist.name, change=change), change)
-
-
-def _prev(service: PlaylistService, playlist: PlaylistSettings) -> Outcome:
-    change = service.previous(playlist)
-    return Outcome(PrevResult(playlist=playlist.name, change=change), change)
 
 
 def _mark_command(service: PlaylistService, request: MarkRequest) -> Outcome:
@@ -297,26 +295,6 @@ def _remove_current(service: PlaylistService, playlist: PlaylistSettings) -> Out
         change=change,
     )
     return Outcome(result, change)
-
-
-def _hold(service: PlaylistService, playlist: PlaylistSettings) -> Outcome:
-    changed = service.hold(playlist)
-    return Outcome(HoldResult(playlist=playlist.name, held=True, changed=changed))
-
-
-def _resume(service: PlaylistService, playlist: PlaylistSettings) -> Outcome:
-    changed = service.resume(playlist)
-    return Outcome(ResumeResult(playlist=playlist.name, held=False, changed=changed))
-
-
-_Handler = Callable[[PlaylistService, PlaylistSettings], Outcome]
-_TARGET_HANDLERS: dict[Command, _Handler] = {
-    "next": _next,
-    "prev": _prev,
-    "hold": _hold,
-    "resume": _resume,
-}
-assert set(_TARGET_HANDLERS) == set(get_args(Command)) - {"status"}
 
 
 # -- overview and status ---------------------------------------------------------

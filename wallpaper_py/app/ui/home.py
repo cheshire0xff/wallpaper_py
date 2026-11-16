@@ -3,11 +3,11 @@ Home, the main window's first page: the monitors to scale on a panel, then
 one row per playlist with its current wallpaper (docs/design/README.md,
 "The look"; docs/design/home.png).
 
-Everything it shows comes from the app through `Client`: it redraws from
+Everything it shows comes from the daemon through `Client`: it redraws from
 `overview_changed` (never polls), and after each new overview asks once
 for `status` for the schedule (order, interval, time left), which it counts
 down locally until the next overview. Buttons send the playlist commands;
-their toggles (favourite, hold) show the app's state from the overview,
+their toggles (favourite, hold) show the daemon's state from the overview,
 never the click. A command's error shows in its row, not as a dialog.
 Pointing at a row (or at a monitor) highlights the playlist in both: a
 faint fill on the row, an accent outline on its monitors. Without
@@ -15,13 +15,12 @@ playlists, it says so, with a button to Settings (`page_wanted`).
 
 Image details (dimensions, file size), thumbnails and the small copies the
 monitor previews are rendered from are read from the files by
-`ThumbnailLoader`, off the UI thread (the window's, shared with Settings).
+`ThumbnailLoader`, off the main thread (the window's, shared with Settings).
 """
 
 from __future__ import annotations
 
 import time
-import weakref
 from collections.abc import Callable
 from pathlib import Path
 from typing import cast, override
@@ -37,25 +36,25 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from shiboken6 import Shiboken
 
+from ...core.settings import PlaylistId
 from ...protocol import (
     ErrorReply,
-    MonitorView,
     Overview,
     PlaylistDetails,
     PlaylistView,
     PrevResult,
     RemoveResult,
     Reply,
-    Request,
+    StatusRequest,
     StatusResult,
     TargetCommand,
     target_request,
 )
+from ...texts import members, not_rotating, rounded_duration
+from ..client import Client, OneAtATime, ReplyTo
 from . import theme
 from .arrangement import MonitorsView
-from .client import Client
 from .thumbnails import ROW_THUMBNAIL, ImageInfo, Thumbnail, ThumbnailLoader
 
 COUNTDOWN_MS = 1000
@@ -76,46 +75,8 @@ def format_size(size: int) -> str:
     return f"{value:.1f} GB"
 
 
-def format_duration(seconds: float) -> str:
-    """
-    As the settings write durations: 45s, 5m50s (under 10 minutes), 21m,
-    1h, 1h5m, 2d, 2d3h.
-    """
-    whole = max(round(seconds), 0)
-    if whole < 60:
-        return f"{whole}s"
-    if whole < 600:
-        minutes, rest = divmod(whole, 60)
-        return f"{minutes}m{rest}s" if rest else f"{minutes}m"
-    minutes = round(whole / 60)
-    if minutes < 60:
-        return f"{minutes}m"
-    hours, minutes = divmod(minutes, 60)
-    if hours < 24:
-        return f"{hours}h{minutes}m" if minutes else f"{hours}h"
-    days, hours = divmod(hours, 24)
-    return f"{days}d{hours}h" if hours else f"{days}d"
-
-
-def members_text(view: PlaylistView) -> str:
-    """The playlist's monitors: "AW3225QF + PLX2783H (off)"."""
-    return " + ".join(_member(m) for m in view.monitors)
-
-
-def _member(monitor: MonitorView) -> str:
-    if monitor.attached is None:
-        return f"{monitor.name} (not found)"
-    return monitor.name if monitor.attached else f"{monitor.name} (off)"
-
-
-def chip_text(view: PlaylistView) -> str | None:
-    if view.manual:
-        return "Manual"
-    return "Held" if view.held else None
-
-
 def counting(view: PlaylistView, paused: str | None) -> bool:
-    """Whether its time left runs down right now (as the app counts it)."""
+    """Whether its time left runs down right now (as the daemon counts it)."""
     return not view.manual and not view.held and view.attached and paused is None
 
 
@@ -131,10 +92,10 @@ def schedule_text(
     order = details.order.value
     if view.manual or details.interval is None:
         return f"{order} · manual"
-    text = f"{order}, every {format_duration(details.interval)}"
+    text = f"{order}, every {rounded_duration(details.interval)}"
     if left is None:
         return text
-    remaining = format_duration(max(left, 0.0))
+    remaining = rounded_duration(max(left, 0.0))
     if view.held:
         return f"{text} · {remaining} left once resumed"
     if not view.attached:
@@ -194,8 +155,9 @@ class PlaylistRow(QWidget):
 
     # pylint: disable=too-many-instance-attributes
 
-    requested = Signal(str, str)  # playlist, command
-    hovered = Signal(object)  # this playlist when the pointer enters, None on leave
+    requested = Signal(str, str)  # playlist id, command
+    # This playlist's id when the pointer enters, None on leave.
+    hovered = Signal(object)
 
     def __init__(self, view: PlaylistView, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -296,8 +258,8 @@ class PlaylistRow(QWidget):
     # -- state -------------------------------------------------------------------
 
     @property
-    def name(self) -> str:
-        return self._view.name
+    def playlist_id(self) -> PlaylistId:
+        return self._view.id
 
     def view(self) -> PlaylistView:
         return self._view
@@ -308,11 +270,11 @@ class PlaylistRow(QWidget):
             self._thumbnail = None
         self._view = view
         self.title.setText(view.name)
-        self.monitors.setText(members_text(view))
-        self.monitors.setToolTip(members_text(view))
+        self.monitors.setText(members(view))
+        self.monitors.setToolTip(members(view))
         self.link.setVisible(len(view.monitors) > 1)  # a mirrored group
-        chip = chip_text(view)
-        self.chip.setText(chip or "")
+        chip = not_rotating(view)  # "manual", "held"
+        self.chip.setText(chip.capitalize() if chip else "")
         self.chip.setVisible(chip is not None)
         current = view.current
         self.file.setText(current.name if current else "Nothing shown yet")
@@ -404,7 +366,7 @@ class PlaylistRow(QWidget):
     @override
     def enterEvent(self, event: QEnterEvent) -> None:  # pylint: disable=invalid-name
         super().enterEvent(event)
-        self.hovered.emit(self._view.name)
+        self.hovered.emit(self._view.id)
 
     @override
     def leaveEvent(self, event: QEvent) -> None:  # pylint: disable=invalid-name
@@ -435,7 +397,7 @@ class PlaylistRow(QWidget):
     # -- buttons -----------------------------------------------------------------
 
     def _send(self, command: TargetCommand) -> None:
-        self.requested.emit(self._view.name, command)
+        self.requested.emit(self._view.id, command)
 
     @Slot()
     def _prev(self) -> None:
@@ -462,22 +424,6 @@ class PlaylistRow(QWidget):
 # -- the page ---------------------------------------------------------------------
 
 
-class _ReplyTo:
-    """
-    A reply callback for `Client.run` that holds the page weakly: the window
-    may close (and be deleted) before the reply arrives.
-    """
-
-    def __init__(self, page: HomePage, playlist: str | None) -> None:
-        self._page = weakref.ref(page)
-        self._playlist = playlist
-
-    def __call__(self, reply: Reply) -> None:
-        page = self._page()
-        if page is not None and Shiboken.isValid(page):
-            page.replied(self._playlist, reply)
-
-
 class HomePage(QWidget):
     """See the module docstring. `page_wanted`: a page to switch to."""
 
@@ -496,21 +442,16 @@ class HomePage(QWidget):
         self._client = client
         self._clock = clock
         self._overview: Overview | None = None
-        self._details: dict[str, PlaylistDetails] = {}
+        self._details: dict[PlaylistId, PlaylistDetails] = {}
         self._details_at = 0.0
-        self._status_running = False
-        self._status_again = False
+        self._status_asks = OneAtATime()
         self._closed = False
-        self.rows: dict[str, PlaylistRow] = {}
+        self.rows: dict[PlaylistId, PlaylistRow] = {}
 
         self.loader = loader  # the window's, shared with Settings; it closes it
         self.loader.loaded.connect(self._thumbnail_loaded)
 
-        self.banner = QLabel(self)
-        self.banner.setWordWrap(True)
-        self.banner.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
-        )
+        self.banner = theme.Banner(self)
         self.monitors_heading = theme.heading("Monitors", self)
         self.monitors_view = MonitorsView(self)
         self.monitors_view.set_heights(220, 360, 0.3)
@@ -531,7 +472,7 @@ class HomePage(QWidget):
         if client.overview is not None:
             self.show_overview(client.overview)
         else:
-            self._set_banner("Connecting to wallpaper_py…")
+            self.banner.set_message("Connecting to wallpaper_py…")
 
     def _build(self) -> None:
         panel = theme.Panel(self)
@@ -575,14 +516,14 @@ class HomePage(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(self._scroll)
 
-    # -- from the app ------------------------------------------------------------
+    # -- from the daemon ------------------------------------------------------------
 
     @Slot(object)
     def show_overview(self, overview: Overview) -> None:
         if self._closed:
             return
         self._overview = overview
-        self._set_banner(f"Error: {overview.error}" if overview.error else None)
+        self.banner.set_message(f"Error: {overview.error}" if overview.error else None)
         self.monitors_heading.setText(f"Monitors ({len(overview.monitors)})")
         self.monitors_view.show_overview(overview)
         self._update_rows(overview)
@@ -595,14 +536,11 @@ class HomePage(QWidget):
 
     @Slot(str)
     def show_error(self, message: str) -> None:
-        self._set_banner(f"Error: {message}")
+        self.banner.set_message(f"Error: {message}")
 
-    def replied(self, playlist: str | None, reply: Reply) -> None:
-        """A command's reply (`playlist` None: the status request)."""
+    def replied(self, playlist: PlaylistId, reply: Reply) -> None:
+        """A playlist command's reply (`playlist`: its id)."""
         if self._closed:
-            return
-        if playlist is None:
-            self._status_replied(reply)
             return
         row = self.rows.get(playlist)
         if row is None:
@@ -627,47 +565,47 @@ class HomePage(QWidget):
     # -- rows --------------------------------------------------------------------
 
     def _update_rows(self, overview: Overview) -> None:
-        names = [p.name for p in overview.playlists]
-        for name in [n for n in self.rows if n not in names]:
-            gone = self.rows.pop(name)
+        ids = [p.id for p in overview.playlists]
+        for gone_id in [i for i in self.rows if i not in ids]:
+            gone = self.rows.pop(gone_id)
             self._rows_box.removeWidget(gone)
             gone.hide()
             gone.deleteLater()
         for view in overview.playlists:
-            row = self.rows.get(view.name)
+            row = self.rows.get(view.id)
             if row is None:
                 new = PlaylistRow(view, self)
                 new.requested.connect(self._send)
                 new.hovered.connect(self._hover)
-                self.rows[view.name] = new
+                self.rows[view.id] = new
             else:
                 row.show_view(view)
         # In the overview's (the settings') order.
-        self.rows = {name: self.rows[name] for name in names}
+        self.rows = {playlist_id: self.rows[playlist_id] for playlist_id in ids}
         for index, row in enumerate(self.rows.values()):
             self._rows_box.removeWidget(row)
             self._rows_box.insertWidget(index, row)
             row.set_divider(index > 0)
-        self.empty.setVisible(not names and not overview.error)
+        self.empty.setVisible(not ids and not overview.error)
 
     @Slot()
     def _open_settings(self) -> None:
         self.page_wanted.emit("settings")
 
     @Slot(object)
-    def _hover(self, playlist: str | None) -> None:
+    def _hover(self, playlist: PlaylistId | None) -> None:
         """A row or a monitor is pointed at: highlight its playlist in both."""
         self.monitors_view.set_highlight(playlist)
-        for name, row in self.rows.items():
-            row.set_highlighted(name == playlist)
+        for playlist_id, row in self.rows.items():
+            row.set_highlighted(playlist_id == playlist)
 
     @Slot(str, str)
-    def _send(self, playlist: str, command: str) -> None:
+    def _send(self, playlist: PlaylistId, command: str) -> None:
         row = self.rows.get(playlist)
         if row is not None:
             row.show_message(None)
         request = target_request(cast(TargetCommand, command), playlist)
-        self._client.run(request, _ReplyTo(self, playlist))
+        self._client.run(request, ReplyTo(self, HomePage.replied, playlist))
 
     # -- thumbnails --------------------------------------------------------------
 
@@ -687,29 +625,26 @@ class HomePage(QWidget):
     # -- the schedule (status) ---------------------------------------------------
 
     def _ask_status(self) -> None:
-        """One status request at a time; ask again if more came meanwhile."""
+        """One status request at a time; asked again if more came meanwhile."""
         if self._overview is None or self._overview.error:
             return
-        if self._status_running:
-            self._status_again = True
-            return
-        self._status_running = True
-        self._client.run(Request(command="status"), _ReplyTo(self, None))
+        if self._status_asks.ask():
+            self._client.run(StatusRequest(), ReplyTo(self, HomePage.status_replied))
 
-    def _status_replied(self, reply: Reply) -> None:
-        self._status_running = False
-        if self._status_again:  # the overview changed meanwhile: ask again
-            self._status_again = False
+    def status_replied(self, reply: Reply) -> None:
+        if self._closed:
+            return
+        if self._status_asks.done():  # the overview changed meanwhile
             self._ask_status()
         if isinstance(reply, StatusResult):
-            self._details = {p.name: p for p in reply.playlists}
+            self._details = {p.id: p for p in reply.playlists}
             self._details_at = self._clock()
             self._refresh_details()
         elif isinstance(reply, ErrorReply) and reply.error.kind == "unreachable":
             self.show_error(reply.error.message)
 
     def _left(self, view: PlaylistView) -> float | None:
-        details = self._details.get(view.name)
+        details = self._details.get(view.id)
         if details is None or details.next_in_seconds is None:
             return None
         left = details.next_in_seconds
@@ -723,8 +658,8 @@ class HomePage(QWidget):
         any_counting = False
         for row in self.rows.values():
             view = row.view()
-            row.set_details(self._details.get(view.name), self._left(view))
-            any_counting |= counting(view, paused) and view.name in self._details
+            row.set_details(self._details.get(view.id), self._left(view))
+            any_counting |= counting(view, paused) and view.id in self._details
         if any_counting and not self._countdown.isActive():
             self._countdown.start()
         elif not any_counting:
@@ -734,7 +669,3 @@ class HomePage(QWidget):
     def refresh_schedule(self) -> None:
         """Redraw the time left (the countdown timer calls it every second)."""
         self._refresh_details()
-
-    def _set_banner(self, text: str | None) -> None:
-        self.banner.setText(text or "")
-        self.banner.setVisible(bool(text))

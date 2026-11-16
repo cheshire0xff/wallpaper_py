@@ -21,6 +21,7 @@ from wallpaper_py.app.ui.settings_draft import (
     interval_problem,
     monitor_entries,
     playlist_help,
+    problem_summary,
     problems,
     short_id,
 )
@@ -135,6 +136,26 @@ def test_problems(saved: Settings, tmp_path: Path) -> None:
     assert not problems(draft, saved, tmp_path)
 
 
+def test_a_text_that_doesnt_read_hides_no_other_problem(
+    saved: Settings, tmp_path: Path
+) -> None:
+    """The daemon's checks run on the rest; the form's order is kept."""
+    late = PlaylistDraft(id="x", name="WALLS", directory="", interval="soon")
+    early = replace(Draft.of(saved).playlists[0], interval="5s")
+    draft = replace(Draft.of(saved), playlists=(early, late), pause_when_idle="x")
+    found = problems(draft, saved, tmp_path)
+    assert list(found.items()) == [
+        (("w", "interval"), "At least 10s"),
+        (("x", "name"), "Another playlist is called walls"),
+        (("x", "directory"), "Choose a folder"),
+        (("x", "interval"), "Use a duration like 45s, 30m, 1h30m or 1d"),
+        ((None, "pause_when_idle"), "Use a duration like 45s, 5m or 1h"),
+    ]
+    assert problem_summary(found, draft) == (
+        "Can't save yet. walls, interval: At least 10s (and 4 more)"
+    )
+
+
 def test_the_two_lists_must_be_two_files(saved: Settings, tmp_path: Path) -> None:
     draft = Draft.of(saved)  # favourites: favs.txt; to-remove: the default
     same = replace(draft, to_remove_file=str(tmp_path / "FAVS.txt"))
@@ -247,6 +268,10 @@ def test_current_images_keep_a_folder_written_another_way(
     assert current_images(saved, retyped, shown) == {"w": image}
     moved = draft.with_playlist(replace(same, directory=str(tmp_path / "other")))
     assert not current_images(saved, moved, shown)  # unknown until saved
+    # Found by id: a name edited in the draft (or renamed meanwhile) changes
+    # nothing.
+    renamed = [shown[0].model_copy(update={"name": "other name"})]
+    assert current_images(saved, draft, renamed) == {"w": image}
 
 
 def test_the_sliders_steps() -> None:

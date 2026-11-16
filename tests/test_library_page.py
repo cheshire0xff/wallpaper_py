@@ -150,10 +150,12 @@ def test_asks_only_while_the_overview_tab_is_shown(
 ) -> None:
     assert not asked(client)  # the page isn't shown
     page.show()
-    assert asked(client) == [StatsRequest(target="konachan")]
+    assert asked(client) == [StatsRequest(target="konachan-id")]
     answer(client, StatsRequest, stats_of())
     page.tabs.tab(1).click()  # All images
-    client.changed.emit(Change("konachan", Path("/x.jpg"), "next", ("Main",)))
+    client.changed.emit(
+        Change("konachan-id", "konachan", Path("/x.jpg"), "next", ("Main",))
+    )
     assert len(asked(client)) == 1
     page.tabs.tab(0).click()  # back on Overview: asked again
     assert len(asked(client)) == 2
@@ -163,9 +165,11 @@ def test_asks_one_at_a_time_and_again_on_its_playlists_changes(
     page: LibraryPage, client: FakeClient
 ) -> None:
     page.show()
-    other = Change("fantasy", Path("/f.jpg"), "next", ("Side",))
+    other = Change("fantasy-id", "fantasy", Path("/f.jpg"), "next", ("Side",))
     client.changed.emit(other)
-    client.changed.emit(Change("konachan", Path("/x.jpg"), "next", ("Main",)))
+    client.changed.emit(
+        Change("konachan-id", "konachan", Path("/x.jpg"), "next", ("Main",))
+    )
     client.publish(overview("konachan", "fantasy"))
     assert len(asked(client)) == 1  # the first is still running
     answer(client, StatsRequest, stats_of())
@@ -177,7 +181,7 @@ def test_asks_one_at_a_time_and_again_on_its_playlists_changes(
     assert len(asked(client)) == 3
 
 
-def test_nothing_is_asked_while_the_app_has_an_error(
+def test_nothing_is_asked_while_the_daemon_has_an_error(
     page: LibraryPage, client: FakeClient
 ) -> None:
     client.publish(overview("konachan", error="favourites.txt has a BOM"))
@@ -247,10 +251,12 @@ def test_rescan_asks_with_rescan(page: LibraryPage, client: FakeClient) -> None:
     page.show()
     answer(client, StatsRequest, stats_of())
     page.overview_tab.rescan_button.click()
-    assert asked(client)[-1] == StatsRequest(target="konachan", rescan=True)
+    assert asked(client)[-1] == StatsRequest(target="konachan-id", rescan=True)
     answer(client, StatsRequest, stats_of())
-    client.changed.emit(Change("konachan", Path("/x.jpg"), "next", ("Main",)))
-    assert asked(client)[-1] == StatsRequest(target="konachan")  # only once
+    client.changed.emit(
+        Change("konachan-id", "konachan", Path("/x.jpg"), "next", ("Main",))
+    )
+    assert asked(client)[-1] == StatsRequest(target="konachan-id")  # only once
 
 
 def test_reset_cycle_asks_first(
@@ -269,7 +275,7 @@ def test_reset_cycle_asks_first(
     confirm.answer = True
     button.click()
     assert [r for r, _ in requests(client, ResetCycleRequest)] == [
-        ResetCycleRequest(target="konachan")
+        ResetCycleRequest(target="konachan-id")
     ]
     assert not button.isEnabled()  # until the reply
     answer(client, ResetCycleRequest, ResetCycleResult(playlist="konachan", unseen=1))
@@ -302,11 +308,11 @@ def test_the_playlist_and_tab_are_remembered(
     page.playlist_combo.setCurrentIndex(1)
     page.tabs.tab(4).click()  # History
     assert load_ui_state(state_file) == UiState(
-        library_playlist="fantasy", library_tab="history"
+        library_playlist="fantasy-id", library_tab="history"
     )
 
     again = pages()
-    assert again.playlist() == "fantasy"
+    assert again.playlist() == "fantasy-id"
     assert again.tab() == "history"
     assert again.stack.currentIndex() == 4
 
@@ -318,7 +324,7 @@ def test_choosing_another_playlist_shows_its_numbers(
     page.playlist_combo.setCurrentIndex(1)  # while konachan's are asked
     answer(client, StatsRequest, stats_of())  # konachan's: no longer wanted
     assert page.overview_tab.stats is None
-    assert asked(client)[-1] == StatsRequest(target="fantasy")
+    assert asked(client)[-1] == StatsRequest(target="fantasy-id")
     answer(client, StatsRequest, stats_of("fantasy"))
     stats = page.overview_tab.stats
     assert stats is not None and stats.name == "fantasy"
@@ -329,8 +335,29 @@ def test_a_playlist_gone_falls_back_to_the_first(
 ) -> None:
     page.playlist_combo.setCurrentIndex(1)
     client.publish(overview("konachan", "walls"))
-    assert page.playlist() == "konachan"
+    assert page.playlist() == "konachan-id"
     assert [page.playlist_combo.itemText(i) for i in range(2)] == ["konachan", "walls"]
+
+
+def test_a_stored_name_is_not_an_id_so_the_first_is_chosen(
+    pages: Pages, state_file: Path
+) -> None:
+    state_file.write_text('{"library_playlist": "fantasy"}', encoding="utf-8")
+    assert pages().playlist() == "konachan-id"
+
+
+def test_a_rename_keeps_the_playlist_chosen(
+    page: LibraryPage, client: FakeClient
+) -> None:
+    page.playlist_combo.setCurrentIndex(1)
+    before = overview("konachan", "fantasy")
+    renamed = before.playlists[1].model_copy(update={"name": "dragons"})
+    client.publish(
+        before.model_copy(update={"playlists": (before.playlists[0], renamed)})
+    )
+    assert page.playlist() == "fantasy-id"
+    assert page.playlist_combo.currentText() == "dragons"
+    assert page.playlist_name("fantasy-id") == "dragons"
 
 
 @pytest.mark.parametrize("text", ["not json", '{"library_tab": "nope"}'])
@@ -339,7 +366,7 @@ def test_an_unreadable_state_file_gives_the_defaults(
 ) -> None:
     state_file.write_text(text, encoding="utf-8")
     page = pages()
-    assert (page.playlist(), page.tab()) == ("konachan", "overview")
+    assert (page.playlist(), page.tab()) == ("konachan-id", "overview")
 
 
 # -- All images and the thumbnails --------------------------------------------------
@@ -387,7 +414,7 @@ def test_thumbnails_are_made_for_every_playlist_and_list(
     assert page.pregenerator.sources() == Sources(folders, lists)
     page.playlist_combo.setCurrentIndex(1)  # fantasy's first now
     assert page.pregenerator.sources() == Sources(folders[::-1], lists)
-    # The app's service stopped: its overview names no playlists, which is
+    # The daemon's service stopped: its overview names no playlists, which is
     # no reason to stop (or to prune everything).
     client.publish(overview(error="favourites.txt is not UTF-8"))
     assert page.pregenerator.sources() == Sources(folders[::-1], lists)

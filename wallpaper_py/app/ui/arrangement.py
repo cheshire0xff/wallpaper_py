@@ -54,7 +54,8 @@ from PySide6.QtWidgets import QSizePolicy, QWidget
 
 from ...core.imaging import preview_size, render
 from ...core.model import Look, MonitorId
-from ...protocol import DesktopMonitor, Overview
+from ...core.settings import PlaylistId
+from ...protocol import DesktopMonitor, Overview, PlaylistView
 from . import theme
 from .thumbnails import PREVIEW_SIDE, to_qimage
 
@@ -174,13 +175,17 @@ def _desktop_boxes(
     return boxes
 
 
-def playlists_by_monitor(overview: Overview) -> dict[MonitorId, str]:
+def playlists_by_monitor(overview: Overview) -> dict[MonitorId, PlaylistView]:
     """Monitor id -> the playlist that drives it."""
-    result: dict[MonitorId, str] = {}
+    result: dict[MonitorId, PlaylistView] = {}
     for playlist in overview.playlists:
         for member in playlist.monitors:
-            result.setdefault(member.id, playlist.name)
+            result.setdefault(member.id, playlist)
     return result
+
+
+def _name_of(playlist: PlaylistView | None) -> str | None:
+    return None if playlist is None else playlist.name
 
 
 def twins(monitors: Sequence[DesktopMonitor]) -> dict[MonitorId, tuple[int, int]]:
@@ -229,16 +234,16 @@ class MonitorsView(QWidget):
 
     # pylint: disable=too-many-instance-attributes
 
-    hovered = Signal(object)  # the playlist under the pointer, or None
+    hovered = Signal(object)  # the id of the playlist under the pointer, or None
     clicked = Signal(object)  # a monitor's MonitorId (only while clickable)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._overview = Overview()
-        self._highlight: str | None = None  # playlist outlined in the accent
+        self._highlight: PlaylistId | None = None  # outlined in the accent
         self._selected: MonitorId | None = None  # outlined apart (Settings)
         self._twins: dict[MonitorId, tuple[int, int]] = {}
-        self._hovered: str | None = None
+        self._hovered: PlaylistId | None = None
         self._clickable = False
         self._pressed: MonitorId | None = None  # monitor under a press
         self.setMouseTracking(True)
@@ -280,7 +285,9 @@ class MonitorsView(QWidget):
         by_monitor = playlists_by_monitor(overview)
         for monitor in overview.monitors:
             name, detail = caption(
-                monitor, by_monitor.get(monitor.id), self._twins.get(monitor.id)
+                monitor,
+                _name_of(by_monitor.get(monitor.id)),
+                self._twins.get(monitor.id),
             )
             lines.append(f"{name}: {detail}")
         self.setAccessibleDescription("; ".join(lines))
@@ -288,13 +295,13 @@ class MonitorsView(QWidget):
         self.update()
 
     @Slot(object)
-    def set_highlight(self, playlist: str | None) -> None:
+    def set_highlight(self, playlist: PlaylistId | None) -> None:
         """Outline this playlist's monitors in the accent (None: no outline)."""
         if playlist != self._highlight:
             self._highlight = playlist
             self.update()
 
-    def highlight(self) -> str | None:
+    def highlight(self) -> PlaylistId | None:
         return self._highlight
 
     def set_selected(self, monitor_id: MonitorId | None) -> None:
@@ -317,12 +324,13 @@ class MonitorsView(QWidget):
                 return item.monitor
         return None
 
-    def playlist_at(self, point: QPointF) -> str | None:
-        """The playlist driving the monitor drawn at `point`, if any."""
+    def playlist_at(self, point: QPointF) -> PlaylistId | None:
+        """The id of the playlist driving the monitor drawn at `point`, if any."""
         monitor = self.monitor_at(point)
         if monitor is None:
             return None
-        return playlists_by_monitor(self._overview).get(monitor.id)
+        found = playlists_by_monitor(self._overview).get(monitor.id)
+        return None if found is None else found.id
 
     @override
     def mouseMoveEvent(
@@ -363,7 +371,7 @@ class MonitorsView(QWidget):
         super().leaveEvent(event)
         self._set_hovered(None)
 
-    def _set_hovered(self, playlist: str | None) -> None:
+    def _set_hovered(self, playlist: PlaylistId | None) -> None:
         if playlist != self._hovered:
             self._hovered = playlist
             self.hovered.emit(playlist)
@@ -443,8 +451,9 @@ class MonitorsView(QWidget):
             pixmap = None
             if found is not None:
                 drawn[found[0]], pixmap = found[1], found[1]
+            driver = by_monitor.get(item.monitor.id)
             lit = self._highlight is not None and (
-                by_monitor.get(item.monitor.id) == self._highlight
+                driver is not None and driver.id == self._highlight
             )
             self._paint_monitor(
                 painter, item, pixmap, tones.panel_accent if lit else None
@@ -454,7 +463,8 @@ class MonitorsView(QWidget):
         self._renders = drawn  # only what is drawn now stays
         boxes = [p.box for p in placed]
         for item in placed:
-            self._paint_caption(painter, item, by_monitor.get(item.monitor.id), boxes)
+            driver = by_monitor.get(item.monitor.id)
+            self._paint_caption(painter, item, _name_of(driver), boxes)
         painter.end()
 
     @staticmethod

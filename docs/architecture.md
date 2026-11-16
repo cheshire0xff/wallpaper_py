@@ -1,27 +1,45 @@
 # Architecture
 
+## Words
+
+The names say what things are. The product is wallpaper_py; **app** is
+only Qt's `QApplication` and the `app/` package.
+
+| Name | What it is |
+|---|---|
+| **daemon** | `wallpaper tray` / `wallpaper run`: runs all session, holds the instance lock, serves the socket, rotates; with `tray` it also shows the icon |
+| **window process** | `wallpaper ui`: the window, on demand |
+| **main thread** | Qt's main thread, in either process; the daemon's holds the tray |
+| **service thread** | the daemon's thread that runs `PlaylistService` |
+| **`ServiceThread`** | the main thread's handle on the service thread |
+| **`PlaylistService`** | the core object; "`PlaylistService` is stopped" while the daemon keeps answering |
+
 ## Layers
 
 ```
-cli.py                        command line; playlist commands go to the app (started if
-                              needed) and their text is formatted here from the reply data
+cli.py                        command line; playlist commands go to the daemon (never
+                              started here) and their text is formatted here from the reply data
 app/                          PySide6 (Qt only here); two processes
-  runtime.py     the app: lock, service thread, screens, tray
+  runtime.py     the daemon: lock, service thread, screens, tray
   worker.py      ServiceWorker (owns the service and the socket, on its own
-                 QThread) + ServiceHost (the UI thread's proxy)
-  ipc.py         sockets: line framing (LineServer, LineRequest, blocking send),
-                 the app's CommandServer (commands, subscriptions)
+                 QThread) + ServiceThread (the main thread's handle) and its
+                 LocalClient (the tray's Client: queued signals, no socket)
+  client.py      Client: all the tray and the pages may use (commands,
+                 events); SocketClient (the window process's);
+                 ReplyTo, OneAtATime (a request asked again only once)
+  ipc.py         sockets: line framing (LineBuffer, for CommandServer, LineRequest,
+                 blocking send), the daemon's CommandServer (commands,
+                 subscriptions, which one is the window)
   processes.py   command lines, starting detached, logging, Ctrl+C (both processes)
   instance.py    single instance: a QLockFile next to the state database
   screens.py     Qt screen signals -> one debounced extra tick
   tray.py        tray icon and menu, drawn from an Overview
   icon.py        the bundled app icon and tray-state variants
   icons/         shared app icon image, package data
-  ui/            the UI process (`wallpaper ui`), on demand
-    process.py   run_ui: single instance, the window, quits with the app / window
-    launcher.py  its own socket: "show this page" (UiServer, WindowOpener)
-    client.py    Client: all the pages may use (commands, events); SocketClient
-    window.py    MainWindow: the sidebar (NavButton per page, the app's status)
+  ui/            the window process (`wallpaper ui`), on demand
+    process.py   run_ui: subscribes as the window (the daemon picks one), shows
+                 it, quits with the daemon / window
+    window.py    MainWindow: the sidebar (NavButton per page, the daemon's status)
                  and the pages; asks before closing with unsaved settings
     home.py      Home: the monitors on a panel, then a row per playlist
     library.py   Library: a playlist drop-down, the tabs; asks `stats` and
@@ -30,7 +48,7 @@ app/                          PySide6 (Qt only here); two processes
     library_overview.py  OverviewTab: a playlist's numbers, Rescan, Reset cycle…
     grid.py      ImageGrid: a QListView of fixed-size tiles over a list model
                  of paths, tiles fading in; FolderScan (a folder, listed off
-                 the UI thread)
+                 the main thread)
     tiles.py     TileLoader: the grid's thumbnails (newest request first,
                  dropped off screen, a memory budget); Pregenerator: fills
                  and prunes the disk cache while the window is open
@@ -41,24 +59,28 @@ app/                          PySide6 (Qt only here); two processes
                  row), field problems
     settings_look.py  LookEditor: the selected monitor's look rows (mode,
                  background, blur and darkening)
-    settings_draft.py  the edit without widgets (Draft): problems per field,
+    settings_draft.py  the edit without widgets (Draft): problems per field
+                 (its texts read here, the rest core/settings.py's checks),
                  monitor labels, what changed
     arrangement.py  the monitors drawn to scale (arrange(): pure geometry),
                  each with its preview (the renderer's, at a small output)
     jobs.py      Jobs: background work on a thread pool of its own, results
-                 delivered on the UI thread (every pool of the UI process)
+                 delivered on the main thread (every pool of the window process)
     thumbnails.py   ThumbnailLoader: a small copy of each image, its thumbnail
-                 and details, off the UI thread
+                 and details, off the main thread
     theme.py     the shared look: tones derived from the palette, spacing,
                  tinted icons, the focus ring, painted widgets (IconButton,
-                 TextButton, Tabs, Divider, Panel, Chip, ImageView)
+                 TextButton, Tabs, Divider, Panel, Banner, Chip, ImageView)
     controls.py  the controls painted in code: FieldCombo (drop-down and its
                  list), Segments, Switch, Button, Slider
     icons/       bundled Lucide SVGs (ISC licence alongside), package data
-commands.py                   runs a Request on the service -> a reply model (+ the
-                              change made); overview(). Qt-free
+commands.py                   runs a request on the service (one `match`, a case per
+                              request model) -> a reply model (+ the change made);
+                              overview(). Qt-free
 protocol.py                   the socket protocol as pydantic models: requests, one
                               result per command, errors, events, Overview. Qt-free
+texts.py                      what the tray, Home and the CLI say about a playlist or
+                              a monitor, made from those models. Qt-free
         │
 core/                         pure Python, no Qt, no platform APIs
   model.py       Monitor, MonitorId, Rectangle, ImageMode, Look, error types
@@ -72,14 +94,15 @@ core/                         pure Python, no Qt, no platform APIs
                  tile size, named by path, mtime and size; prune
   paths.py       per-user data, log and cache locations (per OS, never shared)
   settings.py    Settings (pydantic): playlists, monitors (playlist, look), pausing,
-                 list files; their checks and warnings; durations
+                 list files; their checks (every problem with its place, for the
+                 form and the daemon alike) and warnings; durations
   library.py     recursive image scan (natural order, cached), path keys
   order.py       next image: sorted walk, or the persisted shuffle deck
   store.py       SQLite: the settings, history, deck, per-playlist and
                  per-monitor state
   marks.py       favourites / to-remove .txt files (the only copy); decode_text
   presence.py    Presence protocol: session locked? seconds idle?
-  autostart.py   Autostart protocol: start the app at login
+  autostart.py   Autostart protocol: start the daemon at login
   service.py     PlaylistService: tick, next / previous, fav / remove, status,
                  stats, reset_cycle
         │
@@ -103,7 +126,8 @@ Rules:
 - **Platform modules are guarded** with `assert sys.platform == "win32"`, so
   mypy skips them on other platforms and importing them elsewhere fails fast.
 - Qt is used only in `app/` (and by the CLI's socket client, `app/ipc.py`).
-  `protocol.py`, `commands.py` and `core` stay Qt-free and synchronous.
+  `protocol.py`, `commands.py`, `texts.py` and `core` stay Qt-free and
+  synchronous.
 - `app/__init__.py` loads `protocol.py` (all of pydantic) before any Qt
   module: PySide6's import hook breaks pydantic's lazy imports if pydantic
   was only partly loaded before Qt.
@@ -116,24 +140,39 @@ How it is wired (processes, threads, flows): [app-wiring.md](app-wiring.md).
 The socket's messages: [protocol.md](protocol.md). What each module does:
 its docstring. Here: the decisions, and why.
 
-**Two processes.** The app (service thread, tray, command socket) always
-runs and stays small. The windows run in the UI process (`wallpaper ui`),
+**Two processes.** The daemon (service thread, tray, command socket) always
+runs and stays small. The windows run in the window process (`wallpaper ui`),
 started on demand and ended when the window closes: only ending a process
 surely gives its memory (the grids' thumbnails) back, as memory freed
 inside a running one may stay with it (allocator, fragmentation). Each
-runs at most once: the app holds an instance lock next to the state
-database (instance.py: the socket alone can't ensure it on Windows), the
-UI process `ui.lock` while it listens on its own small socket
-(launcher.py).
+runs at most once: the daemon holds an instance lock next to the state
+database (instance.py: the socket alone can't ensure it on Windows).
+
+**The daemon knows the window.** At most one window process has the
+window, and the daemon's socket decides which: a window process subscribes
+as the window (it subscribes for the events anyway), and the first one
+is; a later one has its page shown there and exits. The tray asks the
+socket to show the window (`show_window`) and starts `wallpaper ui` only
+if none has it. So there is one socket and one lock: no socket of the
+window process's own, no lock file for it, and no race between two
+starting at once, as the service thread takes their subscriptions one at
+a time. The socket answers these requests itself, not `PlaylistService`,
+so the window opens while it is stopped (to show why). The cost: a tray
+click waits for whatever runs on the service thread. Measured before
+building (the slow-work log, 2026-11-16): commands and ticks of 100 to
+400 ms, at most ~600 ms in a burst of *Next*; a first scan of a very big
+folder would be longer, once.
 
 **One thread owns the service.** A change renders for ~200 ms, which must
-never happen on the UI thread, so the `PlaylistService` lives on a worker
+never happen on the main thread, so the `PlaylistService` lives on a worker
 `QThread` with everything it uses (worker.py). Socket requests, tray
 actions and ticks all run there through `ServiceWorker.execute`, one at a
 time, so the core needs no locks; nothing there may block on a client or
 spin a nested event loop, which would hold up the ticks and every other
 client. The socket is made once and closed at stop, so it keeps answering
-(with the error) while the service is down.
+(with the error) while `PlaylistService` is stopped. As everything there
+waits its turn, a command or tick over 100 ms is logged with its time:
+the daemon's log shows what a click could have waited for.
 
 **The tick is the source of truth.** Every 5 s it re-reads the real
 state; Qt's screen signals only trigger one extra tick (screens.py), and
@@ -145,26 +184,37 @@ costs at most one tick.
 CLI makes its text from it, the tray and the windows show the same
 models, so a command is written once for all of them.
 
-**The CLI never starts the app.** Without one, it runs the command itself
-under the app's instance lock (one writer at a time) and exits: only the
-app rotates, and nothing keeps running after a command (cli.py).
+**The CLI is a plain client and never starts the daemon.** Without one, a
+playlist command fails with `NOT_RUNNING` ("`wallpaper tray` starts it") and
+exits non-zero: it never runs a command itself, so only the daemon rotates and
+the instance lock (instance.py) has one kind of holder. Monitor commands
+(`list`, `set`) need no daemon (cli.py).
 
 **Errors stop only what they must.** A `WallpaperError` fails one
 operation and the rest goes on; a `ConfigError` (a list file that can't be
-used) stops the service, wherever it comes from (`ServiceWorker._failed`),
+used) stops `PlaylistService`, wherever it comes from (`ServiceWorker._failed`),
 and every tick tries to open it again, so it runs once the file is fixed.
 Settings that fail the checks are never stored, so they can't stop it.
 
-**The windows are a client like the CLI.** The pages see only `Client`
-(client.py), never the service: the same commands and events as any
-other client, and tests give them a fake. Images are read from the files,
-never sent over the socket; for the library's grids the UI process also
-reads the folders, the list files and the history itself (read-only, off
-the UI thread; the history through a read-only SQLite connection, WAL).
-Writes are always commands. Its view state (ui_state.py) is not settings:
-no revision, nothing the app reads.
+**The tray and the windows are clients like the CLI.** They see only
+`Client` (client.py), never `PlaylistService`: the same commands, replies
+and events as any other client, and tests give them a fake (`FakeClient`).
+The tray's is a `LocalClient` (worker.py), in the daemon: queued signals
+to and from the service thread, the models passed as they are (frozen, so
+safe to share between threads). Not over the socket: both ends would sit
+in the daemon, a socket pair per command to pass messages between two of
+its threads. The service thread sends each event once, as the protocol's
+`Event` (`ServiceWorker._send`), to both kinds of listener, and both
+clients turn it into the same signals (`Client._dispatch`).
 
-**What the windows and the tray show is the app's.** They redraw from
+The windows read images from the files, never sent over the socket; for
+the library's grids the window process also reads the folders, the list
+files and the history itself (read-only, off the main thread; the history
+through a read-only SQLite connection, WAL). Writes are always commands.
+Its view state (ui_state.py) is not settings: no revision, nothing the
+daemon reads.
+
+**What the windows and the tray show is the daemon's.** They redraw from
 overviews and never poll; a toggle shows the overview's state, never the
 click.
 
@@ -195,13 +245,20 @@ window is opened again; decoding again while it is open would add
 concurrency for a cosmetic issue that reopening fixes.
 
 **The settings are one JSON document** in the state database, written only
-by the app (`save_settings`, refused if the revision moved on since they
+by the daemon (`save_settings`, refused if the revision moved on since they
 were read); there is no settings file. They are only ever read and written
 whole, so a new setting with a default loads from a database saved before
 it, with no new schema; renaming or removing one still needs one (unknown
 fields are refused). What changes piece by piece (each playlist's state,
 history, the shuffle decks, the applied images) stays in tables
 (store.py).
+
+**The settings are checked once**, in core/settings.py: each check finds
+every problem with its place (playlist, field). The Settings page shows
+them next to their fields before it sends anything, and the daemon raises
+the first when it saves: one wording, and the page can't let through what
+the daemon refuses. The page itself only reads its texts (durations, a
+folder chosen, a list file that is a folder).
 
 ## Playlist service
 
@@ -212,8 +269,8 @@ State lives in two places, by design:
   pick can go between older entries), the shuffle deck, active seconds
   since the last change, the hold flag, and which image each monitor was
   given. It is the single source of truth. Whoever holds the instance lock is
-  its only writer: the app, or a CLI command run while no app runs (with
-  the app running, CLI commands go through its socket). WAL mode
+  its only writer: the daemon, or a CLI command run while no daemon runs (with
+  the daemon running, CLI commands go through its socket). WAL mode
   lets the library window read the history alongside (`read_history`,
   read-only). Pre-release, the schema
   changes in place: a database of another schema version is refused with
@@ -221,7 +278,7 @@ State lives in two places, by design:
   are lost).
 - **Favourites / to-remove** live only in their `.txt` files. Every change
   re-reads the file, applies one add or remove and writes it atomically;
-  reads reload when the file's mtime/size changes, and the app tells
+  reads reload when the file's mtime/size changes, and the daemon tells
   subscribers (`marks_changed`) when that moved since its last tick or
   command. Entries for missing images are hidden, never pruned
   automatically. A file that has never
@@ -270,7 +327,7 @@ removal, deleted). Hold doesn't apply to a manual playlist.
 
 A member that was detached (or vanished from the monitor list) has its
 "applied" record dropped, so on return it is given the group's current
-image. The app drops all of them when it opens the service (at start, or
+image. The daemon drops all of them when it opens the service (at start, or
 when it comes back after a list file was fixed), so after a reboot every monitor gets its playlist's current
 image back, rendered with its current look; `save_settings` drops those of
 the monitors whose playlist or look changed.
@@ -362,7 +419,7 @@ A rendered image depends on the look and the monitor's size, so the
 service renders again when either changes: a monitor whose resolution
 changed (noticed by the tick) has its "applied" record dropped, and so
 does every monitor when the service opens, and a
-monitor whose look or playlist `save_settings` changed; the app ticks
+monitor whose look or playlist `save_settings` changed; the daemon ticks
 before replying, so a changed look shows at once.
 
 The look is per monitor (`MonitorSettings.look`, `Settings.look`), the

@@ -11,7 +11,7 @@ only ever read and written whole: a new setting with a default loads from
 a database saved before it, with no new schema. The state the service
 updates piece by piece (per playlist, on each tick), history and the
 shuffle decks are tables. The layout is private to the service: the
-settings window reads and writes the settings through the app's commands.
+settings window reads and writes the settings through the daemon's commands.
 The one exception is `read_history`, the library window's read-only view
 of a playlist's history.
 
@@ -501,7 +501,7 @@ def read_history(
     A playlist's history (by its id), newest shown first, every time an
     image was shown (repeats kept): for the library window, which reads it
     itself. A read-only connection of its own, opened and closed here, so
-    any thread may call it; WAL lets it read while the app writes. No
+    any thread may call it; WAL lets it read while the daemon writes. No
     database yet: no history.
 
     Raises:

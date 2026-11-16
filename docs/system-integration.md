@@ -23,14 +23,14 @@ Off until you tick **Start at login** in the tray menu. Ticking it writes
 one entry; unticking removes it. Nothing else is installed: no service, no
 scheduled task, no driver.
 
-**What the entry runs**: the tray app, with the same Python it runs with
+**What the entry runs**: the tray daemon, with the same Python it runs with
 now, without a console window:
 
 ```
 C:\path\to\wallpaper_py\.venv\Scripts\pythonw.exe -m wallpaper_py tray
 ```
 
-Only the tray app starts at login; the window (Home,
+Only the tray daemon starts at login; the window (Home,
 Library, Settings) starts when you open it.
 
 **Windows**: the entry is the value `wallpaper_py` under
@@ -58,17 +58,18 @@ environment in the same place (`uv sync`) is fine.
 
 ## The processes and how they talk
 
-- **The app** (`wallpaper tray`, or `wallpaper run` in a terminal): the
+- **The daemon** (`wallpaper tray`, or `wallpaper run` in a terminal): the
   one process that changes wallpapers. It shows the tray icon and listens
   for commands. Only one runs per user; a second one exits (it
-  holds `app.lock` in the state folder).
+  holds `daemon.lock` in the state folder).
 - **The windows** (`wallpaper ui …`): a separate process, started when you
   open a window and gone when you close the last one, so it uses no memory
-  while closed. At most one runs (`ui.lock`).
+  while closed. At most one has the window: the daemon knows which, and a
+  second one shows its page there and exits.
 - **The CLI** (`wallpaper next`, `status`, …): sends one command to the
-  app and prints the answer. If the app isn't running, it runs the command
-  itself and exits; nothing is left running, and nothing rotates until the
-  app is started (`wallpaper tray`, or at login).
+  daemon and prints the answer. If the daemon isn't running, it says so and
+  exits non-zero (`wallpaper tray` starts it; so does logging in, with
+  *Start at login*). `wallpaper list` and `set` work without it.
 
 They talk over a local socket: a named pipe on Windows, a socket file in
 the temp folder on Linux. Only your user account can connect to it; it is not a
