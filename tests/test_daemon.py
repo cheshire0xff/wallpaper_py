@@ -1,16 +1,14 @@
 """
 The whole app in-process (fake backend), with the CLI as a separate process
-like in real use: single instance, commands through the socket, or run by
-the CLI itself (under the daemon's lock) when no daemon is running.
+like in real use: single instance, commands through the socket, and the CLI
+refusing when no daemon is running.
 """
 
 import logging
 import signal
 import subprocess
 import sys
-import time
-from collections.abc import Iterator
-from contextlib import ExitStack, contextmanager, nullcontext
+from contextlib import nullcontext
 from pathlib import Path
 
 import pytest
@@ -29,7 +27,7 @@ from wallpaper_py.app.ui import process as ui_process
 from wallpaper_py.core import paths
 from wallpaper_py.core.model import WallpaperError
 
-from .clients import CLI, CLI_HERE, HOLD_LOCK, NO_WINDOW, run_python
+from .clients import CLI, run_python
 from .fakes import (
     FakeAutostart,
     FakeBackend,
@@ -92,7 +90,7 @@ def test_second_instance_is_refused(platform: Platform) -> None:
     lock = InstanceLock(paths.instance_lock())
     assert lock.acquire()
     try:
-        options = DaemonOptions(tray=False, lock_wait_s=0.2)
+        options = DaemonOptions(tray=False)
         with pytest.raises(WallpaperError, match="already running"):
             run_daemon(options, platform)
     finally:
@@ -134,79 +132,13 @@ def daemon_running() -> bool:
     return True
 
 
-@contextmanager
-def lock_held(seconds: float) -> Iterator[subprocess.Popen[str]]:
-    """The daemon's lock, held by another process for `seconds` from now."""
-    argv = [sys.executable, "-c", HOLD_LOCK, str(paths.data_dir()), str(seconds)]
-    with subprocess.Popen(
-        argv, stdout=subprocess.PIPE, text=True, creationflags=NO_WINDOW
-    ) as holder:
-        assert holder.stdout is not None
-        assert holder.stdout.readline().strip() == "locked"
-        yield holder
-        holder.wait(timeout=30)
-
-
-def test_cli_runs_here_when_no_daemon_runs(qtbot: QtBot, tmp_path: Path) -> None:
+def test_cli_refuses_when_no_daemon_runs(qtbot: QtBot, tmp_path: Path) -> None:
     write_settings(tmp_path)
-    cli = [str(paths.data_dir())]
-    first = run_python(qtbot, CLI_HERE, *cli, "next")
-    assert first.returncode == 0, first.stderr
-    assert first.stdout.strip() == "walls: a.jpg on Main"  # no tick first
-    assert not daemon_running()  # nothing left behind
-    assert run_python(qtbot, CLI_HERE, *cli, "next").stdout.strip() == (
-        "walls: b.jpg on Main"  # the state was kept
-    )
-    status = run_python(qtbot, CLI_HERE, *cli, "status").stdout
-    assert "upcoming:  c.jpg" in status
-    assert status.rstrip().endswith(cli_module.NOT_RUNNING)
-
-
-def test_two_clis_without_a_daemon_take_turns(tmp_path: Path) -> None:
-    write_settings(tmp_path)
-    argv = [sys.executable, "-c", CLI_HERE, str(paths.data_dir()), "next"]
-    with ExitStack() as stack:
-        clis = [
-            stack.enter_context(
-                subprocess.Popen(
-                    argv,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    creationflags=NO_WINDOW,
-                )
-            )
-            for _ in range(2)
-        ]
-        outputs = [cli.communicate(timeout=60) for cli in clis]
-    assert [cli.returncode for cli in clis] == [0, 0], outputs
-    # One after the other, under the lock: never the same image twice.
-    assert sorted(out.strip() for out, _ in outputs) == [
-        "walls: a.jpg on Main",
-        "walls: b.jpg on Main",
-    ]
-
-
-def test_cli_waits_while_the_lock_is_held(qtbot: QtBot, tmp_path: Path) -> None:
-    """A daemon starting (lock taken, socket not up yet), or a command here."""
-    write_settings(tmp_path)
-    with lock_held(1.0):
-        started = time.monotonic()
-        result = run_python(qtbot, CLI_HERE, str(paths.data_dir()), "next")
-    assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == "walls: a.jpg on Main"
-    assert time.monotonic() - started > 0.5
-
-
-def test_daemon_waits_for_a_command_run_here(
-    tmp_path: Path, platform: Platform, backend: FakeBackend
-) -> None:
-    """Login starting the daemon while a CLI command holds the lock."""
-    write_settings(tmp_path)
-    options = DaemonOptions(tray=False, quit_after_ticks=1)
-    with lock_held(1.0):
-        assert run_daemon(options, platform) == 0
-    assert [c.source and c.source.name for c in backend.set_calls] == ["a.jpg"]
+    result = run_python(qtbot, CLI, str(paths.data_dir()), "next")
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert result.stderr.strip() == f"error: {cli_module.NOT_RUNNING}"
+    assert not daemon_running()  # nothing started, no lock taken
 
 
 def test_socket_failure_stops_the_daemon(

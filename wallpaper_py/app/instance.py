@@ -3,8 +3,8 @@ Single instance: a lock file next to the state database.
 
 The command socket alone can't guarantee this: on Windows a second
 `QLocalServer` can listen on the same pipe name. The lock is per state
-directory, which is exactly the scope that needs one writer. A CLI
-command run while no daemon is running holds it too, for that command.
+directory, which is exactly the scope that needs one writer. Only the daemon
+holds it.
 """
 
 from __future__ import annotations
@@ -22,10 +22,10 @@ class InstanceLock:
         # a lock whose process died is still detected and taken over.
         self._lock.setStaleLockTime(0)
 
-    def acquire(self, wait_s: float = 0.0) -> bool:
-        """False if another live process holds it (still, after `wait_s`)."""
+    def acquire(self) -> bool:
+        """False if another live process holds it."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        return bool(self._lock.tryLock(round(wait_s * 1000)))
+        return bool(self._lock.tryLock(0))
 
     def release(self) -> None:
         self._lock.unlock()

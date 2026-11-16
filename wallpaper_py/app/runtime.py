@@ -41,9 +41,6 @@ from .worker import ServiceSettings, ServiceThread
 log = logging.getLogger(__name__)
 
 SHUTDOWN_TIMEOUT_MS = 10_000
-# A CLI command run while no daemon was running holds the lock for a moment
-# (cli.py): wait it out, or login's start could find it held and give up.
-LOCK_WAIT_S = 5.0
 
 
 @dataclass(frozen=True)
@@ -51,7 +48,6 @@ class DaemonOptions:
     tray: bool
     tick_period: float = 5.0
     quit_after_ticks: int | None = None  # for tests
-    lock_wait_s: float = LOCK_WAIT_S
 
 
 @dataclass(frozen=True)
@@ -68,7 +64,7 @@ def run_daemon(options: DaemonOptions, platform: Platform) -> int:
     """Run until quit (tray menu, Ctrl+C, or `quit_after_ticks`)."""
     app = _application(options.tray)
     lock = InstanceLock(paths.instance_lock())
-    if not lock.acquire(options.lock_wait_s):
+    if not lock.acquire():
         raise WallpaperError(
             "wallpaper_py is already running; quit it first (tray menu: Quit)"
         )

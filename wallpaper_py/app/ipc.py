@@ -13,8 +13,8 @@ except `subscribe`, which keeps the connection open: the daemon then writes
 one event per line until it quits.
 
 Clients: `send()` blocks (the CLI; `None` means no daemon is running, and the
-CLI then runs the command itself); `LineRequest` is event driven (the tray and the UI
-process, which must not block their event loop). The command server lives
+CLI then says so); `LineRequest` is event driven (the tray and the UI process,
+which must not block their event loop). The command server lives
 on the daemon's service thread and runs each request there as it arrives.
 """
 

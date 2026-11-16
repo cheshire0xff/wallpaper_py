@@ -2,11 +2,10 @@
 Command-line interface.
 
 Monitor commands (`list`, `set`) work on their own. Playlist commands
-(`status`, `next`, ...) run in the daemon if it is running, so they never
-overlap its ticks. If it isn't, they run here, holding the daemon's lock (a
-daemon starting meanwhile waits for it), and nothing is left running after:
-only the daemon rotates. Replies are data (protocol.py); the text printed here
-is made here. `run` and `tray` start the daemon, `ui` the windows (see
+(`status`, `next`, ...) run in the daemon, so they never overlap its ticks;
+without one they fail with NOT_RUNNING: the CLI never starts the daemon and
+never runs a command itself. Replies are data (protocol.py); the text printed
+here is made here. `run` and `tray` start the daemon, `ui` the windows (see
 wallpaper_py.app). The settings are edited in the window (`ui settings`).
 `reset-cycle` asks first (it can't be undone), unless `--yes`. The list
 commands (`fav`, `unfav`, `remove`, `unremove`) take the playlist's
@@ -20,14 +19,12 @@ import logging
 import math
 import os
 import sys
-import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import NamedTuple
 
 from .backends import get_backend, get_presence
-from .commands import error_reply, execute, open_service
 from .core import paths
 from .core.backend import Backend
 from .core.model import AppError, ImageMode, Look, Monitor, WallpaperError
@@ -77,64 +74,28 @@ PAGES = ("home", "library", "settings")
 
 BackendFactory = Callable[[], Backend]
 PresenceFactory = Callable[[], Presence]
-# Runs a request in this process: no daemon is running, and this process holds
-# its lock.
-RunHere = Callable[[CommandRequest], Reply]
-
-
-class Answer(NamedTuple):
-    reply: Reply
-    here: bool = False  # run in this process: no daemon was running
-
-
-# Runs a request in the running daemon, else with `RunHere`.
-DaemonClient = Callable[[CommandRequest, RunHere], Answer]
+# Runs a request in the running daemon, and returns its reply.
+DaemonClient = Callable[[CommandRequest], Reply]
 
 log = logging.getLogger(__name__)
 
-WAIT_TIMEOUT_S = 10.0  # for a starting daemon, or a command running elsewhere
-RETRY_INTERVAL_S = 0.2
 NOT_RUNNING = (
     "wallpaper_py isn't running, so nothing rotates; `wallpaper tray` starts it"
 )
 
 
-def send_to_daemon(request: CommandRequest, run_here: RunHere) -> Answer:
-    """
-    Run `request` in the running daemon; if none is running, take its lock and
-    run it here. The lock held but nobody answering: a daemon is starting, or
-    another command runs here; wait for either.
-    """
+def send_to_daemon(request: CommandRequest) -> Reply:
+    """Run `request` in the running daemon; without one, NOT_RUNNING."""
     # pylint: disable=import-outside-toplevel
     from .app import ipc  # Qt is imported only for playlist commands
-    from .app.instance import InstanceLock
 
     name = ipc.server_name(paths.data_dir())
-    envelope = Envelope(request=request)
-    lock = InstanceLock(paths.instance_lock())
     log.info("Asking the running daemon (socket %s)", name)
-    deadline = time.monotonic() + WAIT_TIMEOUT_S
-    waiting = False
-    while True:
-        reply = ipc.send(name, envelope)
-        if reply is not None:
-            log.info("The running daemon answered")
-            return Answer(reply)
-        if lock.acquire():
-            try:
-                log.info("No daemon is running: running the command here")
-                return Answer(run_here(request), here=True)
-            finally:
-                lock.release()
-        if time.monotonic() > deadline:
-            raise WallpaperError(
-                "wallpaper_py is starting or busy and did not answer; try again "
-                f"(see {paths.log_file()})"
-            )
-        if not waiting:
-            log.info("The daemon is starting, or a command runs elsewhere: waiting")
-            waiting = True
-        time.sleep(RETRY_INTERVAL_S)
+    reply = ipc.send(name, Envelope(request=request))
+    if reply is None:
+        raise WallpaperError(NOT_RUNNING)
+    log.info("The running daemon answered")
+    return reply
 
 
 @dataclass
@@ -150,14 +111,6 @@ class Context:
         if self._backend is None:
             self._backend = self.backend_factory()
         return self._backend
-
-    def run_here(self, request: CommandRequest) -> Reply:
-        """`request` in this process, as the daemon runs it (but no tick first)."""
-        try:
-            with open_service(self.backend, self.presence_factory()) as service:
-                return execute(service, request).reply
-        except AppError as err:
-            return error_reply(err)
 
 
 # -- monitors ----------------------------------------------------------------
@@ -209,7 +162,7 @@ class Text(NamedTuple):
 def cmd_playlist(ctx: Context, args: argparse.Namespace) -> int:
     """
     status, pick, upcoming, stats, unremove and the TARGET_COMMANDS: in the
-    app, or here.
+    daemon.
     """
     target: str | None = getattr(args, "target", None)
     request: CommandRequest
@@ -227,16 +180,15 @@ def cmd_playlist(ctx: Context, args: argparse.Namespace) -> int:
     else:
         command: PlaylistCommand = args.command  # a subparser name
         request = Request(command=command, target=target)
-    return _print(ctx.daemon_client(request, ctx.run_here))
+    return _print(ctx.daemon_client(request))
 
 
 def cmd_reset_cycle(ctx: Context, args: argparse.Namespace) -> int:
     """Asks first, with the playlist's count, unless --yes."""
     if not args.yes:
-        answer = ctx.daemon_client(StatsRequest(target=args.target), ctx.run_here)
-        reply = answer.reply
+        reply = ctx.daemon_client(StatsRequest(target=args.target))
         if not isinstance(reply, StatsResult):
-            return _print(answer)
+            return _print(reply)
         stats = reply.playlists[0]
         # A sorted one has no cycle: nothing to ask, the daemon says so.
         if stats.order is Order.SHUFFLE and not _confirm(
@@ -246,7 +198,7 @@ def cmd_reset_cycle(ctx: Context, args: argparse.Namespace) -> int:
             print("Nothing changed")
             return 1
     request = ResetCycleRequest(target=args.target)
-    return _print(ctx.daemon_client(request, ctx.run_here))
+    return _print(ctx.daemon_client(request))
 
 
 def _confirm(question: str) -> bool:
@@ -257,30 +209,15 @@ def _confirm(question: str) -> bool:
         return False
 
 
-def _print(answer: Answer) -> int:
-    """Print a command's answer; its exit code."""
-    log.info("Reply: %s", answer.reply.model_dump_json())
-    text = format_answer(answer)
+def _print(reply: Reply) -> int:
+    """Print a command's reply; its exit code."""
+    log.info("Reply: %s", reply.model_dump_json())
+    text = format_reply(reply)
     if text.out:
         print(text.out)
     if text.err:
         print(text.err, file=sys.stderr)
     return text.code
-
-
-def format_answer(answer: Answer) -> Text:
-    """The reply's text; run here, `status` and `remove --image` say so."""
-    text = format_reply(answer.reply)
-    if not answer.here:
-        return text
-    match answer.reply:
-        case StatusResult():
-            playlists, paused = answer.reply.playlists, answer.reply.paused
-            out = format_status(playlists, paused, running=False)
-            return text._replace(out=out)
-        case RemoveResult():
-            return text._replace(out=_remove_text(answer.reply, running=False))
-    return text
 
 
 def format_reply(reply: Reply) -> Text:
@@ -321,10 +258,7 @@ def format_reply(reply: Reply) -> Text:
     raise AssertionError(f"Unhandled reply {reply!r}")
 
 
-def format_status(
-    playlists: Sequence[PlaylistDetails], paused: str | None, running: bool = True
-) -> str:
-    """`running` False: run here, with no daemon to rotate."""
+def format_status(playlists: Sequence[PlaylistDetails], paused: str | None) -> str:
     lines: list[str] = []
     for playlist in playlists:
         lines.append(f"{playlist.name}  ({', '.join(traits(playlist))})")
@@ -341,9 +275,7 @@ def format_status(
         lines.append(f"  next in:   {_next_in(playlist)}")
         upcoming = ", ".join(p.name for p in playlist.upcoming) or "-"
         lines.append(f"  upcoming:  {upcoming}")
-    if not running:
-        lines.append(NOT_RUNNING)
-    elif paused:
+    if paused:
         lines.append(f"Rotation paused: {paused}")
     else:
         lines.append("Rotation active")
@@ -406,8 +338,7 @@ def _mark_text(reply: MarkResult) -> str:
             return f"{reply.image.name} is not listed for removal"
 
 
-def _remove_text(reply: RemoveResult, running: bool = True) -> str:
-    """`running` False: run here, so no tick follows until the daemon starts."""
+def _remove_text(reply: RemoveResult) -> str:
     if reply.changed:
         listed = f"Listed {reply.image} in {reply.list_file} (not deleted)"
     else:
@@ -415,8 +346,7 @@ def _remove_text(reply: RemoveResult, running: bool = True) -> str:
     if reply.change is not None:
         moved = reply.change.describe()
     elif reply.playlist is None:  # an image named: only listed
-        when = "within a few seconds" if running else "once the app runs"
-        moved = f"A playlist showing it moves on {when}"
+        moved = "A playlist showing it moves on within a few seconds"
     else:
         moved = f"{reply.playlist}: changes once a monitor is attached"
     return f"{listed}\n{moved}"
@@ -520,9 +450,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--verbose",
         action="store_true",
         help=(
-            "log what the command does to stderr: whether it reached the "
-            "running app or ran here without one, and the raw reply (run, tray and ui "
-            "always log)"
+            "log what the command does to stderr: the daemon it asked and the "
+            "raw reply (run, tray and ui always log)"
         ),
     )
     sub = parser.add_subparsers(dest="command", required=True)

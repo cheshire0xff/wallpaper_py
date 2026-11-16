@@ -15,7 +15,7 @@ thin. See [architecture.md](architecture.md) for the layers.
 | 4b | Settings in the database, per-monitor looks, previews, backgrounds | done |
 | 4c | More backgrounds for Fit: dominant, blur | done |
 | 4d | Blur strength and darkening per monitor; the look stored as one value | done |
-| S | Simplification: words, protocol and plumbing, tray / CLI / window as clients | steps 1–3a done; 3b, 4 next |
+| S | Simplification: words, protocol and plumbing, tray / CLI / window as clients | steps 1–3 done; 4 next |
 | 5 | Library page: overview (stats), grids, enlarged view | steps 1–4 done; 5–6 after S |
 | 6 | KDE backend | backend done; Kubuntu and the checks by hand left |
 | 7 | Polish | |
@@ -133,7 +133,7 @@ window process).
      - The service thread logs each command or tick that takes over
        100 ms, with its time: by step 4, the daemon's log shows what a
        click could wait for.
-3. **Every client the same**, two sessions side by side:
+3. **Every client the same** (done), two sessions side by side:
    - **a. The tray on `Client`** (done). The tray uses the `Client` the pages
      use, implemented in-process. Not over the socket: both ends of each
      connection would sit in the daemon, a socket pair per connection to
@@ -156,7 +156,7 @@ window process).
      - `Client`, `ReplyTo` and `SocketClient` move from app/ui/client.py
        to app/; the tray takes a `Client`, and test_tray uses the
        `FakeClient` the page tests use.
-   - **b. The CLI as a plain client.** Playlist commands need the daemon:
+   - **b. The CLI as a plain client** (done). Playlist commands need the daemon:
      without one, the CLI says so (`NOT_RUNNING`: "`wallpaper tray`
      starts it") and exits non-zero. It still never starts the daemon,
      and no longer runs the command itself: `send_to_daemon`'s

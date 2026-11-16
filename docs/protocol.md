@@ -21,8 +21,8 @@ release it may still change in place.)
 - One JSON object per line (UTF-8, `\n`), one request per connection: send
   one line, read one line, and the daemon closes the connection. The exception
   is `subscribe` (below).
-- No daemon listening means it isn't running. The CLI then runs the command
-  itself (holding the daemon's lock) instead; the window process starts the daemon
+- No daemon listening means it isn't running. The CLI then fails
+  (`wallpaper tray` starts it); the window process starts the daemon
   (`pythonw -m wallpaper_py tray`) and retries for up to 10 s.
 - A command runs on the daemon's service thread between ticks, so the reply
   can take a while (a 4K render, or a first scan of a big directory): the

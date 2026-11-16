@@ -171,9 +171,11 @@ costs at most one tick.
 CLI makes its text from it, the tray and the windows show the same
 models, so a command is written once for all of them.
 
-**The CLI never starts the daemon.** Without one, it runs the command itself
-under the daemon's instance lock (one writer at a time) and exits: only the
-daemon rotates, and nothing keeps running after a command (cli.py).
+**The CLI is a plain client and never starts the daemon.** Without one, a
+playlist command fails with `NOT_RUNNING` ("`wallpaper tray` starts it") and
+exits non-zero: it never runs a command itself, so only the daemon rotates and
+the instance lock (instance.py) has one kind of holder. Monitor commands
+(`list`, `set`) need no daemon (cli.py).
 
 **Errors stop only what they must.** A `WallpaperError` fails one
 operation and the rest goes on; a `ConfigError` (a list file that can't be

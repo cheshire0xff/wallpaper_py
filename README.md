@@ -108,11 +108,10 @@ to edit.
 `tray` and `run` start the same app; only one can run at a time (per
 user). It rotates the playlists, and the other commands (`status`, `next`,
 ...) are sent to it, so they never collide with a change in progress. When
-no app is running, those commands run by themselves and exit: nothing is
-left running, and nothing rotates until you start the app (`status` says
-so). `list` and `set` work without the app. `--verbose` (before the
-command: `wallpaper --verbose next`) logs whether a command reached the
-running app or ran by itself, and the raw reply.
+no app is running, they fail ("wallpaper_py isn't running"; `wallpaper tray`
+starts it): the commands never start it. `list` and `set` work without the
+app. `--verbose` (before the command: `wallpaper --verbose next`) logs the
+daemon the command asked and the raw reply.
 
 The tray menu has a section per playlist (its monitors by name, the current
 image, which opens on click, *Next*, *Previous*, a *Favourite* toggle,
