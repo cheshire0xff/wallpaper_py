@@ -15,7 +15,7 @@ thin. See [architecture.md](architecture.md) for the layers.
 | 4b | Settings in the database, per-monitor looks, previews, backgrounds | done |
 | 4c | More backgrounds for Fit: dominant, blur | done |
 | 4d | Blur strength and darkening per monitor; the look stored as one value | done |
-| S | Simplification: words, protocol and plumbing, tray / CLI / window as clients | steps 1–4 done |
+| S | Simplification: words, protocol and plumbing, tray / CLI / window as clients | done |
 | 5 | Library page: overview (stats), grids, enlarged view | steps 1–4 done; 5 next, then 6 |
 | 6 | KDE backend | backend done; Kubuntu and the checks by hand left |
 | 7 | Polish | |
@@ -27,7 +27,8 @@ monitor identity, looks), [app-wiring.md](app-wiring.md),
 What is still to try by hand: [desktop-checks.md](desktop-checks.md). The
 plans of the finished phases, with the notes made while building them, are
 in git: `git show d771a26:docs/plan.md` (Phase 4b step 5's: `92837ce`;
-Phase 4c's: `cd44203`; Phase 4d's: `280a3ef`).
+Phase 4c's: `cd44203`; Phase 4d's: `280a3ef`; the Simplification's
+and Phase 5 steps 1–4's notes: `5696a9f`).
 
 ## Decided against (until missed)
 
@@ -48,174 +49,6 @@ Phase 4c's: `cd44203`; Phase 4d's: `280a3ef`).
   asynchronous image grid, but it means rewriting ~6,000 lines and their
   offscreen tests, mypy can't check QML, and the Qt for Python rules
   become other rules. Only if the windows keep growing a lot.
-
-## Simplification
-
-From a read of the whole codebase (2026-11-16, after Phase 5 step 4). The
-core (`PlaylistService`, `order`, `store`, `marks`) is in good shape; what
-grew is the plumbing around it: two ways into the service thread, line
-framing written four times, the settings checks written twice, the windows
-keying playlists by name, and a second socket only to open the window. Done
-now, before Phase 5's step 5, while the protocol and stored state still
-change in place. Each step is one session, updates the docs it touches
-(architecture.md where it reverses a decision), and ends with a few things
-to try by hand.
-
-### Words
-
-The names say what things are. "App" meant the product, the background
-process and the `app/` package; "UI" both the window process and the
-daemon's main thread; "service" sounds like an OS service.
-
-| Was | Now | What it is |
-|---|---|---|
-| the app, the app process | **daemon** | `wallpaper tray` / `wallpaper run`: runs all session, holds the instance lock, serves the socket, rotates; with `tray` it also shows the icon |
-| UI thread | **main thread** | Qt's main thread, in either process; the daemon's holds the tray |
-| the service | **`PlaylistService`** | the core object; "the service is down" becomes "`PlaylistService` is stopped": the daemon keeps answering |
-| service thread | *(kept)* | the daemon's thread that runs `PlaylistService` |
-| `ServiceHost` | **`ServiceThread`** | the main thread's handle on the service thread |
-| UI process | **window process** | `wallpaper ui`: the window, on demand |
-
-Kept: what users read ("wallpaper_py isn't running"), Qt's `app` (the
-`QApplication`), and the packages (`app/` is the Qt layer, `app/ui/` the
-window process).
-
-### Steps
-
-1. **Words** (done). The renames above in code, tests and docs: `run_app` →
-   `run_daemon`, `AppOptions` → `DaemonOptions`, `start_app` /
-   `app_command` → `start_daemon` / `daemon_command`, `send_to_app` →
-   `send_to_daemon`, test_app.py → test_daemon.py, and every other name
-   that says "app" for the daemon. architecture.md opens with the table
-   above. Nothing else changes. First and alone: it touches most files.
-2. **Easy fixes**, two sessions side by side:
-   - **a. Protocol** (done).
-     - The windows key playlists by id, not by name: Home's rows and
-       status details (`HomePage.rows`, `HomePage._details`), the
-       Library's drop-down, `LibraryPage.directory` and the playlist in
-       ui-state.json (a stored name falls back to the default once),
-       `settings_draft.current_images` (its case-insensitive name matching
-       goes), `arrangement.playlists_by_monitor`. `Change` gets the
-       playlist's id, which `LibraryPage._changed` compares. A rename then
-       breaks none of them.
-     - One `match request:` in `commands.execute`, a case per request
-       model, instead of the `isinstance` chain, the four helpers and
-       `_TARGET_HANDLERS` with its assert. Each request model says whether
-       it changes anything (a class variable), replacing
-       `ServiceWorker.execute`'s hand-kept list of read-only commands. The
-       command `Literal`s and unions in protocol.py keep only what that
-       still needs. `HoldResult` and `ResumeResult` become one, as
-       `MarkResult` already covers three commands.
-     - protocol.md and the schema follow.
-   - **b. Plumbing and the windows' repeats** (done).
-     - The settings checks once: `check_settings`, `check_folders` and
-       `check_list_files` find every problem with its place (playlist id
-       or none, field, message) and raise the first where they check
-       today. `settings_draft.problems` keeps only reading the texts
-       (durations, paths) and "this is a folder, not a file";
-       `SettingsPage._check`'s second check goes.
-     - One `LineBuffer` (`feed(bytes)` → complete lines; raises past the
-       size limit) for `ipc._read_line`, `LineRequest._read`,
-       `SocketClient._read` and `LineServer._read`.
-     - One helper for "one request at a time, ask again if more came
-       meanwhile" (Home's `_status_running` / `_status_again`, the
-       Library's `_asked_for` / `_ask_again`).
-     - `client.ReplyTo` takes extra arguments; `home._ReplyTo` goes.
-     - A `theme.Banner` for the banners of Home, Library and Settings.
-     - One Qt-free texts module for what the tray, Home and the CLI say
-       about a playlist or a monitor (`tray._monitor_label` /
-       `home._member`; `tray._playlist_label`, `home.chip_text`,
-       `cli._traits`).
-     - The two `format_duration`s say different things: core.settings's
-       is exact (it writes a settings field back), home.py's rounds the
-       time left. One name each; the rounded one goes to the texts
-       module.
-     - The service thread logs each command or tick that takes over
-       100 ms, with its time: by step 4, the daemon's log shows what a
-       click could wait for.
-3. **Every client the same** (done), two sessions side by side:
-   - **a. The tray on `Client`** (done). The tray uses the `Client` the pages
-     use, implemented in-process. Not over the socket: both ends of each
-     connection would sit in the daemon, a socket pair per connection to
-     pass messages between two threads.
-     - The service thread sends each event once, as the protocol's
-       `Event`, to both kinds of listener: `ServiceWorker._send(event)`
-       emits one `sent` signal (not `event`: that would hide
-       `QObject.event`) and broadcasts to the subscribers. It replaces the
-       `changed` and `overview_changed` signals.
-     - `LocalClient(Client)` on the main thread: `run` is today's
-       `ServiceThread.submit` with its callbacks (queued to the service
-       thread, the reply back through `replied`); events go through
-       `Client._dispatch(event)`, moved out of `SocketClient._read` and
-       shared by both. The models travel as they are (frozen, so safe to
-       share between threads): no JSON, envelope, version check or
-       handshake; connecting before the thread starts is the
-       subscription.
-     - `ServiceThread` keeps only the thread: `start`, `request_tick`,
-       `shutdown`, `failed`, `ticked`, and hands out its `client`.
-     - `Client`, `ReplyTo` and `SocketClient` move from app/ui/client.py
-       to app/; the tray takes a `Client`, and test_tray uses the
-       `FakeClient` the page tests use.
-   - **b. The CLI as a plain client** (done). Playlist commands need the daemon:
-     without one, the CLI says so (`NOT_RUNNING`: "`wallpaper tray`
-     starts it") and exits non-zero. It still never starts the daemon,
-     and no longer runs the command itself: `send_to_daemon`'s
-     lock-and-retry loop, `Context.run_here`, `Answer.here` and its texts
-     go, and so does the daemon's wait for a CLI holding its lock
-     (`LOCK_WAIT_S`, `lock_wait_s`): the instance lock has one kind of
-     holder. The tests inject a client that runs the command against the
-     fakes (what `run_here` did, now only there). Monitor commands
-     (`list`, `set`) still work alone. architecture.md's "The CLI never
-     starts the app" paragraph changes: it no longer runs commands itself.
-4. **The daemon opens the window** (done). The window process stops
-   listening on a socket of its own; the daemon, which it subscribes to
-   anyway, knows whether a window exists. Built as below, except:
-   `wallpaper ui` doesn't ask `show_window` first, it subscribes as the
-   window at once (the refusal already shows its page in the window, so
-   the first request added nothing); and a window the daemon hasn't
-   answered within 2 s shows anyway, "Connecting…", so a stuck daemon
-   leaves no invisible process. The slow-work log, read first: 100 to
-   400 ms, at most ~600 ms in a burst of *Next*.
-   - Three additions, handled by `CommandServer` itself (like
-     `subscribe`), not by `commands.execute`, so they work while
-     `PlaylistService` is stopped (the window must open to show why):
-
-     | Addition | Meaning |
-     |---|---|
-     | `subscribe {window: page}` | "I am the window." Only the first such subscriber is; a later one has its page forwarded to the first, is refused, and exits. |
-     | `show_window {page}` → `{shown}` | A window gets `show_page`: `shown: true`. None: `shown: false`. |
-     | event `show_page {page}` | Only to the window: it raises itself on that page. |
-
-     `CommandServer` remembers which connection is the window; when it
-     closes, there is none. `PageName` moves to protocol.py.
-   - Tray click: `allow_foreground()` (the daemon has the click), then
-     `show_window` through its `LocalClient`; `ServiceWorker` hands it to
-     `CommandServer`. On `shown: false` the tray starts `wallpaper ui
-     <page>` on the main thread: the service thread never starts
-     processes.
-   - `wallpaper ui <page>`: `show_window` on the daemon's socket; shown:
-     exit. Else it subscribes as the window. No daemon: start it as now,
-     and show the window at once with "Connecting…".
-   - Two starting at once: the service thread takes their subscriptions
-     one at a time, and the first wins. This replaces `ui.lock`. If both
-     started the daemon, the loser shows "Connecting…" briefly and
-     closes; with a daemon running, a window waits for its acceptance
-     (milliseconds) before showing.
-   - The window closes: it ends its subscription at once (no window from
-     then on); commands in flight finish on their own connections; it
-     quits once idle.
-   - Goes: most of launcher.py (`UiServer`, `ShowRequest` / `ShowReply`,
-     `show_in_running_ui`, the "ui" socket name, `WindowOpener`'s socket
-     path), `ui.lock` and `paths.ui_lock`, `_wait_for_running_ui`, and
-     the `LineServer` / `CommandServer` split. About 200 fewer lines; one
-     socket and one lock.
-   - The cost: a click waits for whatever runs on the service thread (a
-     render ~200 ms, a first scan of a 20k-image folder, `stats
-     --rescan`); today the tray asks the window process directly. Look at
-     the slow-work log (step 2b) first: if a click could wait more than
-     about half a second in normal use, decide before building.
-
-Then Phase 5 goes on with step 5.
 
 ## Phase 5: Library page
 
@@ -451,61 +284,10 @@ no stylesheet.
 
 ### Steps, one session each
 
-1. **Overview** (done): `stats`, `reset_cycle` and their CLI; the page
-   (title, playlist drop-down, tab bar, `ui-state.json`) with the Overview
-   tab; About's line goes. The grid tabs say they come later. *Reset
-   cycle…* sits beside Seen, as *Rescan* beside Images; a sorted walk's
-   place is the newest image it showed (where it goes on), which is the
-   current one unless *Previous* went back.
-2. **Controls** (done), from design/controls.dc.html: drop-down,
-   segmented buttons, switches, buttons and slider, used in Settings and
-   the Library page; the 2 px focus ring everywhere; the accent from
-   `Highlight` on Linux; the docs say Fusion. Decided while building:
-   the drop-down's open list is a popup of our own (restyling Qt's would
-   mean overriding Qt's non-event methods, AGENTS.md rule 3), placed
-   under the box (above if there is no room), with all entries (the
-   app's lists are short); a click drops the focus ring until the next
-   Tab; the ring lies on the control's edge with the fill inside it (Qt
-   can't paint outside a widget), and a switch keeps 4 px around its
-   pill for it; *Changes* (Every / Manually) stays a drop-down beside the
-   interval field. Mode's icons are our own, drawn like Lucide's.
-3. **Data for the grids** (done): marks by `image`, `unremove`,
-   `marks_changed`, `upcoming` (and their CLI); the UI-side scan with
-   "added" times (`library.scan_files`); the read-only history reader
-   (`store.read_history`). Decided while building: the list commands are
-   a request model of their own (`MarkRequest`), an `image` or a `target`,
-   never both; `unremove` needs an `image` (the current image is never
-   listed for long); `remove` replies `changed` too; the tray and Home
-   build their buttons' requests with `protocol.target_request`.
-   `marks_changed` carries no fields and goes only to subscribers; the
-   Overview tab asks for its numbers again on it. `scan_files` reads the
-   times from the directory listing (free on Windows, an `lstat` each on
-   Linux) and shares its walk with `scan`. The history reader takes a
-   playlist's id: step 5 gets it from the `settings` command, or adds
-   `id` to the overview's playlists.
-4. **Thumbnails** (done): the grid pipeline, the disk cache,
-   pre-generation and pruning; tested offscreen with generated images
-   (`tests/generate_test_images.py`, `generate_library`). Decided while
-   building: All images already shows its folder in the grid (name order,
-   no toolbar, count or badges yet), so the pipeline can be tried by hand.
-   Tiles are 192 x 108 with 8 px between them; a thumbnail is the image
-   filling the tile (cropped to the middle; chosen by the user over
-   fitting, as the phone app does: every tile alike) at the sharpest
-   screen's scale, a JPEG at quality 88 (`core.thumbnail_cache`,
-   `imaging.load_filled`); the style is part of the file's name.
-   Four tile threads; the grid tells the loader the rows on screen and one
-   more above and below, found by bisection over the item rectangles. The
-   overview now carries each playlist's `id` and `directory` and the two
-   list files, which the pre-generation follows (and step 5's History
-   can use). A pass prunes only after reading every folder and list (a
-   folder not mounted keeps its thumbnails), never from an overview with
-   an error, and keeps files written since it started. Threads are
-   `QRunnable`s on each object's own `QThreadPool` (the pre-generation's:
-   one thread, low priority), as `ThumbnailLoader`'s, all through one
-   helper (`Jobs`: a pool, results on the main thread); the Qt-rules test
-   now allows an item model's `rowCount` / `data` and a delegate's
-   `paint` / `sizeHint` (AGENTS.md rule 3). The window stops the threads
-   when it closes, and on `aboutToQuit` when the app quits with it open.
+1. **Overview** (done).
+2. **Controls** (done).
+3. **Data for the grids** (done).
+4. **Thumbnails** (done).
 5. **Grid tabs**: the five tabs, toolbars, badges, counts, fast-scroll;
    Overview becomes Stats, last.
 6. **Enlarged view**.
