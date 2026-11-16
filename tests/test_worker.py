@@ -24,6 +24,7 @@ from wallpaper_py.core.service import Change
 from wallpaper_py.core.settings import Settings
 from wallpaper_py.protocol import (
     ChangedEvent,
+    ClientRequest,
     CommandRequest,
     Envelope,
     ErrorReply,
@@ -45,6 +46,9 @@ from wallpaper_py.protocol import (
     SaveSettingsResult,
     SettingsRequest,
     SettingsResult,
+    ShowPageEvent,
+    ShowWindowRequest,
+    ShowWindowResult,
     Subscribe,
     target_request,
 )
@@ -117,7 +121,7 @@ def start(qtbot: QtBot, service_thread: ServiceThread) -> Overview:
 
 
 def submit(
-    qtbot: QtBot, service_thread: ServiceThread, request: CommandRequest
+    qtbot: QtBot, service_thread: ServiceThread, request: ClientRequest
 ) -> Reply:
     replies: list[Reply] = []
     service_thread.client.run(request, replies.append)
@@ -288,6 +292,14 @@ def test_a_bad_list_file_at_start_then_fixed(
     tick(qtbot, service_thread)  # tries again: the same error, logged once
     errors = [r for r in caplog.records if r.levelname == "ERROR"]
     assert len([r for r in errors if "byte order mark" in r.getMessage()]) == 1
+
+    # The window's requests need no PlaylistService: it opens to say why.
+    window = ask(qtbot, name, Subscribe(window="settings"))
+    read_lines(qtbot, window, 1)  # the overview with the error: it is the window
+    shown_there = submit(qtbot, service_thread, ShowWindowRequest(page="home"))
+    assert shown_there == ShowWindowResult(shown=True)
+    [line] = read_lines(qtbot, window, 1)
+    assert ipc.decode_event(line) == ShowPageEvent(page="home")
 
     listed.write_text("a.jpg\n", encoding="utf-8")
     with qtbot.waitSignal(service_thread.client.overview_changed) as blocker:
@@ -517,3 +529,18 @@ def test_saved_settings_show_before_the_reply(
     qtbot.waitUntil(fit_in_overview)
     again = send(qtbot, name, SettingsRequest())
     assert isinstance(again, SettingsResult) and again.settings == edit
+
+
+def test_the_trays_show_window_reaches_the_window(
+    qtbot: QtBot, service_thread: ServiceThread, name: str
+) -> None:
+    start(qtbot, service_thread)
+    no_window = submit(qtbot, service_thread, ShowWindowRequest(page="library"))
+    assert no_window == ShowWindowResult(shown=False)  # the tray starts one
+    window = ask(qtbot, name, Subscribe(window="library"))
+    [line] = read_lines(qtbot, window, 1)
+    assert isinstance(ipc.decode_event(line), OverviewChangedEvent)
+    window_open = submit(qtbot, service_thread, ShowWindowRequest(page="settings"))
+    assert window_open == ShowWindowResult(shown=True)
+    [line] = read_lines(qtbot, window, 1)
+    assert ipc.decode_event(line) == ShowPageEvent(page="settings")

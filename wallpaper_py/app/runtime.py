@@ -7,7 +7,8 @@ The daemon: the one process that rotates the wallpapers and serves commands.
 lock and runs the playlist service on its own thread, together
 with the command socket, so commands and ticks never overlap. The main thread
 holds only the tray; the windows run in a process of their own
-(app/ui/process.py), which the tray starts on demand.
+(app/ui/process.py), which the tray starts on demand, when the socket
+knows of no window.
 """
 
 from __future__ import annotations
@@ -29,13 +30,18 @@ from ..core.autostart import Autostart
 from ..core.backend import Backend
 from ..core.model import WallpaperError
 from ..core.presence import Presence
+from ..protocol import PageName
 from .icon import app_icon
 from .instance import InstanceLock
 from .ipc import server_name
-from .processes import autostart_command, quit_on_interrupt, ui_command
+from .processes import (
+    autostart_command,
+    quit_on_interrupt,
+    start_detached,
+    ui_command,
+)
 from .screens import ScreenWatcher
 from .tray import Tray
-from .ui.launcher import WindowOpener, ui_server_name
 from .worker import ServiceSettings, ServiceThread
 
 log = logging.getLogger(__name__)
@@ -97,15 +103,13 @@ def _run_locked(
 
     tray: Tray | None = None
     if options.tray:
-        opener = WindowOpener(ui_server_name(paths.data_dir()), ui_command)
         tray = Tray(
             service_thread.client,
             platform.autostart_factory(),
             autostart_command(),
             app.quit,
-            open_window=opener.open,
+            start_window=_start_window,
         )
-        opener.failed.connect(tray.notify)
     watcher = ScreenWatcher(app) if isinstance(app, QGuiApplication) else None
     if watcher is not None:
         watcher.settled.connect(service_thread.request_tick)
@@ -147,6 +151,10 @@ def _application(tray: bool) -> QCoreApplication:
         app.setWindowIcon(app_icon())
     app.setApplicationName("wallpaper_py")
     return app
+
+
+def _start_window(page: PageName) -> None:
+    start_detached(ui_command(page))
 
 
 def _countdown(ticks: int, done: Callable[[], None]) -> Callable[[], None]:

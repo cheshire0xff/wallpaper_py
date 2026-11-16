@@ -1,7 +1,7 @@
 """
-The window process: its window on the page asked for (also when it already
-runs), and its life (started on demand, gone with its window or with the
-daemon).
+The window process: its window on the page asked for (also when one is
+open already), at most one of them, and its life (started on demand, gone
+with its window or with the daemon).
 """
 
 import subprocess
@@ -12,20 +12,26 @@ from contextlib import nullcontext
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QCoreApplication, QObject, QTimer
+from PySide6.QtCore import QCoreApplication, QTimer
 from PySide6.QtWidgets import QApplication
 from pytestqt.qtbot import QtBot
 
 from wallpaper_py.app import ipc
-from wallpaper_py.app.instance import InstanceLock
 from wallpaper_py.app.runtime import DaemonOptions, Platform, run_daemon
-from wallpaper_py.app.ui.launcher import PageName, ShowRequest, ui_server_name
 from wallpaper_py.app.ui.process import UiOptions, run_ui
 from wallpaper_py.app.ui.window import MainWindow
 from wallpaper_py.app.worker import ServiceThread
 from wallpaper_py.core import paths
+from wallpaper_py.protocol import (
+    PageName,
+    Reply,
+    ShowWindowRequest,
+    ShowWindowResult,
+    StatusRequest,
+    StatusResult,
+)
 
-from .clients import NO_WINDOW, run_python
+from .clients import NO_WINDOW
 from .hosts import make_service_thread
 from .fakes import (
     FakeAutostart,
@@ -34,11 +40,10 @@ from .fakes import (
     make_monitor,
     write_settings,
 )
-from .test_ui_launcher import SHOW
 
-# argv: data dir, page. A window process as `wallpaper ui` runs it,
-# logging to stderr; if no daemon runs it "starts" a harmless command (never
-# the real daemon).
+# argv: data dir, page. A window process as `wallpaper ui` runs it, logging
+# to stderr. If no daemon runs, the daemon it "starts" only leaves a mark
+# (started-<page> in the data dir): never the real daemon.
 UI = """
 import sys
 from pathlib import Path
@@ -47,10 +52,12 @@ from wallpaper_py.app.ui.process import UiOptions, run_ui
 from wallpaper_py.core import paths
 data_dir, page = Path(sys.argv[1]), sys.argv[2]
 paths.data_dir = lambda: data_dir
+paths.cache_dir = lambda: data_dir / "cache"
 paths.log_file = lambda: data_dir / "wallpaper.log"
 setup_logging(None)
+mark = str(data_dir / f"started-{page}")
 def harmless():
-    return [sys.executable, "-c", "pass"]
+    return [sys.executable, "-c", f"open({mark!r}, 'a').close()"]
 sys.exit(run_ui(UiOptions(page, daemon_command=harmless)))
 """
 
@@ -96,12 +103,31 @@ def run_ui_while(options: UiOptions, step: Callable[[], bool]) -> int:
         safety.stop()
 
 
+def with_service_thread_started(service_thread: ServiceThread) -> None:
+    started: list[bool] = []
+    service_thread.client.overview_changed.connect(lambda _: started.append(True))
+    service_thread.start()
+    deadline = time.monotonic() + 10
+    while not started and time.monotonic() < deadline:
+        QCoreApplication.processEvents()
+        time.sleep(0.01)
+    assert started
+
+
+def show_window(qtbot: QtBot, service_thread: ServiceThread, page: PageName) -> Reply:
+    """As the tray asks: through the daemon's own client."""
+    replies: list[Reply] = []
+    service_thread.client.run(ShowWindowRequest(page=page), replies.append)
+    qtbot.waitUntil(lambda: bool(replies))
+    return replies[0]
+
+
 def test_ui_shows_the_live_overview_until_its_window_closes(
     qtbot: QtBot, service_thread: ServiceThread
 ) -> None:
-    del qtbot
     with_service_thread_started(service_thread)
     seen: list[str] = []
+    replies: list[Reply] = []
 
     def close_when_live() -> bool:
         window = main_window()
@@ -112,6 +138,9 @@ def test_ui_shows_the_live_overview_until_its_window_closes(
             return False
         seen.append(f"{row.file.text()} | {row.details.text()}")
         seen.append(window.sidebar.status.text())
+        # A command still on its way when the window closes gets its reply.
+        client = window.home._client  # pylint: disable=protected-access
+        client.run(StatusRequest(), replies.append)
         window.close()  # the window process ends with its window
         return True
 
@@ -120,18 +149,9 @@ def test_ui_shows_the_live_overview_until_its_window_closes(
     assert seen[0].startswith("a.jpg | 8×6 · ")
     assert seen[0].endswith(" · sorted, every 10m · next in 10m")
     assert seen[1] == "Rotation active"
-    assert InstanceLock(paths.ui_lock()).acquire()  # released
-
-
-def with_service_thread_started(service_thread: ServiceThread) -> None:
-    started: list[bool] = []
-    service_thread.client.overview_changed.connect(lambda _: started.append(True))
-    service_thread.start()
-    deadline = time.monotonic() + 10
-    while not started and time.monotonic() < deadline:
-        QCoreApplication.processEvents()
-        time.sleep(0.01)
-    assert started
+    assert len(replies) == 1 and isinstance(replies[0], StatusResult)
+    # The subscription ended with the window: the daemon knows of none.
+    assert show_window(qtbot, service_thread, "home") == ShowWindowResult(shown=False)
 
 
 @pytest.mark.parametrize("page", ["home", "library", "settings"])
@@ -156,30 +176,23 @@ def test_the_window_opens_on_the_page_asked_for(
     assert shown == [page, True]
 
 
-def test_a_second_request_brings_the_window_to_its_page(
-    service_thread: ServiceThread,
+def test_the_tray_brings_the_open_window_to_its_page(
+    qtbot: QtBot, service_thread: ServiceThread
 ) -> None:
-    """A second `wallpaper ui settings` (or a tray entry) while one runs."""
+    """A tray entry (or a second `wallpaper ui settings`) while one is open."""
     with_service_thread_started(service_thread)
-    owner = QObject()
-    answers: list[bytes] = []
+    replies: list[Reply] = []
     pages: list[str] = []
 
     def ask_then_close() -> bool:
         window = main_window()
         if window is None:
             return False
-        if not answers and not pages:
+        if not pages:
             pages.append(window.current_page())
             window.showMinimized()
-            request = ShowRequest(page="settings")
-            ipc.LineRequest(  # as the tray asks: never blocking
-                ui_server_name(paths.data_dir()),
-                ipc.encode(request),
-                answers.append,
-                lambda *_: answers.append(b"failed"),
-                parent=owner,
-            )
+            request = ShowWindowRequest(page="settings")
+            service_thread.client.run(request, replies.append)
             return False
         if window.current_page() != "settings" or window.isMinimized():
             return False
@@ -189,54 +202,79 @@ def test_a_second_request_brings_the_window_to_its_page(
 
     assert run_ui_while(UiOptions(), ask_then_close) == 0
     assert pages == ["home", "settings"]
-    assert answers == [b'{"error":null}']
+    qtbot.waitUntil(lambda: bool(replies))
+    assert replies == [ShowWindowResult(shown=True)]
 
 
-def test_one_window_process_that_ends_with_the_daemon(
-    qtbot: QtBot, tmp_path: Path
-) -> None:
-    write_settings(tmp_path)
-    data = str(paths.data_dir())
-    backend = FakeBackend([make_monitor("Main")])
-    platform = Platform(
-        lambda: backend, FakePresence, FakeAutostart, thread_scope=nullcontext
+def start_window(data: Path, page: PageName) -> subprocess.Popen[str]:
+    return subprocess.Popen(  # pylint: disable=consider-using-with
+        [sys.executable, "-c", UI, str(data), page],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+        creationflags=NO_WINDOW,
     )
-    shows: dict[str, str] = {}
-    processes: list[subprocess.Popen[str]] = []
+
+
+@pytest.mark.parametrize("daemon_first", [True, False], ids=["running", "starting"])
+def test_two_windows_at_once_leave_one(
+    qtbot: QtBot, tmp_path: Path, daemon_first: bool
+) -> None:
+    """
+    Two `wallpaper ui` at once: the daemon takes their subscriptions one at
+    a time, and the first is the window. The other has its page shown there
+    and exits; if both had to start the daemon, after showing "Connecting…".
+    The window ends with the daemon.
+    """
+    write_settings(tmp_path)
+    data = paths.data_dir()
+    backend = FakeBackend([make_monitor("Main")])
+    windows: dict[PageName, subprocess.Popen[str]] = {}
+
+    def start_both() -> None:
+        for page in ("home", "library"):
+            windows[page] = start_window(data, page)
 
     def scenario() -> None:
-        """While the daemon's loop runs: start a UI, use it, quit the daemon."""
         try:
-            processes.append(
-                subprocess.Popen(  # pylint: disable=consider-using-with
-                    [sys.executable, "-c", UI, data, "home"],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    creationflags=NO_WINDOW,
-                )
+            if daemon_first:
+                start_both()
+            qtbot.waitUntil(
+                lambda: any(w.poll() is not None for w in windows.values()),
+                timeout=30_000,
             )
-            name = ipc.server_name(Path(data), "ui")
-            deadline = time.monotonic() + 30
-            while time.monotonic() < deadline:  # until it listens
-                result = run_python(qtbot, SHOW, name, "library")
-                shows["library"] = result.stdout.strip()
-                if shows["library"] != "NONE":
-                    break
-                qtbot.wait(200)
+            qtbot.wait(300)  # the other one stays: it is the window
         finally:
-            QCoreApplication.quit()  # the daemon quits: so must the UI
+            QCoreApplication.quit()  # the daemon quits: so must the window
 
-    QTimer.singleShot(0, scenario)
-    assert run_daemon(DaemonOptions(tray=False), platform) == 0
-    assert len(processes) == 1
-    ui = processes[0]
     try:
-        _, err = ui.communicate(timeout=20)
+        if not daemon_first:
+            start_both()
+            marks = [data / f"started-{page}" for page in windows]
+            deadline = time.monotonic() + 30
+            while not all(m.exists() for m in marks):  # both found no daemon
+                assert time.monotonic() < deadline
+                time.sleep(0.05)
+        QTimer.singleShot(0, scenario)
+        platform = Platform(
+            lambda: backend, FakePresence, FakeAutostart, thread_scope=nullcontext
+        )
+        assert run_daemon(DaemonOptions(tray=False), platform) == 0
+        logs = {page: w.communicate(timeout=20)[1] for page, w in windows.items()}
     finally:
-        if ui.poll() is None:
-            ui.kill()
-    assert shows["library"] == "SHOWN"  # one window process; it took the request
-    assert ui.returncode == 0, err
-    assert "Connected to the daemon" in err  # it followed the daemon's events
-    assert "The daemon closed the connection" in err
+        for window in windows.values():
+            if window.poll() is None:
+                window.kill()
+
+    assert all(w.returncode == 0 for w in windows.values()), logs
+    one_window_was_kept(logs)
+
+
+def one_window_was_kept(logs: dict[PageName, str]) -> None:
+    """From the window processes' logs, by page."""
+    turned_away = [p for p, log in logs.items() if "open in another process" in log]
+    assert len(turned_away) == 1, logs
+    [other] = turned_away
+    [kept] = set(logs) - {other}
+    assert f"Showing {other}" in logs[kept]  # its page, in the window
+    assert "The daemon closed the connection" in logs[kept]

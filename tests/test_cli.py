@@ -5,7 +5,6 @@ import pytest
 from PIL import Image
 
 from wallpaper_py import cli
-from wallpaper_py.app.ui.launcher import PAGE_NAMES
 from wallpaper_py.commands import error_reply, execute, open_service
 from wallpaper_py.core import paths
 from wallpaper_py.core.model import AppError
@@ -396,8 +395,7 @@ def test_reply_texts() -> None:
     )
 
 
-def test_ui_pages_match_the_launcher() -> None:
-    assert cli.PAGES == PAGE_NAMES
+def test_ui_opens_home_by_default() -> None:
     args = cli.build_parser().parse_args(["ui"])
     assert args.page == "home"
     assert cli.build_parser().parse_args(["ui", "library"]).page == "library"

@@ -37,9 +37,10 @@ release it may still change in place.)
 - `v`: the protocol version; another one is refused (`protocol`).
 - `request.command`: `status`, `next`, `prev`, `hold`, `resume`, `fav`,
   `unfav`, `remove`, `unremove`, `pick`, `upcoming`, `stats`,
-  `reset_cycle`, `settings`, `save_settings`, or `subscribe`.
+  `reset_cycle`, `settings`, `save_settings`; or the window's
+  `show_window` and `subscribe` ([below](#the-window)).
 - `request.target` (every command but `status`, `unremove`, `settings` and
-  `save_settings`; those refuse it): a playlist's `id` (what the tray and
+  `save_settings`; those refuse it, and so do the window's two): a playlist's `id` (what the tray and
   the windows send: a rename can't misdirect it) or name (what people
   type), or a monitor the playlist drives (a name, a unique part of one,
   or the full id). It may be left out when there is only one playlist;
@@ -88,6 +89,7 @@ change; they get the image when they come back).
 | `reset_cycle` | `playlist`, `unseen` (now: every image but the skipped ones) |
 | `settings` | `settings` (below), `revision` (an integer; send it back with the edit) |
 | `save_settings` | `revision` (of the saved settings: the next edit goes on this one), `warnings` (settings that are valid but probably a mistake) |
+| `show_window` | `shown` (true: the window process that has the window was asked to show the page; false: none has it) |
 
 `pick` shows the image now, as if `next` had chosen it: it goes into the
 history right after the current entry, so `prev` goes back to what was
@@ -217,13 +219,15 @@ The message is meant for people; programs decide by `kind`.
 The connection stays open and the daemon writes one event per line, tagged on
 `event`, until it quits (the connection then closes). The first event is
 always the current `overview_changed`. A refused subscription gets one
-error line instead, then the connection closes.
+line instead, then the connection closes: an error, or, for a second
+window, `show_window`'s reply ([below](#the-window)).
 
 | Event | Fields | When |
 |---|---|---|
 | `overview_changed` | `overview`: `playlists` (each: `id`, `name`, `directory`, `monitors`, `current`, `favourite` (null: favourites.txt can't be read yet, so it isn't known), `held`, `manual`), `monitors` (every monitor the desktop lists, also those in no playlist: `id`, `name`, `geometry`, `look`), `paused`, `error` (the daemon is up but `PlaylistService` isn't: e.g. a list file it can't use), `favourites_file` and `to_remove_file` (the lists' paths; null while `error`) | on subscribing, then whenever it changes (also after `hold` / `resume` and `save_settings`, and when a monitor is switched off or moves) |
 | `changed` | `change` | a wallpaper changed, by a tick or a command |
 | `marks_changed` | none | favourites.txt or to-remove.txt changed (their mtime or size), by a command, by hand (seen on the next tick, within 5 s), a settings save naming other files, or the service running again after a list it couldn't use was fixed: read them again |
+| `show_page` | `page` (`home`, `library` or `settings`) | only to the window ([below](#the-window)): come to the front on that page |
 
 ```json
 {"event": "overview_changed", "overview": {"playlists": [{"id": "9b1e4f2a...", "name": "fantasy", "directory": "D:\\pictures\\Fantasy", "monitors": [{"id": "\\\\?\\DISPLAY#AUS27B1#...", "name": "ZeroMOD", "attached": false}], "current": "D:\\pictures\\Fantasy\\7.png", "favourite": false, "held": false, "manual": true}], "monitors": [{"id": "\\\\?\\DISPLAY#DELA246#...", "name": "AW3225QF", "geometry": {"x": 0, "y": 0, "width": 3840, "height": 2160}}, {"id": "\\\\?\\DISPLAY#AUS27B1#...", "name": "ZeroMOD", "geometry": null}], "paused": null, "error": null, "favourites_file": "C:\\Users\\me\\AppData\\Local\\wallpaper_py\\favourites.txt", "to_remove_file": "C:\\Users\\me\\AppData\\Local\\wallpaper_py\\to-remove.txt"}}
@@ -240,6 +244,38 @@ left, which changes with every tick): ask `status` for that.
 
 Read the events promptly: the daemon drops a subscriber that falls more than
 4 MB behind. Send commands on separate connections.
+
+## The window
+
+At most one process has the window (`wallpaper ui`), and the daemon knows
+which: it subscribes as the window. The socket answers these two itself,
+not `PlaylistService`, so they work while it is stopped (the window must
+open to show why).
+
+```json
+{"v": 3, "request": {"command": "subscribe", "window": "library"}}
+{"v": 3, "request": {"command": "show_window", "page": "settings"}}
+```
+
+- `subscribe` with `window` (a page: `home`, `library` or `settings`): "I
+  am the window, on this page". The first such subscriber is the window,
+  until its connection closes; it gets the events as any subscriber, and
+  `show_page` too. A later one is refused: its page goes to the window as
+  `show_page`, and it gets one line, `{"command": "show_window", "shown":
+  true}`, instead of the events, and the connection closes. Two starting at
+  once: the daemon takes their subscriptions one at a time, and the first
+  wins.
+- `show_window` with `page`: `show_page` to the window. `shown: false` if
+  there is none; starting one is then the asker's job (the tray starts
+  `wallpaper ui <page>`).
+- The window closes: it ends its subscription at once, so from then on
+  there is none. Commands it sent finish on their own connections. The
+  daemon sees the close on its next pass through its event loop: a
+  `show_window` (or window subscription) that arrives in between, while a
+  tick or command runs, goes to the closed window and shows nothing. A
+  second click works. Accepted: it takes a click within a few hundred
+  milliseconds of closing, and catching it would mean polling the socket on
+  the service thread.
 
 Not on the socket (by design): thumbnails and image data (read the files by
 path), the lists (read favourites.txt / to-remove.txt, again on

@@ -17,8 +17,8 @@ only Qt's `QApplication` and the `app/` package.
 ## Layers
 
 ```
-cli.py                        command line; playlist commands go to the daemon (started if
-                              needed) and their text is formatted here from the reply data
+cli.py                        command line; playlist commands go to the daemon (never
+                              started here) and their text is formatted here from the reply data
 app/                          PySide6 (Qt only here); two processes
   runtime.py     the daemon: lock, service thread, screens, tray
   worker.py      ServiceWorker (owns the service and the socket, on its own
@@ -27,9 +27,9 @@ app/                          PySide6 (Qt only here); two processes
   client.py      Client: all the tray and the pages may use (commands,
                  events); SocketClient (the window process's);
                  ReplyTo, OneAtATime (a request asked again only once)
-  ipc.py         sockets: line framing (LineBuffer, for LineServer, LineRequest,
+  ipc.py         sockets: line framing (LineBuffer, for CommandServer, LineRequest,
                  blocking send), the daemon's CommandServer (commands,
-                 subscriptions)
+                 subscriptions, which one is the window)
   processes.py   command lines, starting detached, logging, Ctrl+C (both processes)
   instance.py    single instance: a QLockFile next to the state database
   screens.py     Qt screen signals -> one debounced extra tick
@@ -37,8 +37,8 @@ app/                          PySide6 (Qt only here); two processes
   icon.py        the bundled app icon and tray-state variants
   icons/         shared app icon image, package data
   ui/            the window process (`wallpaper ui`), on demand
-    process.py   run_ui: single instance, the window, quits with the daemon / window
-    launcher.py  its own socket: "show this page" (UiServer, WindowOpener)
+    process.py   run_ui: subscribes as the window (the daemon picks one), shows
+                 it, quits with the daemon / window
     window.py    MainWindow: the sidebar (NavButton per page, the daemon's status)
                  and the pages; asks before closing with unsaved settings
     home.py      Home: the monitors on a panel, then a row per playlist
@@ -146,9 +146,22 @@ started on demand and ended when the window closes: only ending a process
 surely gives its memory (the grids' thumbnails) back, as memory freed
 inside a running one may stay with it (allocator, fragmentation). Each
 runs at most once: the daemon holds an instance lock next to the state
-database (instance.py: the socket alone can't ensure it on Windows), the
-window process `ui.lock` while it listens on its own small socket
-(launcher.py).
+database (instance.py: the socket alone can't ensure it on Windows).
+
+**The daemon knows the window.** At most one window process has the
+window, and the daemon's socket decides which: a window process subscribes
+as the window (it subscribes for the events anyway), and the first one
+is; a later one has its page shown there and exits. The tray asks the
+socket to show the window (`show_window`) and starts `wallpaper ui` only
+if none has it. So there is one socket and one lock: no socket of the
+window process's own, no lock file for it, and no race between two
+starting at once, as the service thread takes their subscriptions one at
+a time. The socket answers these requests itself, not `PlaylistService`,
+so the window opens while it is stopped (to show why). The cost: a tray
+click waits for whatever runs on the service thread. Measured before
+building (the slow-work log, 2026-11-16): commands and ticks of 100 to
+400 ms, at most ~600 ms in a burst of *Next*; a first scan of a very big
+folder would be longer, once.
 
 **One thread owns the service.** A change renders for ~200 ms, which must
 never happen on the main thread, so the `PlaylistService` lives on a worker

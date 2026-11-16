@@ -15,8 +15,8 @@ thin. See [architecture.md](architecture.md) for the layers.
 | 4b | Settings in the database, per-monitor looks, previews, backgrounds | done |
 | 4c | More backgrounds for Fit: dominant, blur | done |
 | 4d | Blur strength and darkening per monitor; the look stored as one value | done |
-| S | Simplification: words, protocol and plumbing, tray / CLI / window as clients | steps 1–3 done; 4 next |
-| 5 | Library page: overview (stats), grids, enlarged view | steps 1–4 done; 5–6 after S |
+| S | Simplification: words, protocol and plumbing, tray / CLI / window as clients | steps 1–4 done |
+| 5 | Library page: overview (stats), grids, enlarged view | steps 1–4 done; 5 next, then 6 |
 | 6 | KDE backend | backend done; Kubuntu and the checks by hand left |
 | 7 | Polish | |
 
@@ -167,9 +167,15 @@ window process).
      fakes (what `run_here` did, now only there). Monitor commands
      (`list`, `set`) still work alone. architecture.md's "The CLI never
      starts the app" paragraph changes: it no longer runs commands itself.
-4. **The daemon opens the window.** The window process stops listening on
-   a socket of its own; the daemon, which it subscribes to anyway, knows
-   whether a window exists.
+4. **The daemon opens the window** (done). The window process stops
+   listening on a socket of its own; the daemon, which it subscribes to
+   anyway, knows whether a window exists. Built as below, except:
+   `wallpaper ui` doesn't ask `show_window` first, it subscribes as the
+   window at once (the refusal already shows its page in the window, so
+   the first request added nothing); and a window the daemon hasn't
+   answered within 2 s shows anyway, "Connecting…", so a stuck daemon
+   leaves no invisible process. The slow-work log, read first: 100 to
+   400 ms, at most ~600 ms in a burst of *Next*.
    - Three additions, handled by `CommandServer` itself (like
      `subscribe`), not by `commands.execute`, so they work while
      `PlaylistService` is stopped (the window must open to show why):

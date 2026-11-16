@@ -6,7 +6,7 @@ Two long-lived processes exist: the daemon (`wallpaper tray` / `run`: the
 service, the tray, the command socket) and, on demand, the window process
 (`wallpaper ui`: the window). Each starts the other when needed: the tray
 opens windows, the window process starts the daemon if it isn't running. (The CLI
-never starts the daemon: without one, it runs its command itself.)
+never starts the daemon.)
 
 No Qt at import time except in `quit_on_interrupt`, so the CLI can use the
 rest cheaply.

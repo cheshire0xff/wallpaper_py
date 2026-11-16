@@ -17,7 +17,7 @@ actions.
     No playlists yet: add one…  (only without playlists; opens Settings)
     Paused: idle              (only while paused)
     Open wallpaper_py         (the window on Home, in the window process,
-    Library                    started if needed; on Library)
+    Library                    started if none has it; on Library)
     Settings…                 (on Settings)
     [ ] Start at login
     Quit
@@ -25,7 +25,11 @@ actions.
 The menu is drawn from the daemon's latest `Overview` and never waits on
 the service thread: actions go through the `Client` (the daemon's own,
 `worker.LocalClient`), and the menu redraws when the next
-overview arrives. Errors from actions show as a notification. If the daemon
+overview arrives. Errors from actions show as a notification. Opening the
+window asks the daemon's socket to show it (`show_window`: it knows
+whether a window process has it), and only if none has starts
+`wallpaper ui <page>`: here, on the main thread, as the service thread
+never starts processes. If the daemon
 starts without playlists, a notification says so once, and clicking it
 opens Settings.
 
@@ -33,7 +37,7 @@ Each item carries plain data saying what it asks for (`QAction.setData`),
 and one slot (`Tray._triggered`, on `QMenu.triggered`) does it. No closures
 per item: a lambda holding the Tray, connected to an action of the Tray's
 own menu, would keep the Tray alive until that action is deleted (see
-ipc.LineServer for how that crashes).
+ipc.CommandServer for how that crashes).
 """
 
 from __future__ import annotations
@@ -48,21 +52,24 @@ from PySide6.QtCore import QObject, QTimer, QUrl, Slot
 from PySide6.QtGui import QAction, QDesktopServices, QIcon
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
+from ..backends import allow_foreground
 from ..core.autostart import Autostart
 from ..protocol import (
     ErrorReply,
     MarkRequest,
     Overview,
+    PageName,
     PlaylistView,
     Reply,
     Request,
+    ShowWindowRequest,
+    ShowWindowResult,
     TargetCommand,
     target_request,
 )
 from ..texts import members, playlist_label
-from .client import Client
+from .client import Client, ReplyTo
 from .icon import IconState, app_icon
-from .ui.launcher import PageName
 
 log = logging.getLogger(__name__)
 
@@ -231,11 +238,12 @@ class Tray(QObject):
         autostart_command: Sequence[str],
         quit_daemon: Callable[[], None],
         *,
-        open_window: Callable[[PageName], None],
+        start_window: Callable[[PageName], None],
     ) -> None:
+        """`start_window(page)` starts the window process (raises OSError)."""
         super().__init__()
         self._client = client
-        self._open_window = open_window
+        self._start_window = start_window
         self._autostart = autostart
         self._autostart_command = list(autostart_command)
         self._quit_daemon = quit_daemon
@@ -294,7 +302,9 @@ class Tray(QObject):
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(image)))
 
     def open_window(self, page: PageName) -> None:
-        self._open_window(page)
+        allow_foreground()  # now, while the click still counts
+        replied = ReplyTo(self, Tray._window_replied, page)
+        self._client.run(ShowWindowRequest(page=page), replied)
 
     def autostart_enabled(self) -> bool:
         try:
@@ -344,11 +354,21 @@ class Tray(QObject):
     @Slot(QSystemTrayIcon.ActivationReason)
     def _activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason is QSystemTrayIcon.ActivationReason.Trigger:
-            self._open_window("home")
+            self.open_window("home")
 
     def _replied(self, reply: Reply) -> None:
         if isinstance(reply, ErrorReply):
             self.notify(reply.error.message)
+
+    def _window_replied(self, page: PageName, reply: Reply) -> None:
+        """`show_window`'s reply: if no window process has it, start one."""
+        if isinstance(reply, ShowWindowResult) and not reply.shown:
+            try:
+                self._start_window(page)
+            except OSError as err:
+                self.notify(f"Cannot open the window ({page}): {err}")
+        else:
+            self._replied(reply)
 
     @Slot(str)
     def notify(self, message: str) -> None:
@@ -363,7 +383,7 @@ class Tray(QObject):
     @Slot()
     def _message_clicked(self) -> None:
         if self._message_opens is not None:
-            self._open_window(self._message_opens)
+            self.open_window(self._message_opens)
 
     def _update_icon(self) -> None:
         state = icon_state(self._overview)

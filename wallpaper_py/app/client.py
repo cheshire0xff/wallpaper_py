@@ -6,6 +6,7 @@ they may use.
     client.overview_changed         the latest Overview (also client.overview)
     client.changed                  a wallpaper changed (a Change)
     client.marks_changed            favourites or to-remove changed
+    client.show_requested           come to the front on a page (only to the window)
     client.failed                   the daemon can't be reached; nothing more comes
                                     (SocketClient only: the daemon's own can't lose it)
 
@@ -16,7 +17,8 @@ implementations, each passing the protocol's events to `Client._dispatch`:
   and from the service thread, the models as they are.
 - `SocketClient`, the window process's, over the daemon's socket: it
   subscribes (and starts the daemon first if none runs, which the CLI never
-  does), and runs each command on a connection of its own.
+  does), as the window if asked to, and runs each command on a connection
+  of its own.
 
 Everything is event driven: the main thread never waits.
 """
@@ -36,14 +38,17 @@ from shiboken6 import Shiboken
 from ..core import paths
 from ..protocol import (
     ChangedEvent,
-    CommandRequest,
+    ClientRequest,
     Envelope,
     ErrorReply,
     Event,
     MarksChangedEvent,
     Overview,
     OverviewChangedEvent,
+    PageName,
     Reply,
+    ShowPageEvent,
+    ShowWindowResult,
     Subscribe,
 )
 from . import ipc
@@ -111,13 +116,14 @@ class Client(QObject):
     overview_changed = Signal(object)  # protocol.Overview
     changed = Signal(object)  # core.service.Change
     marks_changed = Signal()  # read the list files again
+    show_requested = Signal(str)  # protocol.PageName; only to the window
     failed = Signal(str)  # message
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self.overview: Overview | None = None  # None until the first arrives
 
-    def run(self, request: CommandRequest, on_reply: ReplyCallback) -> None:
+    def run(self, request: ClientRequest, on_reply: ReplyCallback) -> None:
         """Run `request` in the daemon; `on_reply` gets the reply (this thread)."""
         raise NotImplementedError
 
@@ -132,6 +138,8 @@ class Client(QObject):
                 self.changed.emit(change)
             case MarksChangedEvent():
                 self.marks_changed.emit()
+            case ShowPageEvent(page=page):
+                self.show_requested.emit(page)
             case _:  # a new event: mypy says it is missing here
                 assert_never(event)
 
@@ -139,27 +147,38 @@ class Client(QObject):
 class SocketClient(Client):
     """
     `Client` over the daemon's socket. `start()` subscribes; if no daemon runs,
-    it calls `start_daemon` once and retries for START_TIMEOUT_S. `ended`
-    fires when an established subscription closes (the daemon quit). `idle`
-    fires when the last command in flight has its reply (see `busy`).
+    it calls `start_daemon` once (`daemon_started`) and retries for
+    START_TIMEOUT_S. `accepted` fires with the subscription's first event,
+    `ended` when it closes later (the daemon quit). `idle` fires when the
+    last command in flight has its reply (see `busy`).
+
+    With `window`, it subscribes as the window, on that page: refused when
+    another process has the window, which shows that page instead
+    (`shown_elsewhere`; nothing more happens).
     """
 
     # pylint: disable=too-many-instance-attributes
 
+    accepted = Signal()
+    daemon_started = Signal()
+    shown_elsewhere = Signal()
     ended = Signal()
     idle = Signal()
 
+    # pylint: disable-next=too-many-arguments
     def __init__(
         self,
         name: str,
         start_daemon: Callable[[], None] | None,
         *,
+        window: PageName | None = None,
         start_timeout_s: float = START_TIMEOUT_S,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
         self._name = name
         self._start_daemon = start_daemon
+        self._window = window
         self._start_timeout_s = start_timeout_s
         self._deadline: float | None = None  # set once the daemon was started
         self._socket: QLocalSocket | None = None
@@ -172,6 +191,7 @@ class SocketClient(Client):
         self._connect()
 
     def close(self) -> None:
+        """End the subscription now; commands in flight still get replies."""
         self._over = True
         self._drop_socket()
 
@@ -183,7 +203,7 @@ class SocketClient(Client):
         return self._in_flight > 0
 
     @override
-    def run(self, request: CommandRequest, on_reply: ReplyCallback) -> None:
+    def run(self, request: ClientRequest, on_reply: ReplyCallback) -> None:
         # The callbacks live in the LineRequest, which Qt owns: they hold
         # this client weakly, or it would never be freed (see AGENTS.md).
         client = weakref.ref(self)
@@ -223,7 +243,7 @@ class SocketClient(Client):
 
     # -- the subscription ------------------------------------------------------
 
-    # Slots are bound methods (no lambdas holding `self`, see ipc.LineServer).
+    # Slots are bound methods (no lambdas holding `self`, see ipc.CommandServer).
     # A socket replaced by a retry may still signal, so each slot first
     # checks that the sender is the current socket.
 
@@ -248,7 +268,7 @@ class SocketClient(Client):
     @Slot()
     def _subscribe(self) -> None:
         if (socket := self._current()) is not None:
-            envelope = Envelope(request=Subscribe())
+            envelope = Envelope(request=Subscribe(window=self._window))
             socket.write(ipc.encode(envelope))
 
     @Slot()
@@ -278,9 +298,15 @@ class SocketClient(Client):
             if isinstance(message, ErrorReply):  # the daemon refused
                 self._fail(message.error.message)
                 return
+            if isinstance(message, ShowWindowResult):  # another has the window
+                log.info("The window is open in another process: shown there")
+                self.close()
+                self.shown_elsewhere.emit()
+                return
             if not self._subscribed:
                 self._subscribed = True
                 log.info("Connected to the daemon")
+                self.accepted.emit()
             self._dispatch(message)
 
     @Slot(QLocalSocket.LocalSocketError)
@@ -320,6 +346,7 @@ class SocketClient(Client):
                 self._fail(f"Cannot start wallpaper_py: {err}")
                 return
             self._deadline = time.monotonic() + self._start_timeout_s
+            self.daemon_started.emit()
         elif time.monotonic() >= self._deadline:
             self._fail(f"could not start wallpaper_py; see {paths.log_file()}")
             return

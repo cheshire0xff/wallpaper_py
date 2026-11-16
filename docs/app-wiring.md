@@ -16,9 +16,9 @@ the receiving thread's event loop, so the sender never waits.
 
 | Process / thread | Objects |
 |---|---|
-| **daemon**, main thread (Qt event loop) | `QApplication`, `Tray`, `WindowOpener`, `ScreenWatcher`, `ServiceThread` (the handle on the service thread) and its `LocalClient`, the tray's `Client` |
+| **daemon**, main thread (Qt event loop) | `QApplication`, `Tray`, `ScreenWatcher`, `ServiceThread` (the handle on the service thread) and its `LocalClient`, the tray's `Client` |
 | **daemon**, service thread (`QThread` "playlist-service") | `ServiceWorker` and everything it creates on that thread: the `CommandServer` (socket), the tick `QTimer`, COM (`backends.thread_scope`), the backend, the SQLite `Store`, the `PlaylistService` |
-| **window process** (`wallpaper ui`, on demand), main thread | `QApplication`, `UiServer` (its own socket), `SocketClient` (the daemon's socket), and the one `MainWindow`: its `ThumbnailLoader` (shared by Home and Settings), its `Sidebar` and its pages, `HomePage` (with its `PlaylistRow`s and `MonitorsView`), `LibraryPage` (with its `OverviewTab`, the All images `ImageGrid`, and the grids' `TileLoader`, `Pregenerator` and `FolderScan`), `SettingsPage` (with its `PlaylistEditor`s, `LookEditor`, a `MonitorsView` and the About tab) |
+| **window process** (`wallpaper ui`, on demand), main thread | `QApplication`, `SocketClient` (the daemon's socket, subscribed as the window), and the one `MainWindow`: its `ThumbnailLoader` (shared by Home and Settings), its `Sidebar` and its pages, `HomePage` (with its `PlaylistRow`s and `MonitorsView`), `LibraryPage` (with its `OverviewTab`, the All images `ImageGrid`, and the grids' `TileLoader`, `Pregenerator` and `FolderScan`), `SettingsPage` (with its `PlaylistEditor`s, `LookEditor`, a `MonitorsView` and the About tab) |
 | **window process**, pool threads (a `Jobs` each: `ThumbnailLoader` 2, `TileLoader` 4, `Pregenerator` 1 at low priority, `FolderScan` 1) | nothing lives there: jobs read files (images, thumbnails, folders) and hand their results to `Jobs.done` on the main thread |
 | **CLI** (a separate process) | `ipc.send`: blocking client, no event loop |
 
@@ -34,7 +34,6 @@ flowchart LR
         send["ipc.send<br/>blocking client"]
     end
     subgraph UIP["window process"]
-        uiserver["UiServer<br/>its own socket"]
         client["SocketClient"]
         windows["MainWindow<br/>HomePage, LibraryPage,<br/>SettingsPage"]
         thumbs["ThumbnailLoader<br/>thread pool"]
@@ -42,7 +41,6 @@ flowchart LR
     end
     subgraph UI["daemon: main thread"]
         tray["Tray"]
-        opener["WindowOpener"]
         screens["ScreenWatcher"]
         local["LocalClient"]
         host["ServiceThread"]
@@ -55,19 +53,16 @@ flowchart LR
     end
 
     send ==>|"request / reply"| server
-    client ==>|"subscribe: events<br/>commands: request / reply"| server
-    opener ==>|"show page / ok"| uiserver
-    uiserver -->|"show_requested"| windows
-    client -->|"overview_changed, changed,<br/>marks_changed"| windows
+    client ==>|"subscribe as the window: events, show_page<br/>commands: request / reply"| server
+    client -->|"overview_changed, changed,<br/>marks_changed, show_requested"| windows
     windows -->|"run (also stats, reset_cycle,<br/>settings, save_settings)"| client
     windows -->|"want"| thumbs
     thumbs -.->|"loaded"| windows
     windows -->|"request, set_wanted,<br/>start (pre-generation), scan"| tiles
     tiles -.->|"loaded, scanned"| windows
     server -->|"received, subscribed"| worker
-    worker -->|"reply, broadcast"| server
-    tray -->|"open_window"| opener
-    tray -->|"run"| local
+    worker -->|"reply, broadcast,<br/>show_window"| server
+    tray -->|"run (also show_window)"| local
     local -->|"overview_changed,<br/>reply callback"| tray
     local -.->|"_submit"| worker
     worker -.->|"replied, sent (events)"| local
@@ -80,8 +75,8 @@ flowchart LR
 
 ## Flows
 
-A command from the CLI (`wallpaper next konachan` while the daemon runs; if
-none answers, the CLI runs it itself: `cli.send_to_daemon`):
+A command from the CLI (`wallpaper next konachan`; if no daemon answers,
+the CLI says so: `cli.send_to_daemon`):
 
 ```mermaid
 sequenceDiagram
@@ -144,28 +139,54 @@ sequenceDiagram
     W--)H: ServiceWorker.ticked
 ```
 
-Opening the window on a page (tray *Open wallpaper_py*, *Library* or
-*Settings…*, or `wallpaper ui [home|library|settings]`):
+Opening the window on a page from the tray (*Open wallpaper_py*, *Library*
+or *Settings…*). The daemon's socket knows which window process has the
+window, so the tray asks it, and starts one only if none has; the service
+thread never starts processes.
 
 ```mermaid
 sequenceDiagram
-    participant O as WindowOpener<br/>daemon, main thread
-    participant U as window process<br/>UiServer, MainWindow
-    participant C as SocketClient<br/>window process
+    participant Tr as Tray<br/>daemon, main thread
+    participant W as ServiceWorker<br/>daemon, service thread
+    participant S as CommandServer<br/>daemon, service thread
+    participant U as window process<br/>SocketClient, MainWindow
+
+    Tr->>Tr: Tray.open_window("home"): allow_foreground, Client.run(show_window)
+    Tr--)W: LocalClient._submit: ServiceWorker.submit
+    W->>S: CommandServer.show_window("home")
+    alt a window process has the window
+        S->>U: show_page {"page": "home"}
+        U->>U: Client.show_requested: MainWindow.open_page("home")
+        W--)Tr: ServiceWorker.replied: shown true
+    else none has it
+        W--)Tr: ServiceWorker.replied: shown false
+        Tr->>U: Tray._window_replied: processes.start_detached(processes.ui_command("home"))
+        U->>S: SocketClient.start: subscribe {"window": "home"}
+        S->>U: the current overview, then events
+        U->>U: SocketClient.accepted: MainWindow.open_page("home")
+    end
+```
+
+`wallpaper ui <page>` (from the tray as above, or typed) subscribes as the
+window at once. If it found no daemon, it starts one and shows the window
+right away, "Connecting…" (`SocketClient.daemon_started`). Two at once, or
+one while a window is open: the service thread takes their subscriptions
+one at a time, and the first is the window.
+
+```mermaid
+sequenceDiagram
+    participant A as window process A
+    participant B as window process B
     participant S as CommandServer<br/>daemon, service thread
 
-    O->>U: connect to the UI socket, write {"page": "home"}
-    alt a window process runs
-        U->>U: UiServer.show_requested: MainWindow.open_page("home")
-        U->>O: {"error": null}, then close
-    else nothing listens
-        O->>U: processes.start_detached(processes.ui_command): wallpaper ui home
-        U->>U: launcher.show_in_running_ui: none, so take the UI lock, listen
-        U->>U: MainWindow.open_page("home")
-        C->>S: SocketClient.start: subscribe
-        S->>C: the current overview, then events
-        C->>U: SocketClient.overview_changed: the pages redraw
-    end
+    A->>S: subscribe {"window": "home"}
+    B->>S: subscribe {"window": "library"}
+    Note over S: A's came first: A is the window
+    S->>A: the current overview, then events
+    Note over A: SocketClient.accepted: its window shows
+    S->>A: show_page {"page": "library"}
+    S->>B: {"command": "show_window", "shown": true}, then close
+    Note over B: SocketClient.shown_elsewhere: it quits (closing its<br/>"Connecting…" window if it had started the daemon)
 ```
 
 Home, from an overview to a click (all on the window process's main thread
@@ -265,5 +286,5 @@ sequenceDiagram
     Note over M: QApplication.aboutToQuit: MainWindow.shutdown
     Note over M: or the window closes: MainWindow.closeEvent
     M->>M: MainWindow.shutdown: HomePage, LibraryPage.shutdown, ThumbnailLoader.close (each waits for its threads)
-    M->>C: MainWindow.closed: UiServer closes, quit now or on SocketClient.idle
+    M->>C: MainWindow.closed: SocketClient.close (the daemon knows of no window from now on), quit now or on SocketClient.idle
 ```

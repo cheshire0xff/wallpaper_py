@@ -36,6 +36,7 @@ from .core.setter import apply_wallpaper
 from .protocol import (
     MARK_COMMANDS,
     MAX_UPCOMING,
+    PAGE_NAMES,
     TARGET_COMMANDS,
     CommandRequest,
     Envelope,
@@ -57,6 +58,7 @@ from .protocol import (
     ResetCycleResult,
     SaveSettingsResult,
     SettingsResult,
+    ShowWindowResult,
     StatsRequest,
     StatsResult,
     StatusRequest,
@@ -67,10 +69,6 @@ from .protocol import (
 from .texts import traits
 
 TARGET_HELP = "playlist name, or a monitor it drives; optional with one playlist"
-
-# The pages `wallpaper ui` opens the window on (app/ui/launcher.py
-# PAGE_NAMES; not imported from there, which would load Qt for every command).
-PAGES = ("home", "library", "settings")
 
 BackendFactory = Callable[[], Backend]
 PresenceFactory = Callable[[], Presence]
@@ -253,7 +251,7 @@ def format_reply(reply: Reply) -> Text:
                 f"{reply.playlist}: a new shuffle cycle; "
                 f"all {reply.unseen:,} images unseen",
             )
-        case SettingsResult() | SaveSettingsResult():  # for the window; as data
+        case SettingsResult() | SaveSettingsResult() | ShowWindowResult():  # as data
             return Text(0, reply.model_dump_json(indent=2))
     raise AssertionError(f"Unhandled reply {reply!r}")
 
@@ -501,7 +499,7 @@ def build_parser() -> argparse.ArgumentParser:
         "ui", help="open the window on a page (in the running UI process, or start one)"
     )
     ui_parser.add_argument(
-        "page", nargs="?", choices=PAGES, default="home", help="default: home"
+        "page", nargs="?", choices=PAGE_NAMES, default="home", help="default: home"
     )
     ui_parser.set_defaults(handler=cmd_ui)
 

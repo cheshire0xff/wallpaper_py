@@ -23,6 +23,7 @@ from wallpaper_py.protocol import (
     NextResult,
     Overview,
     OverviewChangedEvent,
+    PageName,
     Reply,
     Request,
     StatusRequest,
@@ -68,8 +69,11 @@ def make_client(
     name: str,
     start_daemon: Callable[[], None] | None = None,
     start_timeout_s: float = 10.0,
+    window: PageName | None = None,
 ) -> SocketClient:
-    client = SocketClient(name, start_daemon, start_timeout_s=start_timeout_s)
+    client = SocketClient(
+        name, start_daemon, window=window, start_timeout_s=start_timeout_s
+    )
     clients.append(client)
     return client
 
@@ -133,9 +137,38 @@ def test_starts_the_daemon_if_none_runs(
         service_thread.start()  # comes up a little later, like a real start
 
     client = make_client(clients, name, start_daemon)
-    with qtbot.waitSignal(client.overview_changed, timeout=10_000):
+    with qtbot.waitSignal(client.daemon_started):
         client.start()
     assert starts == [True]
+    with qtbot.waitSignal(client.accepted, timeout=10_000):
+        pass
+    assert client.overview is not None
+
+
+def test_one_window_subscriber_is_the_window(
+    qtbot: QtBot,
+    service_thread: ServiceThread,
+    clients: list[SocketClient],
+    name: str,
+) -> None:
+    """A later one has its page shown in the first and is turned away."""
+    started(qtbot, service_thread)
+    window = make_client(clients, name, window="home")
+    with qtbot.waitSignal(window.accepted):
+        window.start()
+    pages: list[str] = []
+    window.show_requested.connect(pages.append)
+    later = make_client(clients, name, window="library")
+    with qtbot.waitSignal(later.shown_elsewhere):
+        later.start()
+    qtbot.waitUntil(lambda: pages == ["library"])
+    assert later.overview is None  # it never was the window
+
+    # Once the window ends its subscription, the next one is the window.
+    window.close()
+    again = make_client(clients, name, window="settings")
+    with qtbot.waitSignal(again.accepted):
+        again.start()
 
 
 def test_gives_up_if_the_daemon_does_not_start(

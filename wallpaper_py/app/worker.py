@@ -9,7 +9,9 @@ this thread touches it.
 
 Everything reaches the service through `ServiceWorker.execute`, one at a
 time, between ticks: socket requests directly (the socket lives on this
-thread), the tray through its `LocalClient`. After `save_settings` it ticks,
+thread), the tray through its `LocalClient`. Not the window's requests:
+the socket answers those itself (`CommandServer`), also while the service
+is down; the tray's `show_window` is handed to it. After `save_settings` it ticks,
 so that the monitors show the new settings before the reply. A command or
 tick over `SLOW_S` is logged with its time.
 Nothing on this thread may block waiting for a client or spin a nested
@@ -53,6 +55,7 @@ from ..core.presence import Presence
 from ..core.service import Change, PlaylistService
 from ..protocol import (
     ChangedEvent,
+    ClientRequest,
     CommandRequest,
     ErrorReply,
     Event,
@@ -60,6 +63,8 @@ from ..protocol import (
     Overview,
     OverviewChangedEvent,
     Reply,
+    ShowWindowRequest,
+    ShowWindowResult,
 )
 from .client import Client, ReplyCallback
 from .ipc import CommandServer
@@ -211,9 +216,18 @@ class ServiceWorker(QObject):
         return error_reply(error)
 
     @Slot(int, object)
-    def submit(self, request_id: int, request: CommandRequest) -> None:
-        """A request queued by `LocalClient.run`; answered by `replied`."""
-        self.replied.emit(request_id, self.execute(request))
+    def submit(self, request_id: int, request: ClientRequest) -> None:
+        """
+        A request queued by `LocalClient.run`; answered by `replied`.
+        `show_window` goes to the socket, which knows the window.
+        """
+        reply: Reply
+        if isinstance(request, ShowWindowRequest):
+            shown = self._server is not None and self._server.show_window(request.page)
+            reply = ShowWindowResult(shown=shown)
+        else:
+            reply = self.execute(request)
+        self.replied.emit(request_id, reply)
 
     @Slot(int, object)
     def _answer(self, connection_id: int, request: CommandRequest) -> None:
@@ -317,7 +331,7 @@ class LocalClient(Client):
     every event (that is its subscription). Lives on the main thread.
     """
 
-    _submit = Signal(int, object)  # request id, protocol.CommandRequest
+    _submit = Signal(int, object)  # request id, protocol.ClientRequest
 
     def __init__(self, worker: ServiceWorker, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -329,7 +343,7 @@ class LocalClient(Client):
         worker.sent.connect(self._dispatch, queued)
 
     @override
-    def run(self, request: CommandRequest, on_reply: ReplyCallback) -> None:
+    def run(self, request: ClientRequest, on_reply: ReplyCallback) -> None:
         request_id = self._next_id
         self._next_id += 1
         self._callbacks[request_id] = on_reply

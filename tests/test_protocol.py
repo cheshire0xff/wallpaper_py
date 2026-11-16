@@ -57,8 +57,9 @@ def test_events_and_error_kinds_are_published() -> None:
         "changed",
         "overview_changed",
         "marks_changed",
+        "show_page",
     }
-    assert len(get_args(get_args(Event)[0])) == 3
+    assert len(get_args(get_args(Event)[0])) == 4
     kinds = schema["$defs"]["ErrorInfo"]["properties"]["kind"]["enum"]
     assert tuple(kinds) == ERROR_KINDS
     assert str(PROTOCOL) in schema["description"]

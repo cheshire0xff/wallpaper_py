@@ -18,15 +18,17 @@ from wallpaper_py.app.tray import (
     icon_state,
     tooltip,
 )
-from wallpaper_py.app.ui.launcher import PageName
 from wallpaper_py.core.model import MonitorId
 from wallpaper_py.protocol import (
     ErrorReply,
     MarkRequest,
     MonitorView,
     Overview,
+    PageName,
     PlaylistView,
     Request,
+    ShowWindowRequest,
+    ShowWindowResult,
     TargetCommand,
     target_request,
 )
@@ -300,26 +302,42 @@ def make_tray(
     client: FakeClient,
     *,
     autostart: FakeAutostart | None = None,
-    pages: list[PageName] | None = None,
+    started: list[PageName] | None = None,
     quit_daemon: Callable[[], None] = lambda: None,
 ) -> Tray:
-    """A tray on `client`; the pages it opens go to `pages`."""
+    """A tray on `client`; the window processes it starts go to `started`."""
     return Tray(
         client,
         autostart or FakeAutostart(),
         ["py", "tray"],
         quit_daemon,
-        open_window=(pages if pages is not None else []).append,
+        start_window=(started if started is not None else []).append,
     )
+
+
+def opened(client: FakeClient, reply: ShowWindowResult | ErrorReply) -> list[PageName]:
+    """Answers the tray's `show_window` requests with `reply`; their pages."""
+    pages = [r.page for r, _ in client.calls if isinstance(r, ShowWindowRequest)]
+    for request, on_reply in client.calls:
+        if isinstance(request, ShowWindowRequest):
+            on_reply(reply)
+    client.calls = [c for c in client.calls if not isinstance(c[0], ShowWindowRequest)]
+    return pages
+
+
+NOT_SHOWN = ShowWindowResult(shown=False)
 
 
 def test_tray_follows_the_overview() -> None:
     client = FakeClient()
     autostart = FakeAutostart()
     quits: list[bool] = []
-    pages: list[PageName] = []
+    started: list[PageName] = []
     tray = make_tray(
-        client, autostart=autostart, pages=pages, quit_daemon=lambda: quits.append(True)
+        client,
+        autostart=autostart,
+        started=started,
+        quit_daemon=lambda: quits.append(True),
     )
     assert items(tray.menu)[0].text() == "Starting..."
 
@@ -333,7 +351,8 @@ def test_tray_follows_the_overview() -> None:
     find(tray.menu, "Open wallpaper_py").trigger()
     find(tray.menu, "Library").trigger()
     find(tray.menu, "Settings…").trigger()
-    assert pages == ["home", "library", "settings"]
+    assert opened(client, NOT_SHOWN) == ["home", "library", "settings"]
+    assert started == ["home", "library", "settings"]  # no window had them
     find(tray.menu, "Quit").trigger()
     assert quits == [True]
 
@@ -347,14 +366,49 @@ def test_menu_items_run_through_the_client() -> None:
 
 
 def test_left_click_opens_home_window() -> None:
-    pages: list[PageName] = []
-    tray = make_tray(FakeClient(), pages=pages)
+    client = FakeClient()
+    tray = make_tray(client)
 
     tray._activated(  # pylint: disable=protected-access
         QSystemTrayIcon.ActivationReason.Trigger
     )
 
-    assert pages == ["home"]
+    assert opened(client, NOT_SHOWN) == ["home"]
+
+
+def test_an_open_window_is_shown_not_started_again(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = FakeClient()
+    started: list[PageName] = []
+    tray = make_tray(client, started=started)
+    notes: list[str] = []
+    monkeypatch.setattr(tray, "notify", notes.append)
+    tray.open_window("library")
+    assert opened(client, ShowWindowResult(shown=True)) == ["library"]
+    assert not started and not notes
+
+
+def test_a_window_that_cannot_open_is_notified(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def cannot_start(page: PageName) -> None:
+        raise OSError(f"no python for {page}")
+
+    client = FakeClient()
+    tray = Tray(
+        client, FakeAutostart(), ["py"], lambda: None, start_window=cannot_start
+    )
+    notes: list[str] = []
+    monkeypatch.setattr(tray, "notify", notes.append)
+    tray.open_window("settings")
+    opened(client, NOT_SHOWN)
+    tray.open_window("home")
+    opened(client, ErrorReply.make("internal", "a bug"))
+    assert notes == [
+        "Cannot open the window (settings): no python for settings",
+        "a bug",
+    ]
 
 
 def test_tray_notifies_failed_commands(
@@ -374,8 +428,7 @@ def test_starting_without_playlists_notifies_once_and_opens_settings(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = FakeClient()
-    pages: list[PageName] = []
-    tray = make_tray(client, pages=pages)
+    tray = make_tray(client)
     shown: list[str] = []
     monkeypatch.setattr(tray, "_show_message", lambda m, _: shown.append(m))
     client.publish(
@@ -385,17 +438,16 @@ def test_starting_without_playlists_notifies_once_and_opens_settings(
     client.publish(Overview())
     assert shown == ["favourites.txt is not UTF-8 text", NO_PLAYLISTS_NOTE]  # once
     tray._message_clicked()  # pylint: disable=protected-access
-    assert pages == ["settings"]
+    assert opened(client, NOT_SHOWN) == ["settings"]
 
 
 def test_other_notifications_open_nothing_when_clicked() -> None:
     client = FakeClient()
-    pages: list[PageName] = []
-    tray = make_tray(client, pages=pages)
+    tray = make_tray(client)
     client.publish(Overview())  # the no-playlists note
     tray.notify("None attached")  # shown over it
     tray._message_clicked()  # pylint: disable=protected-access
-    assert not pages
+    assert not opened(client, NOT_SHOWN)
 
 
 def test_starting_with_playlists_does_not_notify(

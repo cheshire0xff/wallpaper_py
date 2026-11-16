@@ -7,12 +7,18 @@ nothing else (no logic, no Qt). See docs/protocol.md.
   `PickRequest` (`pick`, which also carries an image), an `UpcomingRequest`
   (the images to come), a `StatsRequest` / `ResetCycleRequest` (count a
   library / start its shuffle cycle over), a `SettingsRequest` /
-  `SaveSettingsRequest` (read / write the settings) or `Subscribe`. Each
-  request model says whether it `changes` anything (a class variable).
+  `SaveSettingsRequest` (read / write the settings), `Subscribe`, or
+  `ShowWindowRequest`. Each command's request model says whether it
+  `changes` anything (a class variable). `subscribe` and `show_window` are
+  the socket's own (`ipc.CommandServer`), not commands: they also work
+  while `PlaylistService` is stopped.
 - Out: a `Reply`, which is data only: one result model per command, tagged
   on `command`, or an `ErrorReply`. The CLI formats its text from these;
   the tray and the window process show them.
 - Out, on a subscription: one `Event` per line, tagged on `event`.
+
+The window process subscribes as the window (`Subscribe.window`); only the
+first such subscriber is, and `show_window` and `show_page` reach it.
 
 `commands.py` runs requests, `app/ipc.py` carries the lines. The protocol
 only ever adds commands, fields, error kinds and events; clients ignore
@@ -56,6 +62,8 @@ MARK_COMMANDS: tuple[MarkCommand, ...] = get_args(MarkCommand)
 TargetCommand = Literal["next", "prev", "fav", "unfav", "remove", "hold", "resume"]
 TARGET_COMMANDS: tuple[TargetCommand, ...] = get_args(TargetCommand)
 MAX_UPCOMING = 1000  # images an `upcoming` request may ask for
+PageName = Literal["home", "library", "settings"]  # the window's pages
+PAGE_NAMES: tuple[PageName, ...] = get_args(PageName)
 
 
 class Message(BaseModel):
@@ -206,10 +214,32 @@ def target_request(command: TargetCommand, target: str | None) -> Request | Mark
             return Request(command=command, target=target)
 
 
+class ShowWindowRequest(Strict):
+    """
+    Bring the window to the front on `page`, if a window process has it
+    (`Subscribe.window`). Starting one if not is the asker's job.
+    """
+
+    command: Literal["show_window"] = "show_window"
+    page: PageName
+
+
+# Every request answered with one reply: what `Client.run` sends.
+ClientRequest = CommandRequest | ShowWindowRequest
+
+
 class Subscribe(Strict):
-    """Keep the connection open and receive one `Event` per line."""
+    """
+    Keep the connection open and receive one `Event` per line.
+
+    With `window`: "I am the window", shown on that page. Only the first
+    such subscriber is; a later one has its page shown there instead
+    (`show_page`), gets `ShowWindowResult(shown=True)` in place of the
+    events, and is closed.
+    """
 
     command: Literal["subscribe"] = "subscribe"
+    window: PageName | None = None
 
 
 class Envelope(Strict):
@@ -217,7 +247,7 @@ class Envelope(Strict):
 
     v: int = PROTOCOL
     request: Annotated[
-        CommandRequest | Subscribe,
+        CommandRequest | ShowWindowRequest | Subscribe,
         Field(discriminator="command"),
     ]
 
@@ -417,6 +447,16 @@ class HoldResult(Message):
     changed: bool  # False: it was held already (`hold`) / wasn't held (`resume`)
 
 
+class ShowWindowResult(Message):
+    """
+    `show_window`'s reply, and a window subscription's refusal: True if
+    the window process that has the window was asked to show the page.
+    """
+
+    command: Literal["show_window"] = "show_window"
+    shown: bool
+
+
 Result = Annotated[
     StatusResult
     | NextResult
@@ -429,7 +469,8 @@ Result = Annotated[
     | StatsResult
     | ResetCycleResult
     | SettingsResult
-    | SaveSettingsResult,
+    | SaveSettingsResult
+    | ShowWindowResult,
     Field(discriminator="command"),
 ]
 
@@ -492,8 +533,15 @@ class MarksChangedEvent(Message):
     event: Literal["marks_changed"] = "marks_changed"
 
 
+class ShowPageEvent(Message):
+    """Only to the window: come to the front on `page`."""
+
+    event: Literal["show_page"] = "show_page"
+    page: PageName
+
+
 Event = Annotated[
-    ChangedEvent | OverviewChangedEvent | MarksChangedEvent,
+    ChangedEvent | OverviewChangedEvent | MarksChangedEvent | ShowPageEvent,
     Field(discriminator="event"),
 ]
 

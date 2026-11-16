@@ -26,11 +26,6 @@ def instance_lock() -> Path:
     return data_dir() / "daemon.lock"
 
 
-def ui_lock() -> Path:
-    """Held by the window process (the windows): at most one runs."""
-    return data_dir() / "ui.lock"
-
-
 def ui_state() -> Path:
     """
     The windows' view state (the Library's playlist, tab, ...): written only

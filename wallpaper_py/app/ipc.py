@@ -1,6 +1,6 @@
 """
-Local sockets: the running daemon's command socket, and the line framing it
-shares with the window process's own small socket (app/ui/launcher.py).
+Local sockets: the running daemon's command socket, its clients, and the
+line framing they share.
 
 `QLocalServer` is a named pipe on Windows and a Unix socket elsewhere,
 readable only by the current user. One line of JSON each way per
@@ -10,12 +10,12 @@ connection (protocol.py, docs/protocol.md):
     <- {"command": "next", "playlist": "konachan", "change": {...}}
 
 except `subscribe`, which keeps the connection open: the daemon then writes
-one event per line until it quits.
+one event per line until it quits (or the subscriber leaves).
 
 Clients: `send()` blocks (the CLI; `None` means no daemon is running, and the
-CLI then says so); `LineRequest` is event driven (the tray and the UI process,
-which must not block their event loop). The command server lives
-on the daemon's service thread and runs each request there as it arrives.
+CLI then says so); `LineRequest` is event driven (the window process, which
+must not block its event loop). The command server lives on the daemon's
+service thread and runs each request there as it arrives.
 """
 
 from __future__ import annotations
@@ -27,7 +27,6 @@ import time
 from collections.abc import Buffer, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import override
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
 from PySide6.QtCore import QObject, QTimer, Signal, Slot
@@ -35,11 +34,14 @@ from PySide6.QtNetwork import QLocalServer, QLocalSocket
 
 from ..core.model import WallpaperError
 from ..protocol import (
-    CommandRequest,
     Envelope,
     ErrorReply,
     Event,
+    PageName,
     Reply,
+    ShowPageEvent,
+    ShowWindowRequest,
+    ShowWindowResult,
     Subscribe,
 )
 
@@ -68,22 +70,22 @@ class ProtocolError(WallpaperError):
     """A malformed message, or one from a different version."""
 
 
-def server_name(data_dir: Path, role: str = "") -> str:
+def server_name(data_dir: Path) -> str:
     """
     Per user and per state directory, so two users (Windows pipe names are
-    machine-wide) or two test runs never meet. `role` tells the daemon's
-    socket ("") from the window process's ("ui").
+    machine-wide) or two test runs never meet.
     """
     key = os.path.normcase(os.path.abspath(data_dir))
-    name = f"wallpaper_py-{hashlib.sha1(key.encode()).hexdigest()[:16]}"
-    return f"{name}-{role}" if role else name
+    return f"wallpaper_py-{hashlib.sha1(key.encode()).hexdigest()[:16]}"
 
 
 # -- messages --------------------------------------------------------------------
 
 _REPLY: TypeAdapter[Reply] = TypeAdapter(Reply)
-# What a subscriber reads: events, or one error if the daemon refused.
-_STREAMED: TypeAdapter[Event | ErrorReply] = TypeAdapter(Event | ErrorReply)
+# What a subscriber reads: events; or one line if the daemon refused: an
+# error, or (to a window) that the window that exists showed its page.
+Streamed = Event | ErrorReply | ShowWindowResult
+_STREAMED: TypeAdapter[Streamed] = TypeAdapter(Streamed)
 
 
 def encode(message: BaseModel) -> bytes:
@@ -101,8 +103,8 @@ def decode_reply(line: bytes) -> Reply:
     return _decode(_REPLY, line, "reply")
 
 
-def decode_event(line: bytes) -> Event | ErrorReply:
-    """A line of a subscription: an event, or the error that refused it."""
+def decode_event(line: bytes) -> Streamed:
+    """A line of a subscription: an event, or what refused it."""
     return _decode(_STREAMED, line, "event")
 
 
@@ -161,51 +163,37 @@ def send(
     Call it from a process that is not serving the socket itself: PySide
     keeps the GIL while it waits, which would starve the server's thread.
     """
-    line = request_line(name, encode(envelope), timeout, MAX_REPLY)
-    return None if line is None else decode_reply(line)
-
-
-def request_line(
-    name: str,
-    line: bytes,
-    timeout: float,
-    limit: int = MAX_MESSAGE,
-    peer: str = "the running app",
-) -> bytes | None:
-    """
-    One line out, one line back, blocking; None if nothing listens on
-    `name`. `peer` names the other side in errors.
-    """
     socket = QLocalSocket()
     socket.connectToServer(name)
     if not socket.waitForConnected(CONNECT_TIMEOUT_MS):
         if socket.error() in NOT_LISTENING:
             return None
-        raise WallpaperError(f"Cannot reach {peer}: {socket.errorString()}")
+        raise WallpaperError(f"Cannot reach the running app: {socket.errorString()}")
     try:
-        socket.write(line)
+        socket.write(encode(envelope))
         # Without an event loop, only this pushes the bytes out. (It is
         # False, harmlessly, when the write already completed.)
         written = socket.waitForBytesWritten(CONNECT_TIMEOUT_MS)
         if not written and socket.bytesToWrite():
-            raise WallpaperError(f"Cannot send to {peer}: {socket.errorString()}")
-        return _read_line(socket, time.monotonic() + timeout, limit, peer)
+            raise WallpaperError(
+                f"Cannot send to the running app: {socket.errorString()}"
+            )
+        return decode_reply(_read_line(socket, time.monotonic() + timeout))
     finally:
         socket.abort()
 
 
-def _read_line(socket: QLocalSocket, deadline: float, limit: int, peer: str) -> bytes:
-    peer = peer[0].upper() + peer[1:]  # starts the sentences below
-    lines = LineBuffer(limit, "Reply")
+def _read_line(socket: QLocalSocket, deadline: float) -> bytes:
+    lines = LineBuffer(MAX_REPLY, "Reply")
     while True:
         left_ms = int((deadline - time.monotonic()) * 1000)
         if left_ms <= 0:
-            raise WallpaperError(f"{peer} did not answer in time")
+            raise WallpaperError("The running app did not answer in time")
         ready = socket.waitForReadyRead(left_ms)
         if found := lines.feed(socket.readAll().data()):
             return found[0]
         if not ready and socket.state() != QLocalSocket.LocalSocketState.ConnectedState:
-            raise WallpaperError(f"{peer} closed the connection")
+            raise WallpaperError("The running app closed the connection")
 
 
 # -- event-driven client ---------------------------------------------------------
@@ -300,7 +288,7 @@ class LineRequest(QObject):
 
 @dataclass
 class _Connection:
-    """A server's connection: its socket, and its request as it arrives."""
+    """A connection to the server: its socket, its request as it arrives."""
 
     socket: QLocalSocket
     lines: LineBuffer = field(
@@ -309,18 +297,31 @@ class _Connection:
     received: bool = False  # its request came (it is answered, or subscribed)
 
 
-class LineServer(QObject):
+class CommandServer(QObject):
     """
-    Accepts connections and reads one line from each, which `_received`
-    handles; it answers with `finish()` (one line, then close) or keeps the
-    connection and `send()`s more. Never blocks: it may share its thread
-    with the playlist service.
+    The daemon's socket, on the service thread. Reads one line from each
+    connection: a command is announced with `received(connection_id,
+    CommandRequest)` and the owner answers it with `reply(connection_id,
+    Reply)` (one line, then close); a `subscribe` with
+    `subscribed(connection_id)`, and the connection stays open for
+    `send_event()` / `broadcast()`. Malformed requests and other versions
+    are answered here, and so are the window's requests (`show_window`,
+    `subscribe` as the window): they need no `PlaylistService`. Never
+    blocks.
+
+    The window is the first subscriber that said so (`Subscribe.window`),
+    until its connection closes: `show_window(page)` sends it `show_page`.
+    A later one has its page shown there and is refused (one
+    `ShowWindowResult`), so at most one window process stays.
 
     Its slots are bound methods that find the connection from `sender()`,
     never lambdas holding `self`: Qt would keep such a lambda (and so this
     object) alive until a socket is deleted, and freeing this object from
     inside that deletion deletes the socket twice.
     """
+
+    received = Signal(int, object)  # connection id, protocol.CommandRequest
+    subscribed = Signal(int)  # connection id
 
     def __init__(self, name: str, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -330,6 +331,8 @@ class LineServer(QObject):
         self._server.newConnection.connect(self._accept)
         self._clients: dict[int, _Connection] = {}
         self._next_id = 0
+        self._subscribers: set[int] = set()
+        self._window: int | None = None  # the window's subscription
 
     def listen(self) -> None:
         """Only while holding the instance lock: it removes a stale socket."""
@@ -344,8 +347,34 @@ class LineServer(QObject):
         for client in list(self._clients.values()):
             client.socket.abort()
         self._clients.clear()
+        self._subscribers.clear()
+        self._window = None
 
-    def send(self, connection_id: int, line: bytes) -> bool:
+    def reply(self, connection_id: int, reply: Reply) -> None:
+        """Write the reply, then close once it is out."""
+        client = self._clients.pop(connection_id, None)
+        if client is None:
+            return  # the client gave up meanwhile
+        client.socket.write(encode(reply))
+        client.socket.disconnectFromServer()  # after the line is written
+
+    def send_event(self, connection_id: int, event: Event) -> bool:
+        """To one subscriber; False if it is gone."""
+        return self._send(connection_id, encode(event))
+
+    def broadcast(self, event: Event) -> None:
+        """To every subscriber."""
+        line = encode(event)
+        for connection_id in list(self._subscribers):
+            self._send(connection_id, line)
+
+    def show_window(self, page: PageName) -> bool:
+        """`show_page` to the window; False if there is none."""
+        if self._window is None:
+            return False
+        return self.send_event(self._window, ShowPageEvent(page=page))
+
+    def _send(self, connection_id: int, line: bytes) -> bool:
         """
         Write a line and keep the connection; False if it is gone. A client
         that stops reading is dropped rather than buffered without end.
@@ -362,20 +391,34 @@ class LineServer(QObject):
         socket.write(line)
         return True
 
-    def finish(self, connection_id: int, line: bytes) -> None:
-        """Write the last line, then close once it is out."""
-        client = self._clients.pop(connection_id, None)
-        if client is None:
-            return  # the client gave up meanwhile
-        client.socket.write(line)
-        client.socket.disconnectFromServer()  # after the line is written
-
     def _received(self, connection_id: int, line: bytes) -> None:
-        raise NotImplementedError
+        try:
+            envelope = decode_request(line)
+        except ProtocolError as err:
+            log.warning("Command socket: %s", err)
+            self.reply(connection_id, ErrorReply.make("protocol", err))
+            return
+        match envelope.request:
+            case Subscribe(window=None):
+                self._subscribers.add(connection_id)
+                self.subscribed.emit(connection_id)
+            case Subscribe(window=page) if page is not None:
+                self._window_subscribed(connection_id, page)
+            case ShowWindowRequest(page=page):
+                shown = self.show_window(page)
+                self.reply(connection_id, ShowWindowResult(shown=shown))
+            case request:
+                self.received.emit(connection_id, request)
 
-    def _too_long(self) -> bytes:
-        """The answer to a request over MAX_MESSAGE bytes."""
-        raise NotImplementedError
+    def _window_subscribed(self, connection_id: int, page: PageName) -> None:
+        """The first is the window; a later one's page is shown there."""
+        if self.show_window(page):
+            log.info("The window is open: showing %s there", page)
+            self.reply(connection_id, ShowWindowResult(shown=True))
+            return
+        self._window = connection_id
+        self._subscribers.add(connection_id)
+        self.subscribed.emit(connection_id)
 
     @Slot()
     def _accept(self) -> None:
@@ -418,7 +461,7 @@ class LineServer(QObject):
         try:
             lines = client.lines.feed(socket.readAll().data())
         except ProtocolError:
-            self.finish(connection_id, self._too_long())
+            self.reply(connection_id, ErrorReply.make("protocol", "Request too long"))
             return
         if not lines:
             return
@@ -436,63 +479,7 @@ class LineServer(QObject):
 
     def _forget(self, connection_id: int) -> None:
         self._clients.pop(connection_id, None)
-
-
-class CommandServer(LineServer):
-    """
-    The daemon's socket. Emits `received(connection_id, CommandRequest)`; the owner
-    answers with `reply(connection_id, Reply)`. A `subscribe` request is
-    announced with `subscribed(connection_id)` and the connection stays
-    open for `send_event()` / `broadcast()`. Malformed requests and other
-    versions are answered here.
-    """
-
-    received = Signal(int, object)  # connection id, protocol.CommandRequest
-    subscribed = Signal(int)  # connection id
-
-    def __init__(self, name: str, parent: QObject | None = None) -> None:
-        super().__init__(name, parent)
-        self._subscribers: set[int] = set()
-
-    def reply(self, connection_id: int, reply: Reply) -> None:
-        self.finish(connection_id, encode(reply))
-
-    def send_event(self, connection_id: int, event: Event) -> None:
-        if not self.send(connection_id, encode(event)):
-            self._subscribers.discard(connection_id)
-
-    def broadcast(self, event: Event) -> None:
-        """To every subscriber."""
-        line = encode(event)
-        for connection_id in list(self._subscribers):
-            if not self.send(connection_id, line):
-                self._subscribers.discard(connection_id)
-
-    @override
-    def close(self) -> None:
-        super().close()
-        self._subscribers.clear()
-
-    @override
-    def _received(self, connection_id: int, line: bytes) -> None:
-        try:
-            envelope = decode_request(line)
-        except ProtocolError as err:
-            log.warning("Command socket: %s", err)
-            self.reply(connection_id, ErrorReply.make("protocol", err))
-            return
-        request: CommandRequest | Subscribe = envelope.request
-        if isinstance(request, Subscribe):
-            self._subscribers.add(connection_id)
-            self.subscribed.emit(connection_id)
-        else:
-            self.received.emit(connection_id, request)
-
-    @override
-    def _too_long(self) -> bytes:
-        return encode(ErrorReply.make("protocol", "Request too long"))
-
-    @override
-    def _forget(self, connection_id: int) -> None:
-        super()._forget(connection_id)
         self._subscribers.discard(connection_id)
+        if connection_id == self._window:
+            log.info("The window closed")
+            self._window = None
