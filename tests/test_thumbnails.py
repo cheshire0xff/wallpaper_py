@@ -157,7 +157,7 @@ def test_wanting_others_after_a_job_ran_but_before_its_result_arrived(
     loader.want([A])
     qtbot.waitUntil(lambda: decoder.started == [A])  # held in the decoder
     decoder.release()
-    loader._pool.waitForDone()  # pylint: disable=protected-access
+    loader._jobs.wait()  # pylint: disable=protected-access
     loader.want([B])  # A ran, but no events ran since: its result waits
     qtbot.waitUntil(lambda: loaded.paths == [B])
     assert loader.get(A) is None

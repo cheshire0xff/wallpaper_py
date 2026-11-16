@@ -440,7 +440,9 @@ def test_overview(service: PlaylistService, tmp_path: Path) -> None:
     assert overview(service) == Overview(
         playlists=(
             PlaylistView(
+                id="walls-id",
                 name="walls",
+                directory=tmp_path / "walls",
                 monitors=(
                     MonitorView(id=MAIN.id, name="Main", attached=True),
                     MonitorView(id=SIDE.id, name="Side", attached=False),
@@ -449,7 +451,9 @@ def test_overview(service: PlaylistService, tmp_path: Path) -> None:
                 favourite=False,
             ),
             PlaylistView(
+                id="strip-id",
                 name="strip",
+                directory=tmp_path / "strip",
                 monitors=(
                     MonitorView(
                         id=STRIP_ID,
@@ -479,6 +483,8 @@ def test_overview(service: PlaylistService, tmp_path: Path) -> None:
                 ),
             ),
         ),
+        favourites_file=paths.data_dir() / "favourites.txt",
+        to_remove_file=paths.data_dir() / "to-remove.txt",
     )
     run(service, "next", "walls")
     run(service, "fav", "walls")

@@ -2,7 +2,7 @@
 The UI process: `wallpaper ui [home|library|settings]`.
 
 Started on demand (by the tray or the CLI) and gone when its window
-closes, so the window's memory (later: thumbnails) is given back. At most
+closes, so the window's memory (the grids' thumbnails) is given back. At most
 one runs: a start first asks a running one to show its window on the page
 and exits.
 It is a client of the app's socket like the CLI, starting the app if none
@@ -111,6 +111,7 @@ def _run_locked(app: QApplication, options: UiOptions, name: str) -> int:
     closer = _Closer(app, client, server)
     window.closed.connect(closer.window_closed)
     client.ended.connect(app.quit)  # the app quit: so does its window
+    app.aboutToQuit.connect(window.shutdown)  # its threads, if still open
 
     log.info("UI started")
     with quit_on_interrupt(app):

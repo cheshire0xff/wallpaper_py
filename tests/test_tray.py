@@ -42,13 +42,17 @@ def monitor(name: str, attached: bool | None) -> MonitorView:
 
 
 WALLS = PlaylistView(
+    id="walls-id",
     name="walls",
+    directory=Path("D:/pictures"),
     monitors=(monitor("AW3225QF", True), monitor("PLX2783H", False)),
     current=Path("D:/pictures/a & b.jpg"),
     favourite=True,
 )
 STRIP = PlaylistView(
+    id="strip-id",
     name="strip",
+    directory=Path("D:/strip"),
     monitors=(monitor("ZeroMOD", None),),
     current=None,
     favourite=False,
@@ -239,7 +243,12 @@ def test_no_playlists_item_opens_settings(menu: QMenu) -> None:
 
 def test_long_names_are_elided_in_the_middle(menu: QMenu) -> None:
     long = PlaylistView(
-        name="p", monitors=(), current=Path("x" * 100 + ".png"), favourite=False
+        id="p",
+        name="p",
+        directory=Path("."),
+        monitors=(),
+        current=Path("x" * 100 + ".png"),
+        favourite=False,
     )
     fill(menu, Overview(playlists=(long,)), Actions())
     text = items(menu)[1].text()

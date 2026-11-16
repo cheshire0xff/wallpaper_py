@@ -40,7 +40,7 @@ from pydantic import (
 
 from .core.model import Look, MonitorId
 from .core.service import Change, ListStats, PlaylistStats
-from .core.settings import Order, Settings
+from .core.settings import Order, PlaylistId, Settings
 
 PROTOCOL = 3
 
@@ -290,7 +290,9 @@ class DesktopMonitor(Message):
 
 
 class PlaylistView(Message):
+    id: PlaylistId
     name: str
+    directory: Path
     monitors: tuple[MonitorView, ...]
     current: Path | None
     # The current image is in favourites. None: favourites.txt has not
@@ -312,10 +314,13 @@ class Overview(Message):
     monitors: tuple[DesktopMonitor, ...] = ()  # every listed monitor
     paused: str | None = None  # why rotation is paused, if it is
     error: str | None = None  # the service isn't running (e.g. a bad list file)
+    # favourites.txt and to-remove.txt as the settings name them; None
+    # while the service isn't running.
+    favourites_file: Path | None = None
+    to_remove_file: Path | None = None
 
 
 class PlaylistDetails(PlaylistView):
-    directory: Path
     order: Order
     interval: float | None  # seconds of active time; None: manual
     # Of active time; None: manual. While held, what is left once resumed.

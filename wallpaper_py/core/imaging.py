@@ -12,6 +12,7 @@ where the result goes.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -80,6 +81,34 @@ def load_small(source: Path, side: int) -> Small:
         )
         image = image.resize(smaller, Image.Resampling.LANCZOS, reducing_gap=3.0)
     return Small(image, size)
+
+
+def load_filled(source: Path, size: tuple[int, int]) -> Image.Image:
+    """
+    `source` filling `size` exactly, as Fill shows a wallpaper: scaled to
+    cover it and cropped to the middle (a smaller image is enlarged). RGB
+    and upright: a library tile's thumbnail, so every tile is alike. JPEGs
+    decode at a reduced scale that still covers the crop.
+
+    Raises:
+        ImageLoadError: as `load`.
+    """
+    try:
+        with Image.open(source) as img:
+            shown, sideways = _upright_size(img)
+            left, _, right, _ = fill_box(shown, size)
+            scale = min(1.0, size[0] / (right - left))  # the crop at `size`
+            cover = (
+                max(1, math.ceil(shown[0] * scale)),
+                max(1, math.ceil(shown[1] * scale)),
+            )
+            img.draft("RGB", cover[::-1] if sideways else cover)
+            oriented = ImageOps.exif_transpose(img) or img
+            image = oriented.convert("RGB")  # a copy, detached from the file
+    except (OSError, SyntaxError, ValueError, Image.DecompressionBombError) as err:
+        raise ImageLoadError(f"Cannot load {source}: {err}") from err
+    box = fill_box(image.size, size)
+    return image.resize(size, Image.Resampling.LANCZOS, box=box, reducing_gap=3.0)
 
 
 def _load(source: Path, size: tuple[int, int]) -> tuple[Image.Image, tuple[int, int]]:

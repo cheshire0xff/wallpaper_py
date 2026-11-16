@@ -334,6 +334,7 @@ def test_answers_run_here_say_so() -> None:
 
 def test_status_of_a_manual_playlist() -> None:
     strip = PlaylistDetails(
+        id="strip-id",
         name="strip",
         monitors=(),
         current=None,

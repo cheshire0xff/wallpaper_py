@@ -81,7 +81,9 @@ TV = DesktopMonitor(
 )
 
 KONACHAN = PlaylistView(
+    id="konachan-id",
     name="konachan",
+    directory=Path("/p/konachan"),
     monitors=(
         MonitorView(id=MonitorId("aw"), name="AW3225QF", attached=True),
         MonitorView(id=MonitorId("plx"), name="PLX2783H", attached=True),
@@ -90,7 +92,9 @@ KONACHAN = PlaylistView(
     favourite=False,
 )
 FANTASY = PlaylistView(
+    id="fantasy-id",
     name="fantasy",
+    directory=Path("/p/fantasy"),
     monitors=(MonitorView(id=MonitorId("zero"), name="ZeroMOD", attached=False),),
     current=Path("/p/fantasy/7.png"),
     favourite=False,
@@ -105,7 +109,6 @@ THUMBNAIL = Thumbnail(INFO, None)
 def details(view: PlaylistView, next_in: float | None = 754.0) -> PlaylistDetails:
     return PlaylistDetails(
         **dict(view),
-        directory=Path("/p") / view.name,
         order=Order.SHUFFLE,
         interval=None if view.manual else 1800.0,
         next_in_seconds=None if view.manual else next_in,

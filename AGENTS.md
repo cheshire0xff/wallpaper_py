@@ -102,7 +102,10 @@ Checked by `tests/test_qt_rules.py`; reasons in
    connection; any other callable runs in the sender's thread.
 3. **Don't name a method like an inherited Qt method** (`update`, `show`
    on a widget, ...): PySide then connects it as a plain callable without
-   thread affinity (PYSIDE-2990). Overriding `...Event` handlers is fine.
+   thread affinity (PYSIDE-2990). Overriding `...Event` handlers is fine,
+   and so are an item model's `rowCount` / `data` and a delegate's
+   `paint` / `sizeHint` (what they exist for); background work goes
+   through `Jobs` (app/ui/jobs.py), never a `QThread.run` override.
 4. **Load pydantic before Qt.** `app/__init__.py` imports `protocol.py`
    first; PySide6's import hook breaks pydantic if it was only partly
    loaded before Qt.

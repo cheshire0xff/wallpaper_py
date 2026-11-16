@@ -329,6 +329,8 @@ def overview(service: PlaylistService) -> Overview:
         playlists=tuple(_view(service, s) for s in statuses),
         monitors=tuple(_desktop_monitor(service, m) for m in monitors),
         paused=service.pause_reason(),
+        favourites_file=service.favourites.file,
+        to_remove_file=service.to_remove.file,
     )
 
 
@@ -367,7 +369,9 @@ def _view(service: PlaylistService, status: PlaylistStatus) -> PlaylistView:
     )
     current = status.current
     return PlaylistView(
+        id=status.playlist.id,
         name=status.playlist.name,
+        directory=status.playlist.directory,
         monitors=monitors,
         current=current,
         favourite=_favourite(service, current),
@@ -391,7 +395,6 @@ def _details(service: PlaylistService, status: PlaylistStatus) -> PlaylistDetail
     interval = playlist.interval
     return PlaylistDetails(
         **dict(_view(service, status)),
-        directory=playlist.directory,
         order=playlist.order,
         interval=interval,
         next_in_seconds=None if interval is None else interval - status.elapsed,

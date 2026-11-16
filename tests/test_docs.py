@@ -12,7 +12,9 @@ from wallpaper_py.app.tray import Tray
 from wallpaper_py.app.ui import launcher
 from wallpaper_py.app.ui.arrangement import MonitorsView
 from wallpaper_py.app.ui.client import Client, SocketClient
+from wallpaper_py.app.ui.grid import FolderScan, ImageGrid
 from wallpaper_py.app.ui.home import HomePage, PlaylistRow
+from wallpaper_py.app.ui.jobs import Jobs
 from wallpaper_py.app.ui.launcher import UiServer, WindowOpener
 from wallpaper_py.app.ui.library import LibraryPage
 from wallpaper_py.app.ui.library_overview import OverviewTab
@@ -20,9 +22,11 @@ from wallpaper_py.app.ui.settings import SettingsPage
 from wallpaper_py.app.ui.settings_form import PlaylistEditor
 from wallpaper_py.app.ui.settings_look import LookEditor
 from wallpaper_py.app.ui.thumbnails import ThumbnailLoader
+from wallpaper_py.app.ui.tiles import Pregenerator, TileLoader
 from wallpaper_py.app.ui.window import MainWindow, Sidebar
 from wallpaper_py.app.worker import ServiceHost, ServiceWorker
 from wallpaper_py.core import paths
+from wallpaper_py.core.thumbnail_cache import ThumbnailCache
 
 WIRING = Path(__file__).parents[1] / "docs" / "app-wiring.md"
 
@@ -33,7 +37,10 @@ OWNERS: dict[str, type | ModuleType] = {
     "cli": cli,
     "Client": Client,
     "CommandServer": CommandServer,
+    "FolderScan": FolderScan,
     "HomePage": HomePage,
+    "ImageGrid": ImageGrid,
+    "Jobs": Jobs,
     "LibraryPage": LibraryPage,
     "LookEditor": LookEditor,
     "MonitorsView": MonitorsView,
@@ -41,13 +48,16 @@ OWNERS: dict[str, type | ModuleType] = {
     "OverviewTab": OverviewTab,
     "PlaylistRow": PlaylistRow,
     "PlaylistEditor": PlaylistEditor,
+    "Pregenerator": Pregenerator,
     "ScreenWatcher": ScreenWatcher,
     "ServiceHost": ServiceHost,
     "ServiceWorker": ServiceWorker,
     "SettingsPage": SettingsPage,
     "Sidebar": Sidebar,
     "SocketClient": SocketClient,
+    "ThumbnailCache": ThumbnailCache,
     "ThumbnailLoader": ThumbnailLoader,
+    "TileLoader": TileLoader,
     "Tray": Tray,
     "UiServer": UiServer,
     "WindowOpener": WindowOpener,

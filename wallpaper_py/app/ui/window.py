@@ -220,6 +220,7 @@ class MainWindow(QWidget):
         self.resize(1200, 800)
         self.setMinimumSize(880, 560)
         self._applied: theme.Tones | None = None
+        self._shut_down = False
         # One loader for both pages: they show the same images.
         self.loader = ThumbnailLoader(Sizes.sharpest(), parent=self)
         self.home = home if home is not None else HomePage(client, self.loader)
@@ -329,6 +330,18 @@ class MainWindow(QWidget):
                 return
         super().closeEvent(event)
         if event.isAccepted():
-            self.home.shutdown()
-            self.loader.close()
+            self.shutdown()
             self.closed.emit()
+
+    @Slot()
+    def shutdown(self) -> None:
+        """
+        Stop the pages' work and the image threads (waits for them): when
+        the window closes, or the process quits with it open (the app quit).
+        """
+        if self._shut_down:
+            return
+        self._shut_down = True
+        self.home.shutdown()
+        self.library.shutdown()
+        self.loader.close()

@@ -668,6 +668,32 @@
           ],
           "default": null,
           "title": "Error"
+        },
+        "favourites_file": {
+          "anyOf": [
+            {
+              "format": "path",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Favourites File"
+        },
+        "to_remove_file": {
+          "anyOf": [
+            {
+              "format": "path",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "To Remove File"
         }
       },
       "title": "Overview",
@@ -751,8 +777,17 @@
     },
     "PlaylistDetails": {
       "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
         "name": {
           "title": "Name",
+          "type": "string"
+        },
+        "directory": {
+          "format": "path",
+          "title": "Directory",
           "type": "string"
         },
         "monitors": {
@@ -795,11 +830,6 @@
           "title": "Manual",
           "type": "boolean"
         },
-        "directory": {
-          "format": "path",
-          "title": "Directory",
-          "type": "string"
-        },
         "order": {
           "$ref": "#/$defs/Order"
         },
@@ -835,11 +865,12 @@
         }
       },
       "required": [
+        "id",
         "name",
+        "directory",
         "monitors",
         "current",
         "favourite",
-        "directory",
         "order",
         "interval",
         "next_in_seconds",
@@ -951,8 +982,17 @@
     },
     "PlaylistView": {
       "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
         "name": {
           "title": "Name",
+          "type": "string"
+        },
+        "directory": {
+          "format": "path",
+          "title": "Directory",
           "type": "string"
         },
         "monitors": {
@@ -997,7 +1037,9 @@
         }
       },
       "required": [
+        "id",
         "name",
+        "directory",
         "monitors",
         "current",
         "favourite"

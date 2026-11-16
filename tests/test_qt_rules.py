@@ -19,7 +19,8 @@ import pkgutil
 from collections.abc import Iterator
 from pathlib import Path
 
-from PySide6.QtCore import QObject
+from PySide6.QtCore import QAbstractItemModel, QObject
+from PySide6.QtWidgets import QAbstractItemDelegate
 
 import wallpaper_py.app
 
@@ -137,14 +138,27 @@ def our_qobject_classes() -> Iterator[type[QObject]]:
                 yield cls
 
 
+# The virtuals an item view's model and delegate exist to implement (a
+# list model is no use without them); they are never connected as slots.
+ITEM_VIEW_VIRTUALS: tuple[tuple[type[QObject], frozenset[str]], ...] = (
+    (QAbstractItemModel, frozenset({"rowCount", "data"})),
+    (QAbstractItemDelegate, frozenset({"paint", "sizeHint"})),
+)
+
+
 def test_no_method_shadows_a_qt_method() -> None:
     offenders = []
     for cls in our_qobject_classes():
         qt_bases = [b for b in cls.__mro__ if b.__module__.startswith("PySide6")]
+        meant = {
+            n for b, names in ITEM_VIEW_VIRTUALS if issubclass(cls, b) for n in names
+        }
         for name, value in vars(cls).items():
             if name.startswith("__") or not callable(value):
                 continue
             if name.endswith("Event"):  # event handlers are meant to override
+                continue
+            if name in meant:
                 continue
             if any(name in vars(base) for base in qt_bases):
                 offenders.append(f"{cls.__name__}.{name}")

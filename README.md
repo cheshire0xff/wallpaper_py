@@ -161,8 +161,12 @@ and accent. It logs to `ui.log` next to `wallpaper.log`.
 - **Library** (`wallpaper ui library`, tray *Library*): a playlist's
   library in numbers (Overview: images, seen and unseen in this shuffle
   cycle, skipped; the favourites and to-remove lists), with *Rescan* and
-  *Reset cycle…*. The image grids come later. The playlist and tab shown
-  are remembered.
+  *Reset cycle…*, and *All images*: its folder as a grid of thumbnails.
+  The thumbnails are made in the background while the window is open
+  (every playlist's folder and the lists) and kept in the thumbnail cache,
+  so the next opening is fast; it deletes the ones no image needs any
+  more. The other grids, filtering and sorting come later. The playlist
+  and tab shown are remembered.
 
 Other programs can drive the app over the same socket: see
 [docs/protocol.md](docs/protocol.md).

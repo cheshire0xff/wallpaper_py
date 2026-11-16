@@ -1,7 +1,8 @@
 """
 Find the images in a playlist directory, and compare paths. The app scans
 with `scan` (cached by `Library`); the library window with `scan_files`,
-which also says when each image was added.
+which also says when each image was added, and its thumbnail
+pre-generation with `walk` (stopped at any image).
 """
 
 from __future__ import annotations
@@ -45,9 +46,15 @@ def scan(directory: Path) -> list[Path]:
     A missing or unreadable directory gives an empty list: the drive may
     simply not be mounted yet.
     """
-    found = [Path(entry.path) for entry in _image_entries(directory)]
+    found = list(walk(directory))
     found.sort(key=natural_key)
     return found
+
+
+def walk(directory: Path) -> Iterator[Path]:
+    """`scan`'s images as they are found (unsorted): one folder listed at a time."""
+    for entry in _image_entries(directory):
+        yield Path(entry.path)
 
 
 @dataclass(frozen=True)

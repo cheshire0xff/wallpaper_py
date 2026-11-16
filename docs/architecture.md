@@ -25,8 +25,15 @@ app/                          PySide6 (Qt only here); two processes
                  and the pages; asks before closing with unsaved settings
     home.py      Home: the monitors on a panel, then a row per playlist
     library.py   Library: a playlist drop-down, the tabs; asks `stats` and
-                 `reset_cycle` (the grid tabs come later in Phase 5)
+                 `reset_cycle`; All images (the other grid tabs come later
+                 in Phase 5); owns the grids' thumbnails
     library_overview.py  OverviewTab: a playlist's numbers, Rescan, Reset cycle…
+    grid.py      ImageGrid: a QListView of fixed-size tiles over a list model
+                 of paths, tiles fading in; FolderScan (a folder, listed off
+                 the UI thread)
+    tiles.py     TileLoader: the grid's thumbnails (newest request first,
+                 dropped off screen, a memory budget); Pregenerator: fills
+                 and prunes the disk cache while the window is open
     ui_state.py  UiState: the window's view state (ui-state.json), not settings
     settings.py  Settings, monitor-first: the selected monitor's playlist and
                  look, then the playlists; General; About tab in about.py
@@ -38,6 +45,8 @@ app/                          PySide6 (Qt only here); two processes
                  monitor labels, what changed
     arrangement.py  the monitors drawn to scale (arrange(): pure geometry),
                  each with its preview (the renderer's, at a small output)
+    jobs.py      Jobs: background work on a thread pool of its own, results
+                 delivered on the UI thread (every pool of the UI process)
     thumbnails.py   ThumbnailLoader: a small copy of each image, its thumbnail
                  and details, off the UI thread
     theme.py     the shared look: tones derived from the palette, spacing,
@@ -57,7 +66,10 @@ core/                         pure Python, no Qt, no platform APIs
   selection.py   user-typed monitor selector -> Monitor (names/ids, never numbers)
   setter.py      put an image on a monitor safely (renders it, re-checks)
   imaging.py     render(image, screen, output, look): fill / fit / stretch;
-                 load, load_small (a preview's source), preview_size
+                 load, load_small (a preview's source), load_filled (a grid
+                 tile's), preview_size
+  thumbnail_cache.py  the grid's thumbnails on disk: one JPEG per image and
+                 tile size, named by path, mtime and size; prune
   paths.py       per-user data, log and cache locations (per OS, never shared)
   settings.py    Settings (pydantic): playlists, monitors (playlist, look), pausing,
                  list files; their checks and warnings; durations
@@ -107,7 +119,12 @@ Rules:
     connection; any other callable runs in the sender's thread.
   - No method shadows an inherited Qt method (e.g. a slot called
     `update` on a widget): PySide then connects it as a plain callable,
-    without thread affinity (PYSIDE-2990).
+    without thread affinity (PYSIDE-2990). Except the virtuals a class
+    exists to implement: event handlers, an item model's `rowCount` /
+    `data`, a delegate's `paint` / `sizeHint` (the Library's grid).
+    The UI process's threads are `Jobs` (jobs.py: a `QThreadPool` and
+    results on the UI thread), never a `QThread.run` override; the
+    service's `QThread` runs its event loop.
   - A method that does override a Qt virtual (an event handler,
     `QRunnable.run`) is marked `@override`, like every override (mypy's
     `explicit-override`): a misspelt one, which Qt would silently never
@@ -195,7 +212,7 @@ half-written by a script: it is busy, not broken, until it settles.
 UI process (`wallpaper ui [home|library|settings]`, `app/ui/`): one main
 window with a sidebar (Home, Library, Settings) runs in a process of its
 own, started on demand and ended when the window closes, so whatever it
-holds (later: thumbnails) is given back; the app never holds it. At most
+holds (the grids' thumbnails) is given back; the app never holds it. At most
 one runs: it listens on its own small socket (`UiServer`, "show this
 page") while holding `ui.lock`. The tray's *Open wallpaper_py*, *Library*
 and *Settings…* ask that socket without blocking (`WindowOpener`) and
@@ -254,6 +271,28 @@ time. Which playlist and tab it shows is view state, in `ui-state.json`
 settings (no revision, never on the socket, nothing the app reads), and
 not `QSettings` (the registry on Windows, outside the data locations
 About lists). Missing or unreadable, it is the defaults, logged.
+
+The grids (All images so far) are a second image pipeline beside
+`ThumbnailLoader`, made for 20k images (`grid.py`, `tiles.py`): a
+`QListView` in icon mode over a list model of paths, every tile one size
+(192 x 108, 16:9), so only the tiles on screen are painted or asked for.
+`TileLoader` decodes on four threads of its own, the newest request
+first; the grid says which tiles are on screen after every scroll or
+resize, and a request for any other is dropped before it is decoded. A
+thumbnail is the image filling the tile, cropped to the middle as Fill
+shows a wallpaper (so every tile looks alike), at the sharpest screen's
+scale (draft mode for JPEGs, `imaging.load_filled`), read from or saved
+to the disk cache (`core.thumbnail_cache`: `paths.thumbnail_dir()`, one
+JPEG per image, named by a hash of its path, mtime and size, the tile
+size and the style, so an edited image gets a new one). In memory, the pixmaps are an
+LRU with a byte budget (1.5 GB, no setting), which never drops a tile on
+screen; closing the window gives it all back. While the window is open,
+`Pregenerator` fills the disk cache on one low-priority thread (the
+chosen playlist's folder first, then the other playlists' and the lists'
+entries), waiting while the grid has tiles to decode; a pass that read
+every folder and list then deletes the files none of their images names
+(not ones written since it started). The overview names each playlist's
+folder and the list files for it.
 
 The monitor drawings show previews, not thumbnails: virtual monitors.
 `MonitorsView` renders each monitor's image with `imaging.render`, for the

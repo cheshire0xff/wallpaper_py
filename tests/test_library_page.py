@@ -6,12 +6,14 @@ the playlist and tab remembered in ui-state.json.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 from pytestqt.qtbot import QtBot
 
 from wallpaper_py.app.ui.library import LibraryPage
+from wallpaper_py.app.ui.tiles import Sources
 from wallpaper_py.app.ui.ui_state import UiState, load_ui_state
 from wallpaper_py.core.service import Change, ListStats, PlaylistStats
 from wallpaper_py.core.settings import Order
@@ -26,6 +28,7 @@ from wallpaper_py.protocol import (
 )
 
 from .fake_client import FakeClient
+from .generate_test_images import generate_library
 from .test_settings import answer, requests
 
 
@@ -41,13 +44,25 @@ class Confirm:
         return self.answer
 
 
-def overview(*names: str, error: str | None = None) -> Overview:
+def overview(
+    *names: str, error: str | None = None, root: Path = Path("/pictures")
+) -> Overview:
+    """Playlists named `names`, each on the folder of its name in `root`."""
     return Overview(
         playlists=tuple(
-            PlaylistView(name=n, monitors=(), current=None, favourite=False)
+            PlaylistView(
+                id=f"{n}-id",
+                name=n,
+                directory=root / n,
+                monitors=(),
+                current=None,
+                favourite=False,
+            )
             for n in names
         ),
         error=error,
+        favourites_file=None if error else root / "favourites.txt",
+        to_remove_file=None if error else root / "to-remove.txt",
     )
 
 
@@ -92,13 +107,39 @@ def fixture_state_file(tmp_path: Path) -> Path:
     return tmp_path / "ui-state.json"
 
 
+class Pages:
+    """Makes pages, and shuts them down after the test (their threads)."""
+
+    def __init__(self, qtbot: QtBot, client: FakeClient, state_file: Path) -> None:
+        self._qtbot = qtbot
+        self._client = client
+        self._state_file = state_file
+        self.made: list[LibraryPage] = []
+
+    def __call__(self, confirm: Confirm | None = None) -> LibraryPage:
+        page = (
+            LibraryPage(self._client, state_file=self._state_file)
+            if confirm is None
+            else LibraryPage(self._client, confirm=confirm, state_file=self._state_file)
+        )
+        self._qtbot.addWidget(page)
+        self.made.append(page)
+        return page
+
+
+@pytest.fixture(name="pages")
+def fixture_pages(
+    qtbot: QtBot, client: FakeClient, state_file: Path
+) -> Iterator[Pages]:
+    pages = Pages(qtbot, client, state_file)
+    yield pages
+    for page in pages.made:
+        page.shutdown()
+
+
 @pytest.fixture(name="page")
-def fixture_page(
-    qtbot: QtBot, client: FakeClient, confirm: Confirm, state_file: Path
-) -> LibraryPage:
-    page = LibraryPage(client, confirm=confirm, state_file=state_file)
-    qtbot.addWidget(page)
-    return page
+def fixture_page(pages: Pages, confirm: Confirm) -> LibraryPage:
+    return pages(confirm)
 
 
 # -- asking ----------------------------------------------------------------------
@@ -255,7 +296,7 @@ def test_a_failed_reset_says_why_beside_the_button(
 
 
 def test_the_playlist_and_tab_are_remembered(
-    qtbot: QtBot, page: LibraryPage, client: FakeClient, state_file: Path
+    page: LibraryPage, pages: Pages, state_file: Path
 ) -> None:
     page.show()
     page.playlist_combo.setCurrentIndex(1)
@@ -264,8 +305,7 @@ def test_the_playlist_and_tab_are_remembered(
         library_playlist="fantasy", library_tab="history"
     )
 
-    again = LibraryPage(client, state_file=state_file)
-    qtbot.addWidget(again)
+    again = pages()
     assert again.playlist() == "fantasy"
     assert again.tab() == "history"
     assert again.stack.currentIndex() == 4
@@ -295,9 +335,59 @@ def test_a_playlist_gone_falls_back_to_the_first(
 
 @pytest.mark.parametrize("text", ["not json", '{"library_tab": "nope"}'])
 def test_an_unreadable_state_file_gives_the_defaults(
-    qtbot: QtBot, client: FakeClient, state_file: Path, text: str
+    pages: Pages, state_file: Path, text: str
 ) -> None:
     state_file.write_text(text, encoding="utf-8")
-    page = LibraryPage(client, state_file=state_file)
-    qtbot.addWidget(page)
+    page = pages()
     assert (page.playlist(), page.tab()) == ("konachan", "overview")
+
+
+# -- All images and the thumbnails --------------------------------------------------
+
+
+def test_all_images_shows_the_playlists_folder(
+    qtbot: QtBot, page: LibraryPage, client: FakeClient, tmp_path: Path
+) -> None:
+    konachan = generate_library(tmp_path / "konachan", 8)
+    fantasy = generate_library(tmp_path / "fantasy", 3)
+    client.publish(overview("konachan", "fantasy", root=tmp_path))
+    page.show()
+    page.tabs.tab(1).click()  # All images
+    assert page.all_grid.isVisible()
+    qtbot.waitUntil(lambda: page.all_grid.images() == konachan)
+    on_screen = [konachan[r] for r in page.all_grid.visible_rows()]
+    qtbot.waitUntil(lambda: all(page.tiles.get(p) is not None for p in on_screen))
+    page.playlist_combo.setCurrentIndex(1)
+    assert page.all_grid.images() != konachan  # not konachan's while listing
+    qtbot.waitUntil(lambda: page.all_grid.images() == fantasy)
+
+
+def test_the_folder_is_listed_only_while_all_images_is_shown(
+    qtbot: QtBot, page: LibraryPage, client: FakeClient, tmp_path: Path
+) -> None:
+    konachan = generate_library(tmp_path / "konachan", 2)
+    client.publish(overview("konachan", "fantasy", root=tmp_path))
+    page.show()  # on Overview
+    qtbot.wait(50)
+    assert not page.all_grid.images() and page.folder_scan.asked() is None
+    page.tabs.tab(1).click()
+    qtbot.waitUntil(lambda: page.all_grid.images() == konachan)
+    (added,) = generate_library(tmp_path / "konachan" / "new", 1)
+    page.tabs.tab(0).click()
+    page.tabs.tab(1).click()  # shown again: listed again
+    qtbot.waitUntil(lambda: page.all_grid.images() == [*konachan, added])
+
+
+def test_thumbnails_are_made_for_every_playlist_and_list(
+    page: LibraryPage, client: FakeClient, tmp_path: Path
+) -> None:
+    client.publish(overview("konachan", "fantasy", root=tmp_path))
+    lists = (tmp_path / "favourites.txt", tmp_path / "to-remove.txt")
+    folders = (tmp_path / "konachan", tmp_path / "fantasy")
+    assert page.pregenerator.sources() == Sources(folders, lists)
+    page.playlist_combo.setCurrentIndex(1)  # fantasy's first now
+    assert page.pregenerator.sources() == Sources(folders[::-1], lists)
+    # The app's service stopped: its overview names no playlists, which is
+    # no reason to stop (or to prune everything).
+    client.publish(overview(error="favourites.txt is not UTF-8"))
+    assert page.pregenerator.sources() == Sources(folders[::-1], lists)

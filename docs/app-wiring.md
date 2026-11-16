@@ -19,8 +19,11 @@ the receiving thread's event loop, so the sender never waits.
 |---|---|
 | **app**, UI thread (main thread, Qt event loop) | `QApplication`, `Tray`, `WindowOpener`, `ScreenWatcher`, and `ServiceHost`, the thin proxy to the service thread |
 | **app**, service thread (`QThread` "playlist-service") | `ServiceWorker` and everything it creates on that thread: the `CommandServer` (socket), the tick `QTimer`, COM (`backends.thread_scope`), the backend, the SQLite `Store`, the `PlaylistService` |
-| **UI process** (`wallpaper ui`, on demand), UI thread | `QApplication`, `UiServer` (its own socket), `SocketClient` (the app's socket), and the one `MainWindow`: its `ThumbnailLoader` (shared by Home and Settings), its `Sidebar` and its pages, `HomePage` (with its `PlaylistRow`s and `MonitorsView`), `LibraryPage` (with its `OverviewTab`), `SettingsPage` (with its `PlaylistEditor`s, a `MonitorsView` and the `AboutPage`) |
-| **UI process**, thumbnail threads (the `ThumbnailLoader`'s own `QThreadPool`, 2 threads) | nothing that lives there: each job reads one image file with Pillow (a small copy, and the row's thumbnail as a `QImage`) and emits it back |
+| **UI process** (`wallpaper ui`, on demand), UI thread | `QApplication`, `UiServer` (its own socket), `SocketClient` (the app's socket), and the one `MainWindow`: its `ThumbnailLoader` (shared by Home and Settings), its `Sidebar` and its pages, `HomePage` (with its `PlaylistRow`s and `MonitorsView`), `LibraryPage` (with its `OverviewTab`, the All images `ImageGrid`, and the grids' `TileLoader`, `Pregenerator` and `FolderScan`), `SettingsPage` (with its `PlaylistEditor`s, a `MonitorsView` and the `AboutPage`) |
+| **UI process**, thumbnail threads (the `ThumbnailLoader`'s own `Jobs` pool, 2 threads) | nothing that lives there: each job reads one image file with Pillow (a small copy, and the row's thumbnail as a `QImage`) and emits it back |
+| **UI process**, tile threads (the `TileLoader`'s own `Jobs` pool, 4 threads, started at the first request) | nothing that lives there: each runs one loop until `TileLoader.close`, taking the newest wanted request, reading its thumbnail from the disk cache or decoding and saving it (`ThumbnailCache.thumbnail`), and emitting it back as a `QImage` |
+| **UI process**, pre-generation thread (the `Pregenerator`'s own `Jobs` pool, 1 thread, low priority) | nothing that lives there: one pass at a time walks the playlists' folders and the lists, makes the missing thumbnails on disk while the tile threads are idle, then prunes; it emits only its result |
+| **UI process**, folder listing thread (the `FolderScan`'s own `Jobs` pool, 1 thread) | nothing that lives there: each job lists one folder (`library.scan`) and emits the paths back |
 | **CLI** (a separate process) | `ipc.send`: blocking client, no event loop |
 
 Only the service thread ever touches the `PlaylistService`, so the core needs
@@ -50,6 +53,7 @@ flowchart LR
         client["SocketClient"]
         windows["MainWindow<br/>HomePage, LibraryPage,<br/>SettingsPage"]
         thumbs["ThumbnailLoader<br/>thread pool"]
+        tiles["TileLoader, Pregenerator,<br/>FolderScan: thread pools"]
     end
     subgraph UI["app: UI thread"]
         tray["Tray"]
@@ -72,6 +76,8 @@ flowchart LR
     windows -->|"run (also stats, reset_cycle,<br/>settings, save_settings)"| client
     windows -->|"want"| thumbs
     thumbs -.->|"loaded"| windows
+    windows -->|"request, set_wanted,<br/>start (pre-generation), scan"| tiles
+    tiles -.->|"loaded, scanned"| windows
     server -->|"received, subscribed"| worker
     worker -->|"reply, broadcast"| server
     tray -->|"open_window"| opener
@@ -166,6 +172,10 @@ the new overview is published, both before the reply.
 | `SocketClient.overview_changed`, `SocketClient.changed`, `SocketClient.marks_changed`, `SocketClient.failed` | `LibraryPage.show_overview` (the playlists in its drop-down; the numbers again), `LibraryPage._changed` (a change of its playlist: the numbers again), `LibraryPage._marks_changed` (the numbers again), `LibraryPage.show_error` |
 | `Tabs.current_changed` (the Library's tabs), the Library's *Playlist* drop-down's `currentIndexChanged` | `LibraryPage._tab_chosen`, `LibraryPage._playlist_chosen` (each remembered in ui-state.json; Overview: the numbers again) |
 | `OverviewTab.rescan_requested`, `OverviewTab.reset_requested` | `LibraryPage._rescan_clicked` (`stats` with `rescan`), `LibraryPage._reset_clicked` (asks first; `reset_cycle`, reply to `LibraryPage.reset_replied`) |
+| `SocketClient.overview_changed` (also), the *Playlist* drop-down (also), All images shown (`LibraryPage._tab_chosen`, `LibraryPage.showEvent`) | `LibraryPage._list_folder` -> `FolderScan.scan` (the chosen playlist's folder: when shown, or when the folder changed); `LibraryPage._pregenerate` -> `Pregenerator.start` (every playlist's folder, the chosen one first, and the two lists; a new pass only if that changed, never from an overview with an error) |
+| `FolderScan.scanned` (a folder listed; only the latest asked for) | `LibraryPage._folder_scanned` -> `ImageGrid.set_images` (if still the chosen playlist's folder) |
+| `TileLoader.loaded` (a tile is ready) | `ImageGrid._tile_loaded` (repaints the tiles showing it; they fade in) |
+| the grid's scroll bar `valueChanged`, `ImageGrid.resizeEvent` / `ImageGrid.showEvent` / `ImageGrid.hideEvent` | `ImageGrid._scrolled` / `ImageGrid._tell_wanted` -> `TileLoader.set_wanted` (the rows on screen and one more above and below; hidden: none); painting a tile without its thumbnail calls `TileLoader.request` |
 | `PlaylistEditor.edited`, and the *General* tab's fields | `SettingsPage._edited` -> `SettingsPage._refresh` (problems, summaries, the monitor rows, Save / Revert, the status line, the drawing) |
 | `PlaylistEditor.toggle_requested` (a playlist's header row clicked) | `SettingsPage._toggle_playlist` -> `SettingsPage.open_playlist` (the others close) |
 | `MonitorsView.clicked` (a monitor's id; the Settings drawing is clickable) | `SettingsPage.select_monitor` (outlined; its rows below) |
@@ -177,6 +187,7 @@ the new overview is published, both before the reply.
 | *Save* / *Revert* / *Load the settings again* | `SettingsPage.save` (via `SettingsPage._save_clicked`), `SettingsPage.revert`, `SettingsPage.load` |
 | `MainWindow.closed` (the window closed) | `process._Closer.window_closed`: `UiServer` closes; `QApplication.quit` now, or on `SocketClient.idle` if a command still waits for its reply (`SocketClient.busy`) |
 | `SocketClient.ended` (the app quit) | `QApplication.quit` |
+| `QApplication.aboutToQuit` (the process quits with the window still open: the app quit) | `MainWindow.shutdown` (as when the window closes: the image threads stop) |
 
 The pages live as long as the window: switching pages keeps everything,
 unsaved settings included. The tones come from the application's palette
@@ -185,11 +196,24 @@ palette change (the system switching light / dark) reaches
 `MainWindow.changeEvent`, which derives them again; painted widgets read
 them when they paint.
 
-Thumbnail threads -> UI thread (queued): each job emits `_Relay.done`,
-which `ThumbnailLoader._done` receives on the UI thread; it makes the
+Every pool of the UI process is a `Jobs` (jobs.py): a job's result goes
+through the pool's relay (queued) to `Jobs.done` on the UI thread, which
+its owner's `_done` receives; after `Jobs.close` nothing more comes.
+
+Thumbnail threads -> UI thread: `ThumbnailLoader._done` makes the
 `QPixmap` there, caches it, and emits `ThumbnailLoader.loaded`. The
 monitor previews are rendered on the UI thread, when a `MonitorsView`
 paints (a few ms each, cached; `MonitorsView.preview`).
+
+Tile threads -> UI thread, the same way: `TileLoader._done` makes the
+`QPixmap`, keeps it in memory (a byte budget; never dropping a tile on
+screen) and emits `TileLoader.loaded`. The pre-generation delivers its
+pass's result (`Pregenerator._pass_done` -> `Pregenerator.pass_done`),
+and the folder listing its paths (`FolderScan._done` ->
+`FolderScan.scanned`, the latest folder asked for only). The tile
+threads and the pre-generation share only `TileLoader.idle` (a
+`threading.Event`, set while nothing waits to be decoded), which a pass
+waits on before each image.
 
 `Client.run` sends each command on a connection of its own (an
 `ipc.LineRequest`); the reply comes back to the callback on this thread.
@@ -390,8 +414,7 @@ sequenceDiagram
   Save that can't happen, keeps the window open; Save sends the edit and
   keeps it open until the reply, then `SettingsPage.saved` closes it.
 
-The Library page's Overview tab (the numbers come from the app; the page
-reads nothing itself yet):
+The Library page's Overview tab (the numbers come from the app):
 
 ```mermaid
 sequenceDiagram
@@ -417,6 +440,42 @@ sequenceDiagram
 - The playlist and the tab are view state (`ui_state.UiState` in
   `paths.ui_state`), written by `LibraryPage._remember` on each choice and
   read when the page is made.
+
+The Library page's All images tab and the thumbnails (the page reads the
+folder and the images itself, off the UI thread; nothing goes through the
+app):
+
+```mermaid
+sequenceDiagram
+    participant L as LibraryPage
+    participant F as FolderScan<br/>(its thread)
+    participant G as ImageGrid
+    participant T as TileLoader<br/>(tile threads)
+    participant P as Pregenerator<br/>(its thread)
+
+    Note over L,P: an overview names the playlists: LibraryPage._pregenerate
+    L->>P: Pregenerator.start(folders, the chosen one first; the lists)
+    Note over L: All images shown, or its playlist chosen
+    L->>F: FolderScan.scan(the folder)
+    F--)L: FolderScan.scanned: ImageGrid.set_images
+    G->>T: TileLoader.set_wanted(rows on screen), TileLoader.request (painted tiles)
+    T--)G: TileLoader.loaded: the tile fades in
+    P->>P: waits on TileLoader.idle, then ThumbnailCache.ensure per image; at the end, prune
+```
+
+- Requests are taken newest first; one for a tile no longer wanted is
+  dropped before it is decoded. Hiding the grid wants nothing, so its
+  queue empties and the pre-generation goes on.
+- A pass prunes only if it read every folder and list (a folder on a
+  drive not mounted keeps its thumbnails), and keeps files written after
+  it started. A new playlist chosen, or other folders or lists, start a
+  new pass; the old one stops at its next image (one thread: it ends
+  before the new one starts).
+- Closing the window (`MainWindow.closeEvent`), or the process quitting
+  with it open (`QApplication.aboutToQuit`), calls `MainWindow.shutdown`
+  -> `LibraryPage.shutdown`: `Pregenerator.close`, `TileLoader.close`,
+  `FolderScan.close`, each waiting for its thread (at most one image or one
+  folder listing).
 
 Shutdown of the app (tray *Quit* or Ctrl+C): `app.quit()` ends the UI event
 loop -> `ServiceHost.shutdown` emits `_stop` (queued) and waits for the
