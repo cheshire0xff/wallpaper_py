@@ -17,10 +17,13 @@ the disk cache: the open playlist's folder first, then the other
 playlists' and the lists' entries. It waits while the grid has tiles to
 decode. Having seen every current image (every folder and list read), it
 deletes the cache files none of them names (old tile sizes, deleted or
-edited images), except those written since the pass started; a folder it
-can't read (a drive not mounted) keeps its thumbnails, as no pass then
-prunes. A change of what it should cover starts a new pass, which begins
-once the old one has stopped at its next image (one thread).
+edited images), except those written since the pass started; a playlist
+folder that isn't there (a drive not mounted) keeps its thumbnails, as no
+pass then prunes. A subfolder `scandir` can't list is skipped like an
+empty one, so its thumbnails are pruned and made again once it can be
+read: rare, and it costs only the time to make them. A change of what it
+should cover starts a new pass, which begins once the old one has stopped
+at its next image (one thread).
 
 Everything here lives only in the window process: closing the window ends it
 and gives the memory back; the daemon never makes thumbnails. The threads
@@ -53,7 +56,7 @@ log = logging.getLogger(__name__)
 
 TILE = QSize(192, 108)  # logical px: a grid tile, 16:9
 THREADS = 4
-MEMORY_BUDGET = 1536 * 2**20  # bytes of pixmaps: ~10k tiles at 2x scale
+MEMORY_BUDGET = 1536 * 2**20  # bytes of pixmaps: ~4.8k tiles at 2x, ~19k at 1x
 IDLE_POLL_S = 0.25  # the pre-generation checks for `close` this often
 
 
@@ -274,13 +277,21 @@ class TileLoader(QObject):
 
     def _trim(self) -> None:
         """The least recently used tiles go beyond the budget, never one on screen."""
-        if self._used <= self._budget:
+        excess = self._used - self._budget
+        if excess <= 0:
             return
+        # From the oldest, only as far as needed: listing every tile on each
+        # arrival took ~2 ms with 19k in memory, a stutter while scrolling.
         wanted = self._queue.wanted
-        for path in [p for p in self._memory if p not in wanted]:
+        going: list[Path] = []
+        for path, tile in self._memory.items():
+            if path not in wanted:
+                going.append(path)
+                excess -= tile.cost()
+                if excess <= 0:
+                    break
+        for path in going:
             self._used -= self._memory.pop(path).cost()
-            if self._used <= self._budget:
-                return
 
 
 # -- pre-generation ----------------------------------------------------------------
