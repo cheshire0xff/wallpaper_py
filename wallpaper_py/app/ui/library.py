@@ -198,7 +198,7 @@ class LibraryPage(QWidget):
         for name in ("all", "history"):
             self.grids[name].set_switch_text("Hide removed")
         self.browse = QWidget(self)  # the header and the tabs
-        self.enlarged = EnlargedView(client, self.tiles, self)
+        self.enlarged = EnlargedView(client, self)
         self.layers = QStackedWidget(self)  # the browse, or the enlarged view
         self._viewing: GridTab | None = None  # the grid tab it was opened from
         self._build()

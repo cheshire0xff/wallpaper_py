@@ -239,6 +239,12 @@ scrolled away, within a memory budget (no setting). A tile is the image
 filling it, cropped as Fill shows it, so every tile looks alike (the
 user's choice, as in the phone app).
 
+**The enlarged view shows no thumbnail while it reads.** A tile is a
+blurry 16:9 crop: drawn while the image decodes, it flashes low-res and
+then jumps to the image's own shape. Most images decode in a few tens of
+ms anyway, so the image before stays a moment instead (`HOLD`, enlarged.py)
+and a slow file shows the panel.
+
 **Previews are virtual monitors.** `MonitorsView` renders each monitor's
 image with the app's own renderer (`imaging.render`), for the monitor's
 real screen size and its look, at a small output: every look shows as it

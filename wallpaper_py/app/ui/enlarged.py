@@ -16,8 +16,11 @@ far as the image's own pixels); a double-click toggles between the fit and
 twice it (at least the image's own pixels); dragging pans; a click (not a
 drag, not a double-click) hides or shows the info card. The file is decoded
 at full size off the main thread (`read_full`, through a `LatestRead`, so
-going quickly through images decodes only the last one); until then the
-grid's thumbnail stands in, a 16:9 crop fitted to the view. Shown smaller
+going quickly through images decodes only the last one). Going through,
+the image before stays as it was drawn (zoom and all) up to `HOLD`, so a
+quick read replaces it with no flash of the panel in between; after that
+(a slow file), and when just opened, the panel shows until it is read
+(no thumbnail stands in: docs/architecture.md). Shown smaller
 than its own pixels, the image is drawn from a smooth copy at that size
 (drawing it scaled samples it, which shimmers on fine lines); larger,
 directly.
@@ -54,7 +57,6 @@ from PySide6.QtGui import (
     QPainter,
     QPainterPath,
     QPaintEvent,
-    QPixmap,
     QResizeEvent,
     QWheelEvent,
 )
@@ -82,13 +84,16 @@ from .jobs import LatestRead
 from .library_stats import count
 from .settings_form import combo, select
 from .thumbnails import ImageInfo, header_info
-from .tiles import TILE, TileLoader
 
 MAX_ZOOM = 5.0  # of the fit
 ZOOM_STEP = 1.25  # per notch of the wheel
 DOUBLE_CLICK_ZOOM = 2.0  # of the fit
 CARD_INSET = theme.space(2)  # the info card from the image area's corner
 CARD_ALPHA = 0.9
+# ms the image before stays while the next is read: a JPEG of a few MP
+# decodes in 20-40 ms, a large PNG in ~250 ms (measured on the user's
+# library); past ~100 ms a picture that doesn't change feels like a missed key
+HOLD = 100
 
 
 # -- reading the image ------------------------------------------------------------
@@ -199,7 +204,8 @@ class ImageCanvas(QWidget):
         super().__init__(parent)
         self._image: QImage | None = None
         self._smooth: QImage | None = None  # _image at the size shown (smaller)
-        self._stand_in: QPixmap | None = None  # until the image is read
+        # the image before as drawn (where, what), while the next is read
+        self._held: tuple[QRectF, QImage] | None = None
         self._lines: tuple[str, str] | None = None  # no image: the name, why
         self._scale = 1.0  # logical px per image px
         self._offset = QPointF()  # the image's top left
@@ -212,43 +218,63 @@ class ImageCanvas(QWidget):
         self._click.setSingleShot(True)
         self._click.setInterval(QApplication.doubleClickInterval())
         self._click.timeout.connect(self._clicked_once)
+        self._hold = QTimer(self)  # how long _held stays
+        self._hold.setSingleShot(True)
+        self._hold.setInterval(HOLD)
+        self._hold.timeout.connect(self._let_go)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)  # its keys go to the view
         self.setAccessibleName("Image")
 
     # -- what it shows ---------------------------------------------------------------
 
-    def show_loading(self, stand_in: QPixmap | None) -> None:
-        """Another image, being read: `stand_in` (the grid's tile) until then."""
-        self._image = self._smooth = None
-        self._stand_in = stand_in
-        self._lines = None
-        self._fitted = True
+    def show_loading(self) -> None:
+        """
+        Another image, being read: what was shown stays up to `HOLD`
+        (counted from the first of several in a row), then the panel.
+        """
+        if self._held is None and self._image is not None:
+            # as last drawn, with no new smooth copy made for a moment
+            smooth = self._smooth
+            self._held = (self._target(), smooth if smooth is not None else self._image)
+            self._hold.start()
         self._click.stop()
-        self._refit()
+        self._show(None)
 
-    def set_stand_in(self, stand_in: QPixmap | None) -> None:
-        if self._image is None:
-            self._stand_in = stand_in
-            self.update()
+    def clear(self) -> None:
+        """Nothing shown (the view was left): the next image starts on the panel."""
+        self._let_go()
+        self._click.stop()
+        self._show(None)
 
     def set_image(self, image: QImage) -> None:
         """The image, read: fitted."""
-        self._image = image
-        self._smooth = None
-        self._fitted = True
-        self._refit()
+        self._let_go()
+        self._show(image)
 
     def set_lines(self, name: str, why: str) -> None:
         """No image (it can't be read): its name, and why, in the middle."""
-        self._image = self._smooth = self._stand_in = None
-        self._lines = (name, why)
-        self._refit()
+        self._let_go()
+        self._show(None, (name, why))
 
     def image(self) -> QImage | None:
         return self._image
 
-    def stand_in(self) -> QPixmap | None:
-        return self._stand_in if self._image is None else None
+    def held(self) -> tuple[QRectF, QImage] | None:
+        """The image before as drawn, while the next is read (up to `HOLD`)."""
+        return self._held
+
+    def _show(self, image: QImage | None, lines: tuple[str, str] | None = None) -> None:
+        self._image = image
+        self._smooth = None
+        self._lines = lines
+        self._fitted = True
+        self._refit()
+
+    @Slot()
+    def _let_go(self) -> None:
+        self._held = None
+        self._hold.stop()
+        self.update()
 
     def lines(self) -> tuple[str, str] | None:
         return self._lines
@@ -393,14 +419,18 @@ class ImageCanvas(QWidget):
     @override
     def resizeEvent(self, event: QResizeEvent) -> None:  # pylint: disable=invalid-name
         super().resizeEvent(event)
+        old, shift = event.oldSize(), QPointF()  # the middle's move
+        if old.isValid():
+            grown = event.size() - old
+            shift = QPointF(grown.width(), grown.height()) / 2
+        if self._held is not None:  # its middle stays the middle
+            target, image = self._held
+            self._held = (target.translated(shift), image)
         if self._fitted or self._scale < self.fit():
             self._fitted = True
             self._refit()
         else:  # kept within the new limits, the middle staying put
-            old = event.oldSize()
-            if old.isValid():
-                grown = event.size() - old
-                self._offset += QPointF(grown.width(), grown.height()) / 2
+            self._offset += shift
             self.zoom_to(self._scale, QRectF(self.rect()).center())
 
     # -- painting ----------------------------------------------------------------------
@@ -413,19 +443,24 @@ class ImageCanvas(QWidget):
         painter.fillRect(area, theme.tones().panel)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         if self._image is not None:
-            self._draw_image(painter)
-        elif self._stand_in is not None:
-            source = QRectF(self._stand_in.rect())
-            painter.drawPixmap(self._stand_in_rect(), self._stand_in, source)
+            painter.drawImage(*self._drawn())
+        elif self._held is not None:
+            painter.drawImage(*self._held)
         elif self._lines is not None:
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
             draw_name(painter, area, *self._lines)
         painter.end()
 
-    def _draw_image(self, painter: QPainter) -> None:
+    def _target(self) -> QRectF:
+        """Where the image goes."""
         assert self._image is not None
-        shown = QSizeF(self._image.size()) * self._scale
-        target = QRectF(self._offset, shown)
+        return QRectF(self._offset, QSizeF(self._image.size()) * self._scale)
+
+    def _drawn(self) -> tuple[QRectF, QImage]:
+        """Where the image goes, and what is drawn there."""
+        assert self._image is not None
+        target = self._target()
+        shown = target.size()
         ratio = self.devicePixelRatioF()
         if self._scale * ratio < 1:  # smaller than its own pixels: a smooth copy
             pixels = QSize(round(shown.width() * ratio), round(shown.height() * ratio))
@@ -435,20 +470,8 @@ class ImageCanvas(QWidget):
                     Qt.AspectRatioMode.IgnoreAspectRatio,
                     Qt.TransformationMode.SmoothTransformation,
                 )
-            painter.drawImage(target, self._smooth)
-        else:
-            painter.drawImage(target, self._image)
-
-    def _stand_in_rect(self) -> QRectF:
-        """The tile's 16:9 fitted in the middle."""
-        tile = QSizeF(TILE)
-        view = QSizeF(self.size())
-        scale = min(view.width() / tile.width(), view.height() / tile.height())
-        shown = tile * scale
-        corner = QPointF(
-            (view.width() - shown.width()) / 2, (view.height() - shown.height()) / 2
-        )
-        return QRectF(corner, shown)
+            return target, self._smooth
+        return target, self._image
 
 
 # -- the info card ---------------------------------------------------------------
@@ -532,12 +555,9 @@ class EnlargedView(QWidget):
 
     closed = Signal()  # back to the grid
 
-    def __init__(
-        self, client: Client, tiles: TileLoader, parent: QWidget | None = None
-    ) -> None:
+    def __init__(self, client: Client, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._client = client
-        self._tiles = tiles
         self._entries: list[Entry] = []
         self._row = 0
         self._marks: Marks | None = None  # None: the lists aren't read yet
@@ -572,7 +592,6 @@ class EnlargedView(QWidget):
         self.show_button.clicked.connect(self._show_on)
         self.canvas.clicked.connect(self._toggle_card)
         self.full_read.done.connect(self._full_read)
-        tiles.loaded.connect(self._tile_loaded)
         self.set_playlists([])
 
     @override
@@ -705,7 +724,7 @@ class EnlargedView(QWidget):
         self.closed.emit()
         self._entries = []
         self._full = None
-        self.canvas.show_loading(None)  # a late read finds no image to show
+        self.canvas.clear()  # a late read finds no image to show
 
     def _show_row(self, row: int) -> None:
         self._row = min(max(row, 0), len(self._entries) - 1)
@@ -720,21 +739,10 @@ class EnlargedView(QWidget):
         self.position.setText(f"{count(self._row + 1)} of {count(len(self._entries))}")
         self.previous_button.setEnabled(self._row > 0)
         self.next_button.setEnabled(self._row + 1 < len(self._entries))
-        tile = self._tiles.get(path)
-        if tile is None:
-            self._tiles.set_wanted((path,))  # the images passed: not any more
-            self._tiles.request(path)
-        self.canvas.show_loading(tile.pixmap if tile else None)
+        self.canvas.show_loading()
         self.card.show_info(path, "")
         self._show_marks()
         self.full_read.read(path, partial(read_full, path), full_failed)
-
-    @Slot(object)
-    def _tile_loaded(self, path: Path) -> None:
-        entry = self.current()
-        if self._full is None and entry is not None and entry.path == path:
-            tile = self._tiles.get(path)
-            self.canvas.set_stand_in(tile.pixmap if tile else None)
 
     @Slot(object, object)
     def _full_read(self, path: Path, full: Full) -> None:

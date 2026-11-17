@@ -2,7 +2,7 @@
 The Library's enlarged view, offscreen through a fake Client: the zoom and
 pan numbers, reading an image at full size (or why not), going through the
 images and back, the info card, the toggles and *Show on* (the commands
-they send), and the thumbnail standing in until the image is read.
+they send), and the image before staying a moment while the next is read.
 """
 
 from __future__ import annotations
@@ -34,7 +34,6 @@ from wallpaper_py.app.ui.enlarged import (
 from wallpaper_py.app.ui.entries import Entry
 from wallpaper_py.app.ui.grid import Marks
 from wallpaper_py.app.ui.thumbnails import ImageInfo
-from wallpaper_py.app.ui.tiles import TileLoader, tile_pixels
 from wallpaper_py.protocol import (
     ErrorReply,
     MarkRequest,
@@ -43,7 +42,7 @@ from wallpaper_py.protocol import (
 )
 
 from .fake_client import FakeClient
-from .fakes import FakeTileDecoder, make_images
+from .fakes import make_images
 from .test_settings import answer, requests
 
 PLAYLISTS = [("konachan-id", "konachan"), ("fantasy-id", "fantasy")]
@@ -64,12 +63,10 @@ class Views:
     def __init__(self, qtbot: QtBot, client: FakeClient) -> None:
         self._qtbot = qtbot
         self._client = client
-        self.decoder = FakeTileDecoder(tile_pixels(1.0))
-        self.tiles = TileLoader(self.decoder, threads=1)
         self.made: list[EnlargedView] = []
 
     def __call__(self) -> EnlargedView:
-        view = EnlargedView(self._client, self.tiles)
+        view = EnlargedView(self._client)
         self._qtbot.addWidget(view)
         view.resize(1000, 700)
         view.show()
@@ -80,7 +77,6 @@ class Views:
     def close(self) -> None:
         for view in self.made:
             view.shutdown()
-        self.tiles.close()
 
 
 @pytest.fixture(name="client")
@@ -311,15 +307,6 @@ def test_the_arrows_still_go_through_after_a_button_is_clicked(
     assert view.row() == 2  # the click left the focus on the image
 
 
-def test_passing_images_drops_their_stand_ins(
-    view: EnlargedView, views: Views, images: list[Path]
-) -> None:
-    view.open_entries(entries_of(images), 0, None)
-    view.show_next()
-    view.show_next()
-    assert views.tiles.pending() <= {images[2], *views.decoder.started}
-
-
 def test_a_missing_image_says_so(
     qtbot: QtBot, view: EnlargedView, tmp_path: Path
 ) -> None:
@@ -430,7 +417,7 @@ def test_a_lists_line_that_is_no_full_path_is_not_sent(
     assert not requests(client, MarkRequest) and not requests(client, PickRequest)
 
 
-def test_the_thumbnail_stands_in_until_the_image_is_read(
+def test_the_image_before_stays_a_moment_while_the_next_is_read(
     qtbot: QtBot,
     views: Views,
     images: list[Path],
@@ -444,12 +431,26 @@ def test_the_thumbnail_stands_in_until_the_image_is_read(
 
     monkeypatch.setattr(enlarged, "read_full", slow_read)
     view = views()
+    view.open_entries(entries_of(images), 0, None)
+    assert view.canvas.held() is None  # just opened: the panel
+    gate.set()
+    read(qtbot, view)
+
+    gate.clear()
     try:
-        view.open_entries(entries_of(images), 0, None)
-        assert view.canvas.stand_in() is None  # asked for
-        qtbot.waitUntil(lambda: view.canvas.stand_in() is not None)
-        assert views.decoder.started == [images[0]]
+        view.show_next()
+        held = view.canvas.held()
+        assert held is not None  # the image before, for a moment
+        canvas = view.canvas  # grows (a banner hid): it stays, its middle the middle
+        canvas.resize(canvas.width(), canvas.height() + 40)
+        moved = view.canvas.held()
+        assert moved is not None and moved[0] == held[0].translated(0, 20)
+        qtbot.waitUntil(lambda: view.canvas.held() is None)  # then the panel
+        assert view.canvas.image() is None
     finally:
         gate.set()
     full = read(qtbot, view)
-    assert view.canvas.image() is full.image and view.canvas.stand_in() is None
+    assert view.canvas.image() is full.image
+    view.show_next()
+    view.leave()
+    assert view.canvas.held() is None  # the next opened starts on the panel
