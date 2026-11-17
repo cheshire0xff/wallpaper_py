@@ -1,5 +1,5 @@
 """
-The Library's image grid (docs/plan.md, Phase 5, "Thumbnails" and "Grid
+The Library's image grid (docs/plan.md at 268a951, "Thumbnails" and "Grid
 tabs"), built from the Phase 0 spike (spikes/grid_prototype.py): a
 `QListView` in icon mode over a list model of entries (entries.py), every
 tile one size (`tiles.TILE`, 16:9), so only the tiles on screen are painted

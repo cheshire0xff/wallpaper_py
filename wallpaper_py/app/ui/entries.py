@@ -1,5 +1,5 @@
 """
-What the Library's grid tabs show, without Qt (docs/plan.md, Phase 5,
+What the Library's grid tabs show, without Qt (docs/plan.md at 268a951,
 "Grid tabs"): an `Entry` per tile, and `arrange`, which narrows them by
 name and sorts them.
 

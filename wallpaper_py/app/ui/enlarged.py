@@ -1,5 +1,5 @@
 """
-The Library's enlarged view (docs/plan.md, Phase 5, "Enlarged view"): one
+The Library's enlarged view (docs/plan.md at 268a951, "Enlarged view"): one
 image over the whole page, on the panel tone, opened by a click on a tile.
 ← / → (or the arrows in its bar) go to the image before / after in the
 order the grid showed; Esc, *Back* or the mouse's back button go back to

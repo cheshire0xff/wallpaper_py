@@ -1,74 +1,31 @@
 ## Normal prio
 1. Delete playlist needs a confirmation box? Maybe not since you can revert it, think it through.
-1. Cache rotation?
-1. Techincally all images could incorporate favs by using, those toggleable, tags forgot how are they called.
-1. Why allow select in a library grid? Is there a plan what it would do?
 1. Selectable images in grid where you can decide what to do with them like to fav them, remove then or undo etc
+   (docs/plan.md, Phase 7, "Library, later").
 1. Separate the library viewer to make something like gwenview out of it?
-1. Chips instead of toggles.
-1. kinda like on the phone that filter by name showed drop down since it told be if I filter correctly and not pick up things I do not want.
 1. Is docs/design up to date? Does it make sense to keep it?
 1. Make fonts bold and bigger in some places like nvidia app.
-
-## Library window
-
-Modelled on my phone app (C:\Users\fanta\Repos\WallpaperSwitcherApp), minus
-its manual "set as wallpaper" and lock screen parts: here the playlists set
-the wallpapers.
-
-1. Tabs: All images, Favourites, To remove, History, Upcoming. The last
-   opened tab is remembered.
-1. Every image in every grid can be clicked to enlarge it. The enlarged view
-   shows the full path (selectable, copyable), dimensions and file size, and
-   has favourite and to-remove buttons that toggle (un-favourite and
-   un-remove too).
-1. Enlarged view: zoom (wheel, up to ~5x; double-click toggles zoom / fit)
-   and drag to pan; click hides / shows the info overlay.
-1. Filter by name: case-insensitive part of the filename, with live results
-   (small thumbnails) while typing; picking one opens it enlarged.
-1. Sort each tab, remembered per tab: name A-Z / Z-A, newest / oldest
-   added.
-1. "Hide removed" toggle in All images.
-1. Image count of the current tab / filter.
-1. Grid: columns adapt to the window width; draggable fast-scroll
-   scrollbar; jumps back to the top when the sort or filter changes.
-   Must stay smooth with 20k images.
-1. Current wallpaper per playlist (in the layout window): thumbnail, name,
-   size, dimensions, favourite / to-remove toggles, click to enlarge.
-1. Reset the shuffle cycle (start over, everything unseen again), with a
-   confirmation.
-1. Settings / about: data and config paths, version with git hash.
-   More, like the phone app's info dialog (nice to have):
-   - Data locations, each with *Open folder* / *Copy path*: the config file,
-     the state database, favourites.txt and to-remove.txt, the logs (app
-     and UI), the render and thumbnail caches (with their size on disk).
-   - Library stats per playlist: images in its directory, seen / unseen in
-     the current shuffle cycle, history length; favourites and to-remove
-     counted as "listed" vs "still exist" (a listed file may be gone).
-   - Totals across playlists, and the time the directory was last scanned.
-1. Start at login not in ui settings.
+1. Home: a click on a playlist's current image opens it enlarged (the Library's enlarged view).
+1. Start at login in the window's Settings (today only in the tray menu).
 
 ## Nice to have
 
-1. Library grid: fade in from black when a thumbnail loads (like the phone app).
 1. Sound notification when the wallpaper changes (I have this on Linux already), so I notice new images.
-   On / off per playlist (in the config and the settings panel), off by default.
+   On / off per playlist (in the settings panel), off by default.
 1. More CLI verbosity, e.g. `--debug` (debug level): each step of reaching the app
    (socket attempts, taking / waiting for / releasing the lock, timings), on top of
    `--verbose`'s summary.
-1. Low-priority CLI config helper: create a `config.toml` or edit an existing one
-   from the command line.
 1. Screenshots in the README (the settings window with monitor tiles, the library, the tray menu):
    they sell the app better than any description. Light and dark mode; keep them current when the UI changes.
 1. Virtual backend (made-up monitors, nothing set on the real desktop) for end-to-end
    tests and a demo mode, and page renders uploaded by CI (docs/plan.md, Phase 7).
 
 1. Hide detached / stale monitor entries from the Home overview, so only
-   currently connected displays appear there.
+   currently connected displays appear there (today Home draws them to the
+   right of the arrangement, dimmed and marked "off").
    Possible approaches:
    - Add a UI action to forget a detached monitor and persist the exclusion
-     in `config.toml`, so it stays hidden.
+     in the settings, so it stays hidden.
    - Investigate whether Windows exposes a last-attached time; if so, consider
      hiding entries that have been detached for more than a week.
-   - somehow it is fixed now already?
 1. Auto updates?

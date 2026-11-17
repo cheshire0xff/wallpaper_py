@@ -1,7 +1,7 @@
 """
 The Settings page's About tab: the version (with the git commit when
 run from a checkout), and where everything is kept, each location with
-*Open folder* and *Copy path* (todo.md, "Settings / about"). The
+*Open folder* and *Copy path*. The
 library's numbers are on the Library page's Stats tab.
 """
 

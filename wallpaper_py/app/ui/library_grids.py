@@ -1,5 +1,5 @@
 """
-A grid tab of the Library page (docs/plan.md, Phase 5, "Grid tabs";
+A grid tab of the Library page (docs/plan.md at 268a951, "Grid tabs";
 docs/design/library.png): its toolbar, then an `ImageGrid` with its
 `FastScroll`, or a line in place of the grid (nothing to show, or why not).
 

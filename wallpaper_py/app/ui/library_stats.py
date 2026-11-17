@@ -1,6 +1,7 @@
 """
 The Library page's Stats tab: a playlist's library in numbers, named
-as in the phone app's Information dialog (docs/plan.md, "Overview tab").
+as in the phone app's Information dialog (docs/plan.md at 268a951,
+"Stats tab").
 
     This cycle                                        6 %  ▓░░░░░
       Images    D:\\pictures\\KONACHAN, scanned 2 min ago  20,431  Rescan
