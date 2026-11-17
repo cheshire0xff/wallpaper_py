@@ -9,11 +9,13 @@ from pytestqt.qtbot import QtBot
 from wallpaper_py.app.worker import ServiceSettings, ServiceThread
 from wallpaper_py.core.backend import Backend
 
-from .fakes import FakePresence
+from .fakes import FakePresence, FakeSound
 
 
 def make_service_thread(
-    backend_factory: Callable[[], Backend], server_name: str
+    backend_factory: Callable[[], Backend],
+    server_name: str,
+    sound: FakeSound | None = None,
 ) -> ServiceThread:
     """Not started; ticks only at start and on request. Shut it down after."""
     return ServiceThread(
@@ -21,6 +23,7 @@ def make_service_thread(
             backend_factory=backend_factory,
             presence_factory=FakePresence,
             thread_scope=nullcontext,
+            play_sound=sound or FakeSound(),
             tick_period=60.0,  # only the first tick and explicit ones
             server_name=server_name,
         )

@@ -7,8 +7,6 @@
 
 ## Nice to have
 
-1. Sound notification when the wallpaper changes (I have this on Linux already), so I notice new images.
-   On / off per playlist (in the settings panel), off by default.
 1. More CLI verbosity, e.g. `--debug` (debug level): each step of reaching the app
    (socket attempts, taking / waiting for / releasing the lock, timings), on top of
    `--verbose`'s summary.

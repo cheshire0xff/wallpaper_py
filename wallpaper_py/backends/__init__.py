@@ -1,7 +1,7 @@
 """
 Pick the platform pieces for the current desktop environment: wallpaper
-backend, presence hook, autostart, the per-thread setup they need, and
-window focus between our processes.
+backend, presence hook, autostart, the per-thread setup they need, window
+focus between our processes, and playing a sound.
 """
 
 from __future__ import annotations
@@ -10,10 +10,11 @@ import os
 import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
+from pathlib import Path
 
 from wallpaper_py.core.autostart import Autostart
 from wallpaper_py.core.backend import Backend
-from wallpaper_py.core.model import UnsupportedPlatformError
+from wallpaper_py.core.model import UnsupportedPlatformError, WallpaperError
 from wallpaper_py.core.presence import NoPresence, Presence
 
 
@@ -95,6 +96,25 @@ def set_title_bar_colour(window: int, rgb: tuple[int, int, int]) -> None:
         from .windows.title_bar import set_title_bar_colour as set_colour
 
         set_colour(window, rgb)
+
+
+def play_sound(path: Path) -> None:
+    """
+    Play a WAV file and return at once (it plays on); safe on the service
+    thread.
+
+    Raises:
+        WallpaperError: the platform can't play it (e.g. no player installed).
+    """
+    if sys.platform == "win32":
+        # pylint: disable=import-outside-toplevel
+        from .windows.sound import play_sound as play
+    elif sys.platform == "linux":
+        # pylint: disable=import-outside-toplevel
+        from .pipewire import play_sound as play
+    else:
+        raise WallpaperError(f"No sound player for platform={sys.platform!r}")
+    play(path)
 
 
 def get_autostart() -> Autostart:

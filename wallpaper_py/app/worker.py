@@ -18,7 +18,9 @@ Nothing on this thread may block waiting for a client or spin a nested
 event loop. Each event (a change, a new overview, the list files' mtime or
 size moved since the last tick or command) is sent once, as the protocol's
 `Event` (`ServiceWorker._send`): to the main thread as the `sent` signal,
-and to socket subscribers (the window process) as a line.
+and to socket subscribers (the window process) as a line. With the
+`rotation_sound` setting, a tick in which a playlist rotated on its
+interval plays a short sound (`_sound`).
 
 The service stops when it can't go on (a list file went bad, see
 `_failed`); each tick then tries to open it again, so it is back once the
@@ -36,9 +38,10 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager, ExitStack
 from dataclasses import dataclass
+from pathlib import Path
 from typing import override
 
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal, Slot
@@ -72,6 +75,7 @@ from .ipc import CommandServer
 log = logging.getLogger(__name__)
 
 SLOW_S = 0.1  # seconds: a command or tick that takes longer is logged
+ROTATION_SOUND = Path(__file__).parent / "sounds" / "rotation.wav"
 
 
 @dataclass(frozen=True)
@@ -80,6 +84,8 @@ class ServiceSettings:
     presence_factory: Callable[[], Presence]
     # Per-thread platform setup around the backend's life (backends.thread_scope).
     thread_scope: Callable[[], AbstractContextManager[None]]
+    # Plays a WAV file without waiting (backends.play_sound).
+    play_sound: Callable[[Path], None]
     tick_period: float = 5.0  # seconds
     server_name: str | None = None  # the command socket (ipc.server_name); None: none
 
@@ -154,13 +160,33 @@ class ServiceWorker(QObject):
             self._open()  # down: try again (a list file may be fixed now)
         if self._service is not None:
             try:
-                for change in self._service.tick():
+                changes = self._service.tick()
+                for change in changes:
                     log.info("%s", change.describe())
                     self._announce(change)
             except Exception as err:  # pylint: disable=broad-exception-caught
                 self._failed("Tick", err)
+            else:
+                self._sound(changes)
         self._publish()
         self.ticked.emit()
+
+    def _sound(self, changes: Sequence[Change]) -> None:
+        """
+        The rotation sound, once a tick, if a playlist rotated on its
+        interval: not for a command's own change (next, pick, a new folder,
+        a removed image replaced), nor for a first image. Decided by the
+        reason, not by who ticked: a command's tick may find an interval
+        run out too.
+        """
+        assert self._service is not None
+        if not self._service.settings.rotation_sound:
+            return
+        if any(c.reason == "scheduled" for c in changes):
+            try:
+                self._settings.play_sound(ROTATION_SOUND)
+            except WallpaperError as err:
+                log.warning("Rotation sound: %s", err)
 
     def execute(self, request: CommandRequest) -> Reply:
         """Run one command: the only way in for socket, tray and windows."""

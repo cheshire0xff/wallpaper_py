@@ -171,6 +171,7 @@ def env(tmp_path: Path) -> Env:
 def test_first_tick_shows_an_image_everywhere(env: Env) -> None:
     changes = env.service.tick()
     assert {c.playlist for c in changes} == {"konachan", "fantasy"}
+    assert {c.reason for c in changes} == {"first"}  # not a rotation
     current = env.service.current(env.konachan)
     assert current is not None
     assert env.shown("AW3225QF") == env.shown("PLX2783H") == current  # mirrored
@@ -617,7 +618,7 @@ def test_held_playlist_still_replaces_a_removed_image(env: Env) -> None:
     assert change is None  # nowhere to show the next one yet
     env.backend.update("PLX2783H", rect=make_monitor("x", size=(192, 108)).rect)
     [change] = [c for c in env.service.tick() if c.playlist == "konachan"]
-    assert change.image != image and change.reason == "scheduled"
+    assert change.image != image and change.reason == "replaced"
 
 
 def test_manual_playlist_never_changes_by_itself(env: Env) -> None:
@@ -760,7 +761,7 @@ def test_a_new_folder_shows_at_once_even_when_held(env: Env) -> None:
     edit = env.settings.model_copy(update={"playlists": (env.konachan, moved)})
     env.service.save_settings(edit, env.service.revision())
     [change] = [c for c in env.service.tick() if c.playlist == "fantasy"]
-    assert change.image == new / "g1.png" and change.reason == "scheduled"
+    assert change.image == new / "g1.png" and change.reason == "folder"
     assert env.shown("ZeroMOD") == new / "g1.png"
     assert not [c for c in env.tick_for(10 * INTERVAL) if c.playlist == "fantasy"]
     assert env.service.held(env.fantasy)  # still held: only this one change

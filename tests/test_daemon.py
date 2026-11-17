@@ -32,6 +32,7 @@ from .fakes import (
     FakeAutostart,
     FakeBackend,
     FakePresence,
+    FakeSound,
     make_monitor,
     write_settings,
 )
@@ -49,6 +50,7 @@ def fixture_platform(backend: FakeBackend) -> Platform:
         presence_factory=FakePresence,
         autostart_factory=FakeAutostart,
         thread_scope=nullcontext,
+        play_sound=FakeSound(),
     )
 
 

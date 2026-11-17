@@ -106,7 +106,9 @@ class ManualPlaylistError(PlaylistError):
     """Hold / resume on a manual playlist, which never rotates anyway."""
 
 
-ChangeReason = Literal["scheduled", "next", "previous", "picked", "restored"]
+ChangeReason = Literal[  # each in docs/protocol.md, "Replies"
+    "scheduled", "first", "replaced", "folder", "restored", "next", "previous", "picked"
+]
 
 
 @dataclass(frozen=True)
@@ -368,21 +370,21 @@ class PlaylistService:
                 playlist,
                 attached,
                 lambda: self._peek_next(playlist, history=False),
-                "scheduled",
+                "folder",
             )
             if change is not None:
                 return change
             # Nothing to show in it (yet): on as before, from the history.
+        reason: ChangeReason | None = None  # None: not due
         if current is not None and not self._showable(current.path, removed):
-            due = True  # even when held: it must not stay on screen
-        elif playlist.interval is None or self.held(playlist):
-            due = False  # never rotates by itself, nor shows a first image
-        else:
-            spent = self._accrue(playlist, elapsed)
-            due = current is None or (spent is not None and spent >= playlist.interval)
-        if due:
+            reason = "replaced"  # even when held: it must not stay on screen
+        elif playlist.interval is not None and not self.held(playlist):
+            spent = self._accrue(playlist, elapsed)  # (else: never by itself)
+            if current is None or (spent is not None and spent >= playlist.interval):
+                reason = "first" if current is None else "scheduled"
+        if reason is not None:
             return self._step(
-                playlist, attached, lambda: self._peek_next(playlist), "scheduled"
+                playlist, attached, lambda: self._peek_next(playlist), reason
             )
         if current is None:  # held or manual, nothing shown yet
             return None
@@ -947,7 +949,7 @@ class PlaylistService:
             log.warning("%s: %s", playlist.name, err)
             self._broken.add(path_key(current))
             return self._step(
-                playlist, attached, lambda: self._peek_next(playlist), "scheduled"
+                playlist, attached, lambda: self._peek_next(playlist), "replaced"
             )
         now = self._clock()
         with self._store.transaction():

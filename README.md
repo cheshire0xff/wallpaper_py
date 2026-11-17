@@ -55,7 +55,9 @@ libxkbcommon fontconfig dbus xcb-util-cursor`.
 
 On KDE Plasma the app talks to Plasma through two tools that ship with it:
 `kscreen-doctor` (KScreen; Arch: `libkscreen`) and `busctl` (systemd). A
-monitor's id is its connector (`DP-4`); its name comes from its EDID.
+monitor's id is its connector (`DP-4`); its name comes from its EDID. The
+rotation sound (off by default) plays through `pw-play` (PipeWire; Ubuntu:
+`pipewire-bin`), else `paplay` (PulseAudio).
 
 ## CLI
 

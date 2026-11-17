@@ -113,6 +113,8 @@ class Settings(BaseModel):
     monitors: tuple[MonitorSettings, ...] = ()
     pause_when_locked: StrictBool = True
     pause_when_idle: Seconds | None = DEFAULT_IDLE_S  # seconds; None: never
+    # A sound when a playlist rotates on its interval (not by a command).
+    rotation_sound: StrictBool = False
     # None: in the data directory (favourites.txt, to-remove.txt).
     favourites_file: Path | None = None
     to_remove_file: Path | None = None

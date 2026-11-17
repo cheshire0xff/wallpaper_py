@@ -32,8 +32,9 @@ wallpaper = "wallpaper_py.cli:main"
 include = ["wallpaper_py*"]
 
 [tool.setuptools.package-data]
-# The app icon and bundled Lucide icons/licence (loaded with importlib.resources).
-"wallpaper_py.app" = ["icons/app-icon.png"]
+# The app icon and bundled Lucide icons/licence (loaded with importlib.resources),
+# the rotation sound (scripts/rotation_sound.py; played from its path).
+"wallpaper_py.app" = ["icons/app-icon.png", "sounds/rotation.wav"]
 "wallpaper_py.app.ui" = ["icons/*.svg", "icons/LICENSE"]
 
 [tool.mypy]

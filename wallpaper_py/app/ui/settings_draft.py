@@ -126,6 +126,7 @@ class Draft:
     monitors: tuple[MonitorSettings, ...] = ()
     pause_when_locked: bool = True
     pause_when_idle: str | None = DEFAULT_IDLE  # a duration as typed; None: never
+    rotation_sound: bool = False
     favourites_file: str = ""  # "": the default
     to_remove_file: str = ""
 
@@ -148,6 +149,7 @@ class Draft:
             monitors=settings.monitors,
             pause_when_locked=settings.pause_when_locked,
             pause_when_idle=None if idle is None else format_duration(idle),
+            rotation_sound=settings.rotation_sound,
             favourites_file=str(settings.favourites_file or ""),
             to_remove_file=str(settings.to_remove_file or ""),
         )
@@ -254,6 +256,7 @@ class Draft:
             monitors=tuple(m for m in self.monitors if m != MonitorSettings(id=m.id)),
             pause_when_locked=self.pause_when_locked,
             pause_when_idle=duration(self.pause_when_idle),
+            rotation_sound=self.rotation_sound,
             favourites_file=_list_file(self.favourites_file),
             to_remove_file=_list_file(self.to_remove_file),
         )
@@ -471,6 +474,7 @@ _PLAYLIST_FIELDS = (
 _GENERAL_FIELDS = (
     ("pausing while locked", "pause_when_locked"),
     ("the idle pause", "pause_when_idle"),
+    ("the rotation sound", "rotation_sound"),
     ("the favourites file", "favourites_file"),
     ("the to-remove file", "to_remove_file"),
 )

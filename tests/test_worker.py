@@ -7,6 +7,7 @@ command socket.
 import logging
 import threading
 import time
+import wave
 from collections.abc import Iterator
 from contextlib import nullcontext
 from pathlib import Path
@@ -17,11 +18,12 @@ from PySide6.QtNetwork import QLocalSocket
 from pytestqt.qtbot import QtBot
 
 from wallpaper_py.app import ipc
-from wallpaper_py.app.worker import ServiceSettings, ServiceThread
+from wallpaper_py.app.worker import ROTATION_SOUND, ServiceSettings, ServiceThread
 from wallpaper_py.core import paths
 from wallpaper_py.core.model import ImageMode, Look
 from wallpaper_py.core.service import Change
 from wallpaper_py.core.settings import Settings
+from wallpaper_py.core.store import Store
 from wallpaper_py.protocol import (
     ChangedEvent,
     ClientRequest,
@@ -56,6 +58,7 @@ from wallpaper_py.protocol import (
 from .fakes import (
     FakeBackend,
     FakePresence,
+    FakeSound,
     make_monitor,
     save_settings,
     settled,
@@ -98,9 +101,14 @@ def fixture_name(tmp_path: Path) -> str:
     return ipc.server_name(tmp_path)
 
 
+@pytest.fixture(name="sound")
+def fixture_sound() -> FakeSound:
+    return FakeSound()
+
+
 @pytest.fixture(name="service_thread")
 def fixture_service_thread(
-    settings: Settings, backend: FakeBackend, hold: Hold, name: str
+    settings: Settings, backend: FakeBackend, hold: Hold, name: str, sound: FakeSound
 ) -> Iterator[ServiceThread]:
     del settings  # saved before the daemon starts
 
@@ -108,7 +116,7 @@ def fixture_service_thread(
         hold()
         return backend
 
-    service_thread = make_service_thread(backend_factory, name)
+    service_thread = make_service_thread(backend_factory, name, sound)
     yield service_thread
     assert service_thread.shutdown(5_000)
 
@@ -346,7 +354,7 @@ def test_slow_commands_and_ticks_are_logged_with_their_time(
 
 def test_shutdown_before_start_is_harmless() -> None:
     service_thread = ServiceThread(
-        ServiceSettings(lambda: FakeBackend([]), FakePresence, nullcontext)
+        ServiceSettings(lambda: FakeBackend([]), FakePresence, nullcontext, FakeSound())
     )
     assert service_thread.shutdown()
 
@@ -544,3 +552,50 @@ def test_the_trays_show_window_reaches_the_window(
     assert window_open == ShowWindowResult(shown=True)
     [line] = read_lines(qtbot, window, 1)
     assert ipc.decode_event(line) == ShowPageEvent(page="settings")
+
+
+def run_out_interval(settings: Settings) -> None:
+    """As if the walls playlist's interval had all gone by: due on the next tick."""
+    [walls] = settings.playlists
+    assert walls.interval is not None
+    with Store(paths.state_db()) as store:
+        store.add_elapsed(walls.id, walls.interval)
+
+
+def test_rotation_sound_only_when_an_interval_runs_out(
+    qtbot: QtBot,
+    service_thread: ServiceThread,
+    settings: Settings,
+    sound: FakeSound,
+) -> None:
+    save_settings(settings.model_copy(update={"rotation_sound": True}))
+    start(qtbot, service_thread)  # the first image: no sound
+    submit(qtbot, service_thread, Request(command="next"))  # by hand: none
+    assert not sound.played
+
+    run_out_interval(settings)
+    with qtbot.waitSignal(service_thread.client.changed) as blocker:
+        service_thread.request_tick()
+    assert blocker.args[0].reason == "scheduled"
+    assert sound.played == [ROTATION_SOUND]
+
+
+def test_rotation_sound_is_off_by_default(
+    qtbot: QtBot,
+    service_thread: ServiceThread,
+    settings: Settings,
+    sound: FakeSound,
+) -> None:
+    start(qtbot, service_thread)
+    run_out_interval(settings)
+    with qtbot.waitSignal(service_thread.client.changed) as blocker:
+        service_thread.request_tick()
+    assert blocker.args[0].reason == "scheduled"
+    assert not sound.played
+
+
+def test_the_rotation_sound_is_bundled() -> None:
+    """A short WAV (what winsound plays), packaged with the app."""
+    with wave.open(str(ROTATION_SOUND), "rb") as sound:
+        assert sound.getsampwidth() == 2 and sound.getnchannels() == 1
+        assert 0 < sound.getnframes() / sound.getframerate() < 1.5

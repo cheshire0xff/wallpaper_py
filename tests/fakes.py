@@ -113,6 +113,16 @@ class FakeAutostart:
         self.command = None
 
 
+class FakeSound:
+    """backends.play_sound for tests: records each file instead of playing it."""
+
+    def __init__(self) -> None:
+        self.played: list[Path] = []
+
+    def __call__(self, path: Path) -> None:
+        self.played.append(path)
+
+
 class FakeClock:
     """Manual clock: `advance()` moves time on."""
 

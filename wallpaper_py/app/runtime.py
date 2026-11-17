@@ -19,6 +19,7 @@ import sys
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
+from pathlib import Path
 
 from PySide6.QtCore import QCoreApplication
 from PySide6.QtGui import QGuiApplication
@@ -64,6 +65,7 @@ class Platform:
     presence_factory: Callable[[], Presence]
     autostart_factory: Callable[[], Autostart] = backends.get_autostart
     thread_scope: Callable[[], AbstractContextManager[None]] = backends.thread_scope
+    play_sound: Callable[[Path], None] = backends.play_sound
 
 
 def run_daemon(options: DaemonOptions, platform: Platform) -> int:
@@ -89,6 +91,7 @@ def _run_locked(
             backend_factory=platform.backend_factory,
             presence_factory=platform.presence_factory,
             thread_scope=platform.thread_scope,
+            play_sound=platform.play_sound,
             tick_period=options.tick_period,
             server_name=socket_name,
         )

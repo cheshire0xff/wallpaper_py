@@ -88,8 +88,8 @@ Left:
 
 ## Phase 7: polish
 
-Nice-to-haves from [todo.md](../todo.md): sound on wallpaper change.
-Packaging/installer.
+Nice-to-haves from [todo.md](../todo.md): sound on wallpaper change (done,
+below). Packaging/installer.
 
 Library, later (left out of Phase 5):
 
@@ -106,11 +106,16 @@ Library, later (left out of Phase 5):
   view.
 - An *Unmarked only* chip on All images (neither listed).
 
-Sound on wallpaper change: a per-playlist setting (off by default), a row
-in the playlist's settings. Played by the app (it runs anyway; the UI
-process may not), on any change the playlist makes: scheduled, next / prev
-/ pick. One short bundled sound, through Qt Multimedia (`QSoundEffect`); a
-custom sound file per playlist only if missed.
+Sound on wallpaper change, done: one switch for all playlists (Settings,
+General; off by default). Only for a rotation on the interval (reason
+`scheduled`, split from `first`, `replaced` and `folder`, which are not
+rotations), never for next / prev / pick, once a tick. Played by the
+daemon (the window process may not run) through the backends: winsound on
+Windows, `pw-play` / `paplay` on Linux; not Qt Multimedia, which isn't in
+`pyside6-essentials` (it would take `pyside6-addons`). One bundled sound,
+synthesised by `scripts/rotation_sound.py`. Decided against until missed:
+a sound per playlist, a choice of sound file, running any command on a
+change.
 
 Sizes on disk of the render and thumbnail caches in About: never worked
 out on the main thread (walking a 20k-image thumbnail cache would stall

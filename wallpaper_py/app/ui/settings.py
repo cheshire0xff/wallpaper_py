@@ -22,7 +22,8 @@ again. The page never reads the database itself.
   slider while it is being chosen.
   Then one editor per playlist (settings_form.PlaylistEditor): at most one
   is open, the others show a summary.
-- *General*: pausing, and where the favourites / to-remove lists are.
+- *General*: pausing, the rotation sound, and where the favourites /
+  to-remove lists are.
 - *About*: the version and the data locations (about.py).
 
 Save and Revert work only while something changed. Problems show next to
@@ -223,6 +224,7 @@ class SettingsPage(QWidget):
         self.idle_edit = line_edit("", "Idle time before pausing", self)
         self.idle_edit.setPlaceholderText("e.g. 5m")
         self.idle_edit.setFixedWidth(theme.space(14))
+        self.sound_switch = Switch("Play a sound when a playlist rotates", self)
         self.list_edits: dict[str, QLineEdit] = {}
         self.list_buttons: dict[str, theme.TextButton] = {}
         for key, label in ((FAVOURITES, "Favourites"), (TO_REMOVE, "To remove")):
@@ -243,6 +245,7 @@ class SettingsPage(QWidget):
         self.locked_switch.toggled.connect(self._edited)
         self.idle_switch.toggled.connect(self._idle_toggled)
         self.idle_edit.textChanged.connect(self._edited)
+        self.sound_switch.toggled.connect(self._edited)
 
     def _set_up_widgets(self) -> None:
         self.monitors_view.set_heights(220, 320, 0.25)
@@ -354,6 +357,19 @@ class SettingsPage(QWidget):
         )
         layout.addSpacing(theme.space(2))
         layout.addWidget(theme.Divider(general))
+        sound = theme.heading("Sound", general)
+        sound.setContentsMargins(0, theme.space(2), 0, 0)
+        layout.addWidget(sound)
+        layout.addWidget(
+            SettingRow(
+                "On rotation",
+                "When an interval runs out; not on next, previous or pick",
+                self.sound_switch,
+                parent=general,
+            )
+        )
+        layout.addSpacing(theme.space(2))
+        layout.addWidget(theme.Divider(general))
         lists = theme.heading("Lists", general)
         lists.setContentsMargins(0, theme.space(2), 0, 0)
         layout.addWidget(lists)
@@ -458,6 +474,7 @@ class SettingsPage(QWidget):
             self.locked_switch,
             self.idle_switch,
             self.idle_edit,
+            self.sound_switch,
             *self.list_edits.values(),
         ]
         for widget in widgets:
@@ -467,6 +484,7 @@ class SettingsPage(QWidget):
         self.idle_switch.setChecked(idle is not None)
         self.idle_edit.setText(idle if idle is not None else DEFAULT_IDLE)
         self.idle_edit.setEnabled(idle is not None)
+        self.sound_switch.setChecked(draft.rotation_sound)
         self.list_edits[FAVOURITES].setText(draft.favourites_file)
         self.list_edits[TO_REMOVE].setText(draft.to_remove_file)
         for widget in widgets:
@@ -491,6 +509,7 @@ class SettingsPage(QWidget):
             playlists=tuple(e.draft() for e in self.editors.values()),
             pause_when_locked=self.locked_switch.isChecked(),
             pause_when_idle=idle,
+            rotation_sound=self.sound_switch.isChecked(),
             favourites_file=self.list_edits[FAVOURITES].text().strip(),
             to_remove_file=self.list_edits[TO_REMOVE].text().strip(),
         )

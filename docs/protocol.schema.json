@@ -43,10 +43,13 @@
         "reason": {
           "enum": [
             "scheduled",
+            "first",
+            "replaced",
+            "folder",
+            "restored",
             "next",
             "previous",
-            "picked",
-            "restored"
+            "picked"
           ],
           "title": "Reason",
           "type": "string"
@@ -1363,6 +1366,11 @@
           ],
           "default": 300.0,
           "title": "Pause When Idle"
+        },
+        "rotation_sound": {
+          "default": false,
+          "title": "Rotation Sound",
+          "type": "boolean"
         },
         "favourites_file": {
           "anyOf": [

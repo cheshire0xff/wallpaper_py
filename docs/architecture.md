@@ -114,11 +114,14 @@ core/                         pure Python, no Qt, no platform APIs
                  stats, reset_cycle
         │
 backends/                     one per platform, thin
-  __init__.py    get_backend() / get_presence() / get_autostart(), and
-                 thread_scope(): per-thread setup (COM) for the backend's thread
+  __init__.py    get_backend() / get_presence() / get_autostart(),
+                 play_sound(), and thread_scope(): per-thread setup (COM)
+                 for the backend's thread
   windows/       IDesktopWallpaper (COM) + EDID names via QueryDisplayConfig,
-                 lock / idle via user32 (presence.py), Run key (autostart.py)
+                 lock / idle via user32 (presence.py), Run key (autostart.py),
+                 the rotation sound via winsound (sound.py)
   xdg.py         XDG autostart entry (any Linux desktop)
+  pipewire.py    the rotation sound via `pw-play`, else `paplay` (any Linux)
   kde/           plasmashell's scripting over D-Bus (evaluateScript), KScreen
                  outputs, EDID names from sysfs, lock via the ScreenSaver
                  interface; through `kscreen-doctor` and `busctl` (tools.py)
