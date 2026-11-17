@@ -124,14 +124,14 @@ def read_image(path: Path, sizes: Sizes) -> Decoded:
         small = load_small(path, sizes.side)
     except ImageLoadError as err:
         cause = err.__cause__
-        return Decoded(_header_info(path, file_size), None, QImage(), str(cause or err))
+        return Decoded(header_info(path, file_size), None, QImage(), str(cause or err))
     thumbnail = small.image.copy()
     thumbnail.thumbnail(sizes.thumbnail, Image.Resampling.LANCZOS, reducing_gap=3.0)
     info = ImageInfo(small.size[0], small.size[1], file_size)
     return Decoded(info, small.image, to_qimage(thumbnail))
 
 
-def _header_info(path: Path, file_size: int) -> ImageInfo | None:
+def header_info(path: Path, file_size: int) -> ImageInfo | None:
     """The details of a file that fails to decode, if its header reads."""
     try:
         width, height = image_size(path)

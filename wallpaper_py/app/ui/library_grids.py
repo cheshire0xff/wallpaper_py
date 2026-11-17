@@ -15,7 +15,9 @@ The page gives the tab its entries, already narrowed by the chip
 them by name as you type (debounced) and sorts them; the grid then shows
 under each tile where its name matches. Back to the top when the sort or
 the filter changes (and when the page says so: the chip, another
-playlist); where it was when the same list comes again, read anew.
+playlist); where it was when the same list comes again, read anew. A
+click on a tile asks the page to open it enlarged (`open_requested`), in
+the order shown.
 """
 
 from __future__ import annotations
@@ -23,7 +25,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import override
 
-from PySide6.QtCore import QEvent, Qt, QTimer, Signal, Slot
+from PySide6.QtCore import QEvent, QModelIndex, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QAction, QIcon
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -69,6 +71,7 @@ class GridTab(QWidget):
     switched = Signal(object)  # this GridTab: narrow again, and remember
     badges_toggled = Signal(object)  # this GridTab: remember
     counted = Signal()  # count() changed
+    open_requested = Signal(object, int)  # this GridTab, the row clicked
 
     def __init__(
         self,
@@ -138,6 +141,7 @@ class GridTab(QWidget):
         self.sort_box.currentIndexChanged.connect(self._sorted)
         self.switch.toggled.connect(self._switched)
         self.badges.toggled.connect(self._badges_toggled)
+        self.grid.clicked.connect(self._clicked)
 
     def _build(self) -> None:
         toolbar = QHBoxLayout()
@@ -261,6 +265,11 @@ class GridTab(QWidget):
     def _switched(self, on: bool) -> None:
         del on
         self.switched.emit(self)
+
+    @Slot(QModelIndex)
+    def _clicked(self, index: QModelIndex) -> None:
+        if index.isValid():
+            self.open_requested.emit(self, index.row())
 
     @Slot(bool)
     def _badges_toggled(self, on: bool) -> None:

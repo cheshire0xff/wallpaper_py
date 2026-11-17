@@ -21,7 +21,8 @@ While the list is narrowed by name (`set_needle`), each tile has a caption
 at its bottom: the file name around the match, the match in bold (so you
 see why it is there). Not on a missing tile, which shows its name already.
 
-Nothing is selected: a click does nothing yet (docs/plan.md, "Grid tabs").
+Nothing is selected: a click opens the image enlarged (the grid tab's
+`open_requested`; enlarged.py), and `reveal` scrolls to it again after.
 
 The tiles come from a `TileLoader` (tiles.py): each tile painted without
 its thumbnail asks for it, and the grid tells the loader which tiles are
@@ -211,7 +212,7 @@ class TileDelegate(QStyledItemDelegate):
             painter.drawPixmap(rect, tile.pixmap, source)  # already the tile's shape
             painter.setOpacity(1.0)
         elif tile is not None:
-            _draw_name(
+            draw_name(
                 painter, rect, path.name, "Missing" if tile.missing else "Can't open"
             )
         if grid.needle and (tile is None or tile.pixmap is not None):
@@ -221,7 +222,7 @@ class TileDelegate(QStyledItemDelegate):
         painter.restore()
 
 
-def _draw_name(painter: QPainter, rect: QRectF, name: str, why: str) -> None:
+def draw_name(painter: QPainter, rect: QRectF, name: str, why: str) -> None:
     """A tile without an image: its file name, and why below it."""
     derived = theme.tones()
     metrics = QFontMetrics(painter.font())
@@ -399,6 +400,7 @@ class ImageGrid(QListView):
         self.setItemDelegate(TileDelegate(self))
         self.setModel(self.list_model)
         self.setAccessibleName("Images")
+        self.viewport().setCursor(Qt.CursorShape.PointingHandCursor)  # opens it
 
         self._wanted_timer = QTimer(self)  # once per burst of changes
         self._wanted_timer.setSingleShot(True)
@@ -465,6 +467,17 @@ class ImageGrid(QListView):
         )
         end = bisect.bisect_left(rows, True, key=lambda r: self._rect(r).top() > bottom)
         return range(first, end)
+
+    def reveal(self, row: int, path: Path) -> None:
+        """
+        Scroll to the tile of `path`: at `row` if it is still there, else
+        its first one (the list may have changed meanwhile).
+        """
+        model = self.list_model
+        if not 0 <= row < model.rowCount() or model.path(row) != path:
+            row = next((r for r, p in enumerate(model.paths()) if p == path), -1)
+        if row >= 0:
+            self.scrollTo(model.index(row), QAbstractItemView.ScrollHint.EnsureVisible)
 
     def opacity(self, path: Path) -> float:
         """A fading tile's opacity now (1: shown fully)."""

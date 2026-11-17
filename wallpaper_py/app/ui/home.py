@@ -51,7 +51,7 @@ from ...protocol import (
     TargetCommand,
     target_request,
 )
-from ...texts import members, not_rotating, rounded_duration
+from ...texts import format_size, members, not_rotating, rounded_duration
 from ..client import Client, OneAtATime, ReplyTo
 from . import theme
 from .arrangement import MonitorsView
@@ -63,16 +63,6 @@ Clock = Callable[[], float]
 
 
 # -- text ------------------------------------------------------------------------
-
-
-def format_size(size: int) -> str:
-    """Bytes for people: 980 B, 12 KB, 4.2 MB, 1.1 GB."""
-    value = float(size)
-    for unit in ("B", "KB", "MB"):
-        if value < 1000:
-            return f"{value:.0f} {unit}" if unit != "MB" else f"{value:.1f} {unit}"
-        value /= 1000
-    return f"{value:.1f} GB"
 
 
 def counting(view: PlaylistView, paused: str | None) -> bool:

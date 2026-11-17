@@ -693,9 +693,14 @@ class Button(theme.PaintedButton):
         super().__init__(text, parent)
         self.primary = primary
         self.setFont(_bold(self.font()))
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.set_label(text)
+
+    def set_label(self, text: str) -> None:
+        """A new label; the button takes its width."""
+        self.setText(text)
         width = QFontMetrics(self.font()).horizontalAdvance(text)
         self.setFixedSize(width + 2 * BUTTON_PADDING, theme.FIELD_HEIGHT)
-        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
 
     def fill(self) -> QColor:
         """The box's colour now."""

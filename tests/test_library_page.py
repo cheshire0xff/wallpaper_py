@@ -11,8 +11,11 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from PySide6.QtCore import Qt
+from PySide6.QtTest import QTest
 from pytestqt.qtbot import QtBot
 
+from wallpaper_py.app.ui.enlarged import EnlargedView
 from wallpaper_py.app.ui.library import UPCOMING, LibraryPage
 from wallpaper_py.app.ui.library_grids import GridTab
 from wallpaper_py.app.ui.tiles import Sources
@@ -110,6 +113,11 @@ def write_list(file: Path, *paths: Path) -> None:
 
 def shown(tab: GridTab) -> list[Path]:
     return tab.grid.images()
+
+
+def path_of(view: EnlargedView) -> Path | None:
+    entry = view.current()
+    return entry.path if entry else None
 
 
 @pytest.fixture(name="client")
@@ -546,6 +554,41 @@ def test_filtering_by_name_narrows_and_counts(
     assert tab.grid.needle == ""  # no captions
     tab.sort_box.setCurrentIndex(1)  # name Z–A
     assert shown(tab) == images[::-1]
+
+
+def test_a_click_on_a_tile_opens_it_enlarged_in_the_grids_order(
+    qtbot: QtBot, page: LibraryPage, client: FakeClient, tmp_path: Path
+) -> None:
+    images = generate_library(tmp_path / "konachan", 60, (64, 36))
+    write_list(tmp_path / "favourites.txt", images[20])
+    client.publish(overview("konachan", "fantasy", root=tmp_path))
+    page.show()
+    tab = page.grids["all"]
+    qtbot.waitUntil(lambda: shown(tab) == images)
+    qtbot.waitUntil(lambda: bool(tab.grid.marks.favourites))
+    tab.sort_box.setCurrentIndex(1)  # name Z–A: the view goes the same way
+    grid = tab.grid
+    first = grid.visualRect(grid.list_model.index(0)).center()
+    QTest.mouseClick(grid.viewport(), Qt.MouseButton.LeftButton, pos=first)
+    assert page.enlarged_shown()
+    view = page.enlarged
+    assert path_of(view) == images[59]
+    assert view.position.text() == "1 of 60"
+    assert view.show_combo.currentText() == "konachan"  # the page's playlist
+    assert not view.fav_button.is_on()
+    for _ in range(39):
+        QTest.keyClick(view.canvas, Qt.Key.Key_Right)
+    assert path_of(view) == images[20]
+    assert view.fav_button.is_on()  # the page's marks
+    client.failed.emit("the daemon went away")
+    assert view.banner.text() == "Error: the daemon went away"  # seen while open
+    client.publish(overview("konachan", "fantasy", root=tmp_path, error="broken"))
+    assert view.banner.text() == "Error: broken"  # the daemon's, too
+    client.publish(overview("konachan", "fantasy", root=tmp_path))
+    assert view.banner.isHidden()  # gone once fixed
+    QTest.keyClick(view.canvas, Qt.Key.Key_Escape)
+    assert not page.enlarged_shown() and grid.isVisible()
+    assert 39 in grid.visible_rows()  # scrolled to the image last shown
 
 
 def test_thumbnails_are_made_for_every_playlist_and_list(

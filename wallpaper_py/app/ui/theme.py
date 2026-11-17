@@ -19,23 +19,20 @@ it, constants and small painted widgets. Not a framework. The controls
   fields, PlaceholderText for muted text); the main window sets it, and
   everything painted here reads `tones()` when it paints, so a change of
   the system's light / dark mode re-derives everything.
-- Spacing in 8 px steps (`space`), corner radii, the control column's
-  width, field heights.
-- Icons: bundled Lucide SVGs (`icons/`, ISC licence kept with them),
-  tinted when drawn (`tinted_pixmap`, `icon`); a toggle that is on shows
-  its icon filled.
+- Spacing in 8 px steps (`space`), radii, the control column, field heights.
+- Icons: bundled Lucide SVGs (`icons/`, ISC licence kept with them), tinted
+  when drawn (`tinted_pixmap`, `icon`); a toggle that is on is filled.
 - Widgets: `ValueLabel` (a read-only value lined up with the fields),
   `IconButton` (borderless; on: accent icon on a faint accent fill),
-  `TextButton` (accent text, for secondary actions), `Tabs`
-  (sub-tabs with an accent underline), `Divider` (the thin line), `Panel`
+  `TextButton` (accent text, for secondary actions), `Tabs` (sub-tabs
+  with an accent underline), `Divider` (the thin line), `Panel`
   (the lighter panel behind images), `Banner` (a page's message), `Chip`,
   `ImageView` (an image letterboxed on the panel tone).
-- The keyboard focus: a 2 px accent ring (`draw_focus_ring`), only when
-  the focus came from the keyboard (`keyboard_focus`).
+- The keyboard focus: a 2 px accent ring (`draw_focus_ring`), if by key.
 
 No stylesheet is set anywhere. The style draws only what is still native
-(text fields, scroll bars, dialogs): Windows 11 style on Windows, Fusion
-on Linux (PySide6's own Qt can't load the system's Breeze).
+(text fields, scroll bars, dialogs): Windows 11 style on Windows, Fusion on
+Linux (PySide6's own Qt can't load the system's Breeze).
 """
 
 from __future__ import annotations
@@ -116,8 +113,11 @@ ERROR = (QColor("#ff99a4"), QColor("#c42b1c"))
 # The bundled icons: Lucide names (https://lucide.dev), files in icons/.
 ICON_NAMES = (
     "arrow-down-a-z",
+    "arrow-left",
     "check",
     "chevron-down",
+    "chevron-left",
+    "chevron-right",
     "circle-alert",
     "house",
     "images",

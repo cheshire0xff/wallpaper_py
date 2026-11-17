@@ -48,6 +48,8 @@ app/                          PySide6 (Qt only here); two processes
     library_grids.py  GridTab: a grid tab's toolbar (filter, sort, chips),
                  its grid and fast-scroll bar
     library_stats.py  StatsTab: a playlist's numbers, Rescan, Reset cycle…
+    enlarged.py  EnlargedView: one image over the page, read at full size,
+                 zoom and pan (ImageCanvas), the info card, the toggles, Show on
     entries.py   Entry (a tile: path, order, keys worked out once), the
                  readers (folder, lists, history), sorting and filtering
     grid.py      ImageGrid: a QListView of fixed-size tiles over a list model

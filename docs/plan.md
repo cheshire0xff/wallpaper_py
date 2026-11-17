@@ -16,7 +16,7 @@ thin. See [architecture.md](architecture.md) for the layers.
 | 4c | More backgrounds for Fit: dominant, blur | done |
 | 4d | Blur strength and darkening per monitor; the look stored as one value | done |
 | S | Simplification: words, protocol and plumbing, tray / CLI / window as clients | done |
-| 5 | Library page: stats, grids, enlarged view | steps 1–5 done; 6 next |
+| 5 | Library page: stats, grids, enlarged view | done |
 | 6 | KDE backend | backend done; Kubuntu and the checks by hand left |
 | 7 | Polish | |
 
@@ -292,6 +292,34 @@ Over the page (not a window of its own), on the panel tone:
   several playlists).
 - ← / → go to the image before / after in the tab's order; Esc closes.
 
+Decided while building it (step 6):
+
+- It covers the whole page, the title and tabs too: the room goes to the
+  image. Above it a bar on the page tone: back, the file name, "12 of
+  312", ‹ ›, the two toggles and *Show on*.
+- What a click hides is the info card; the bar stays (back and the toggles
+  are always there). The card is on the page tone over the image's bottom
+  left, not dark like the badges: it holds a text button in the accent.
+- The fit never enlarges a small image (its own pixels, as Gwenview
+  shows it). The wheel zooms to 5x the fit, and always as far as the
+  image's own pixels (a large image fits at under a fifth of them); a
+  double-click zooms to twice the fit, at least its own pixels.
+- It goes through the grid's images as they were when it opened (a
+  snapshot): one hidden meanwhile (listed to remove, with *Hide removed*
+  on) can still be gone back to. ← / → stop at the ends. Back on the grid,
+  it scrolls to the image last shown.
+- The tile stands in (a 16:9 crop, fitted) until the image is read: one
+  decode, no reading ahead. Measured on 12 KONACHAN images: a JPEG
+  decodes in 9–35 ms, a 16 MB PNG in ~200 ms; making the smooth copy an
+  image smaller than its own pixels is drawn from takes 2–7 ms.
+- *Show on* is one button with one playlist ("Show on konachan"); with
+  several, a drop-down beside "Show on", the page's playlist first. An
+  image listed to remove gets the daemon's error, no state of its own.
+- Back also with the mouse's back button. The second click of a
+  double-click on a tile neither zooms nor hides the card.
+- No keyboard way to open a tile: nothing is selected in the grid, so
+  there is no current tile (with *Selection*, under "Later" above).
+
 ### Controls
 
 Flat controls in the NVIDIA app's manner, in the system's accent. Today
@@ -347,7 +375,7 @@ no stylesheet.
 3. **Data for the grids** (done).
 4. **Thumbnails** (done).
 5. **Grid tabs** (done).
-6. **Enlarged view**.
+6. **Enlarged view** (done).
 
 Each step updates the docs it touches and ends with a few things to try
 by hand.

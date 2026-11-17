@@ -45,7 +45,10 @@ matters; light mode only has to stay usable.
   have an accent underline.
 - **Library** follows the same page pattern: tabs, a toolbar (filter,
   sort, *Hide removed* / *Only <playlist>*), the grid on the panel tone,
-  a slim fast-scroll bar painted in code.
+  a slim fast-scroll bar painted in code. A tile opens enlarged over the
+  whole page: the image on the panel tone under a bar on the page tone,
+  and the info card on the page tone over the image's bottom left (no
+  mockup: built from docs/plan.md, Phase 5, "Enlarged view").
 
 ## Files
 

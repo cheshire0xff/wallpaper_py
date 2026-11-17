@@ -1,7 +1,8 @@
 """
-What the tray, Home and the CLI say about a playlist or a monitor, so that
-they say it alike; made from the protocol's models. Qt-free: the CLI uses
-it. Texts only one of them shows stay where they are shown.
+What the tray, the window's pages and the CLI say about a playlist, a
+monitor or an image, so that they say it alike; made from the protocol's
+models. Qt-free: the CLI uses it. Texts only one of them shows stay where
+they are shown.
 
 Durations come two ways: core.settings.format_duration is exact (it writes
 a setting back: "1h30m15s"), `rounded_duration` is for reading at a glance
@@ -67,3 +68,13 @@ def rounded_duration(seconds: float) -> str:
         return f"{hours}h{minutes}m" if minutes else f"{hours}h"
     days, hours = divmod(hours, 24)
     return f"{days}d{hours}h" if hours else f"{days}d"
+
+
+def format_size(size: int) -> str:
+    """Bytes for people: 980 B, 12 KB, 4.2 MB, 1.1 GB."""
+    value = float(size)
+    for unit in ("B", "KB", "MB"):
+        if value < 1000:
+            return f"{value:.0f} {unit}" if unit != "MB" else f"{value:.1f} {unit}"
+        value /= 1000
+    return f"{value:.1f} GB"

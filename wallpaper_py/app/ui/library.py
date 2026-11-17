@@ -28,10 +28,16 @@ changed):
   seen count). *Rescan* asks with `rescan`; *Reset cycle…* asks first, then
   sends `reset_cycle`.
 
+A click on a tile opens it in the `EnlargedView` (enlarged.py), over the
+whole page, with the grid's images in their order to go through; the
+page keeps its marks and playlists up to date, and back on the grid
+scrolls to the image last shown.
+
 The page owns the grids' thumbnails (tiles.py): the `TileLoader` and the
 `Pregenerator`, which fills the disk cache while the window is open (the
 chosen playlist's folder first, then the others and the lists, as the
-overview names them); `shutdown()` stops their threads and the readers'.
+overview names them); `shutdown()` stops their threads and the readers'
+(the enlarged view's too).
 """
 
 from __future__ import annotations
@@ -68,6 +74,7 @@ from ...protocol import (
 )
 from ..client import Client, OneAtATime, ReplyTo
 from . import theme
+from .enlarged import EnlargedView
 from .entries import (
     Read,
     Sort,
@@ -187,6 +194,10 @@ class LibraryPage(QWidget):
         self.grids = {name: self._grid_tab(name) for name in GRIDS}
         for name in ("all", "history"):
             self.grids[name].set_switch_text("Hide removed")
+        self.browse = QWidget(self)  # the header and the tabs
+        self.enlarged = EnlargedView(client, self.tiles, self)
+        self.layers = QStackedWidget(self)  # the browse, or the enlarged view
+        self._viewing: GridTab | None = None  # the grid tab it was opened from
         self._build()
 
         index = next(
@@ -210,6 +221,8 @@ class LibraryPage(QWidget):
             grid.switched.connect(self._switched)
             grid.badges_toggled.connect(self._badges_toggled)
             grid.counted.connect(self._show_count)
+            grid.open_requested.connect(self._open_image)
+        self.enlarged.closed.connect(self._close_image)
         self.folder_read.done.connect(self._folder_read)
         self.lists_read.done.connect(self._lists_read)
         self.history_read.done.connect(self._history_read)
@@ -247,18 +260,24 @@ class LibraryPage(QWidget):
         title.addWidget(theme.title("Library", self))
         title.addWidget(self.playlist_combo)
         title.addWidget(self.count, 1)
-        header = QWidget(self)
+        header = QWidget(self.browse)
         header_layout = theme.page_layout(header)
         header_layout.setSpacing(theme.space(1.5))
         header_layout.addLayout(title)
         header_layout.addWidget(self.banner)
         header_layout.addWidget(self.tabs)
 
+        browse = QVBoxLayout(self.browse)
+        browse.setContentsMargins(0, 0, 0, 0)
+        browse.setSpacing(0)
+        browse.addWidget(header)
+        browse.addWidget(self.stack, 1)
+        self.layers.addWidget(self.browse)
+        self.layers.addWidget(self.enlarged)
+
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
-        outer.addWidget(header)
-        outer.addWidget(self.stack, 1)
+        outer.addWidget(self.layers)
 
     # -- what is shown -------------------------------------------------------------
 
@@ -354,6 +373,7 @@ class LibraryPage(QWidget):
 
     def shutdown(self) -> None:
         """The window closes: stop the threads (waits for them)."""
+        self.enlarged.shutdown()
         self.pregenerator.close()
         self.tiles.close()
         for reader in (self.folder_read, self.lists_read, self.history_read):
@@ -367,8 +387,16 @@ class LibraryPage(QWidget):
         self._overview = overview
         # Saved settings, not only a new image: History and Upcoming may differ.
         settled = before is not None and _playlists(before) == _playlists(overview)
-        self.banner.set_message(f"Error: {overview.error}" if overview.error else None)
-        self._fill_playlists([(p.id, p.name) for p in overview.playlists])
+        error = f"Error: {overview.error}" if overview.error else None
+        self.banner.set_message(error)
+        # The enlarged view's too, but cleared there only if it says the last
+        # error: else it says what was just done there.
+        was = f"Error: {before.error}" if before is not None and before.error else None
+        if error or (was is not None and self.enlarged.banner.text() == was):
+            self.enlarged.banner.set_message(error)
+        playlists = [(p.id, p.name) for p in overview.playlists]
+        self._fill_playlists(playlists)
+        self.enlarged.set_playlists(playlists)
         self._name_switches()
         if not overview.playlists:
             self.stats_tab.show_message(None if overview.error else NO_PLAYLISTS)
@@ -410,6 +438,7 @@ class LibraryPage(QWidget):
     @Slot(str)
     def show_error(self, message: str) -> None:
         self.banner.set_message(f"Error: {message}")
+        self.enlarged.banner.set_message(f"Error: {message}")  # if it is open
 
     # -- the grid tabs -------------------------------------------------------------
 
@@ -557,6 +586,7 @@ class LibraryPage(QWidget):
         )
         for grid in self.grids.values():
             grid.grid.set_marks(marks)
+        self.enlarged.set_marks(marks if lists is not None else None)
 
     @Slot(object)
     def _sort_changed(self, grid: GridTab) -> None:
@@ -576,6 +606,26 @@ class LibraryPage(QWidget):
     def _badges_toggled(self, grid: GridTab) -> None:
         badges = {**self.state.library_badges, grid.name: grid.badges_shown()}
         self._remember(library_badges=badges)
+
+    @Slot(object, int)
+    def _open_image(self, tab: GridTab, row: int) -> None:
+        """A tile was clicked: it enlarged, with the grid's images to go through."""
+        self._viewing = tab
+        self.layers.setCurrentWidget(self.enlarged)  # first: its size, the focus
+        self.enlarged.open_entries(tab.grid.list_model.entries(), row, self.playlist())
+
+    @Slot()
+    def _close_image(self) -> None:
+        """Back to the grid, scrolled to the image last shown."""
+        self.layers.setCurrentWidget(self.browse)
+        tab, entry = self._viewing, self.enlarged.current()
+        self._viewing = None
+        if tab is not None and entry is not None:
+            tab.grid.reveal(self.enlarged.row(), entry.path)
+            tab.grid.setFocus()
+
+    def enlarged_shown(self) -> bool:
+        return self.layers.currentWidget() is self.enlarged
 
     def _pregenerate(self) -> None:
         """
