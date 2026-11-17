@@ -42,7 +42,7 @@ app/                          PySide6 (Qt only here); two processes
     window.py    MainWindow: the sidebar (NavButton per page, the daemon's status)
                  and the pages; asks before closing with unsaved settings
     home.py      Home: the monitors on a panel, then a row per playlist
-    library.py   Library: a playlist drop-down, the count, the tabs; reads
+    library.py   Library: the count and a playlist drop-down, the tabs; reads
                  what each grid tab shows (or asks `upcoming`), asks `stats`
                  and `reset_cycle`; owns the grids' thumbnails
     library_grids.py  GridTab: a grid tab's toolbar (filter, sort, chips),
@@ -77,6 +77,7 @@ app/                          PySide6 (Qt only here); two processes
     theme.py     the shared look: tones derived from the palette, spacing,
                  tinted icons, the focus ring, painted widgets (IconButton,
                  TextButton, Tabs, Divider, Panel, Banner, Chip, ImageView)
+    header.py    PageHeader: a page's header band, its title and its controls
     controls.py  the controls painted in code: FieldCombo (drop-down and its
                  list), Segments, Switch, FilterChip, Button, Slider
     icons/       bundled Lucide SVGs (ISC licence alongside), package data
@@ -238,6 +239,12 @@ one decode into two. The grids' `TileLoader` reads tiles from a disk cache
 scrolled away, within a memory budget (no setting). A tile is the image
 filling it, cropped as Fill shows it, so every tile looks alike (the
 user's choice, as in the phone app).
+
+**The enlarged view shows no thumbnail while it reads.** A tile is a
+blurry 16:9 crop: drawn while the image decodes, it flashes low-res and
+then jumps to the image's own shape. Most images decode in a few tens of
+ms anyway, so the image before stays a moment instead (`HOLD`, enlarged.py)
+and a slow file shows the panel.
 
 **Previews are virtual monitors.** `MonitorsView` renders each monitor's
 image with the app's own renderer (`imaging.render`), for the monitor's

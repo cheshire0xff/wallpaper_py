@@ -140,10 +140,16 @@ class FieldCombo(QComboBox):
         super().__init__(parent)
         self._keyboard_focus = False
         self._open = False
+        self._flat = False
         self.setAttribute(Qt.WidgetAttribute.WA_Hover)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFixedHeight(theme.FIELD_HEIGHT)
         self.entry_list = _EntryList(self)
+
+    def set_flat(self, flat: bool) -> None:
+        """No fill but under the pointer or open (on a page's header band)."""
+        self._flat = flat
+        self.update()
 
     def is_open(self) -> bool:
         return self._open
@@ -198,7 +204,10 @@ class FieldCombo(QComboBox):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         enabled = self.isEnabled()
         lit = enabled and (self.underMouse() or self._open)
-        fill = tones.field_hover if lit else tones.field
+        if self._flat:
+            fill = tones.hover if lit else QColor(Qt.GlobalColor.transparent)
+        else:
+            fill = tones.field_hover if lit else tones.field
         _paint_box(painter, QRectF(self.rect()), fill, self.shows_focus())
         if not enabled:
             ink = tones.disabled

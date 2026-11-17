@@ -2,9 +2,10 @@
 The Library page: what a playlist picks up, as images and in numbers
 (docs/plan.md at 268a951, Phase 5).
 
-The title, a playlist drop-down and the open tab's count ("· 20,431 images
-· 1,204 seen"; "312 of 20,431" while filtered by name; the seen count, the
-daemon's, on every tab), then the tabs: All images, Favourites, To remove,
+The header band: the title, and on its right the open tab's count
+("20,431 images · 1,204 seen"; "312 of 20,431" while filtered by name; the
+seen count, the daemon's, on every tab) and a playlist drop-down; then the
+tabs: All images, Favourites, To remove,
 History, Upcoming (each a `GridTab`, library_grids.py) and Stats
 (`StatsTab`, library_stats.py). The drop-down picks the playlist for every
 tab but Favourites and To remove, which show the whole list (with *Only
@@ -50,7 +51,7 @@ from typing import override
 from PySide6.QtCore import Slot
 from PySide6.QtGui import QShowEvent
 from PySide6.QtWidgets import (
-    QHBoxLayout,
+    QComboBox,
     QMessageBox,
     QStackedWidget,
     QVBoxLayout,
@@ -74,6 +75,7 @@ from ...protocol import (
 )
 from ..client import Client, OneAtATime, ReplyTo
 from . import theme
+from .header import PageHeader
 from .enlarged import EnlargedView
 from .entries import (
     Read,
@@ -172,7 +174,11 @@ class LibraryPage(QWidget):
         self._upcoming: tuple[PlaylistId, Read] | None = None
 
         self.playlist_combo = combo(self, "Playlist")
-        self.playlist_combo.setFixedWidth(COMBO_WIDTH)
+        self.playlist_combo.set_flat(True)  # on the header band
+        self.playlist_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToContents
+        )
+        self.playlist_combo.setMaximumWidth(COMBO_WIDTH)
         self.playlist_combo.setFont(
             theme.scaled_font(self.playlist_combo.font(), theme.CONTROL_TEXT)
         )
@@ -198,7 +204,7 @@ class LibraryPage(QWidget):
         for name in ("all", "history"):
             self.grids[name].set_switch_text("Hide removed")
         self.browse = QWidget(self)  # the header and the tabs
-        self.enlarged = EnlargedView(client, self.tiles, self)
+        self.enlarged = EnlargedView(client, self)
         self.layers = QStackedWidget(self)  # the browse, or the enlarged view
         self._viewing: GridTab | None = None  # the grid tab it was opened from
         self._build()
@@ -258,21 +264,19 @@ class LibraryPage(QWidget):
             self.stack.addWidget(self.grids[name])
         self.stack.addWidget(theme.scrolling(self.stats_tab, self))
 
-        title = QHBoxLayout()
-        title.setSpacing(theme.space(2))
-        title.addWidget(theme.title("Library", self))
-        title.addWidget(self.playlist_combo)
-        title.addWidget(self.count, 1)
+        band = PageHeader("Library", self.browse)
+        band.add(self.count)
+        band.add(self.playlist_combo)
         header = QWidget(self.browse)
-        header_layout = theme.page_layout(header)
+        header_layout = theme.page_layout(header, top=theme.space(1.5))
         header_layout.setSpacing(theme.space(1.5))
-        header_layout.addLayout(title)
         header_layout.addWidget(self.banner)
         header_layout.addWidget(self.tabs)
 
         browse = QVBoxLayout(self.browse)
         browse.setContentsMargins(0, 0, 0, 0)
         browse.setSpacing(0)
+        browse.addWidget(band)
         browse.addWidget(header)
         browse.addWidget(self.stack, 1)
         self.layers.addWidget(self.browse)
@@ -713,7 +717,7 @@ class LibraryPage(QWidget):
                     parts.append(images_text(of, more=more))
         if self.stats is not None:
             parts.append(f"{count(self.stats.playlists[0].seen)} seen")
-        self.count.setText("".join(f"· {p} " for p in parts).strip())
+        self.count.setText(" · ".join(parts))
 
     @Slot()
     def _rescan_clicked(self) -> None:

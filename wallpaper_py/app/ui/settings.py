@@ -64,6 +64,7 @@ from ...protocol import (
 )
 from ..client import Client, ReplyTo
 from . import theme
+from .header import PageHeader
 from .about import AboutPage, OpenUrl, data_locations, version_text
 from .arrangement import MonitorsView
 from .controls import Button, Switch
@@ -259,9 +260,7 @@ class SettingsPage(QWidget):
             self.stack.addWidget(tab)
 
         header = QWidget(self)
-        header_layout = theme.page_layout(header)
-        header_layout.setSpacing(theme.space(1.5))
-        header_layout.addWidget(theme.title("Settings", header))
+        header_layout = theme.page_layout(header, top=theme.space(1.5))
         header_layout.addWidget(self.tabs)
         banner = QHBoxLayout()
         margin = theme.PAGE_MARGIN
@@ -280,6 +279,7 @@ class SettingsPage(QWidget):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
+        outer.addWidget(PageHeader("Settings", self))
         outer.addWidget(header)
         outer.addLayout(banner)
         outer.addWidget(self.stack, 1)

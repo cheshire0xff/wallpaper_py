@@ -107,9 +107,9 @@ def at_ratio_2(widget: QWidget) -> QImage:
 
 def test_the_controls_tones_are_the_mockups(dark: theme.Tones) -> None:
     """docs/design/controls.dc.html's dark tones, from Windows 11's palette."""
-    assert same(dark.outline, QColor("#383838"), 1)  # a segment's edge
-    assert same(dark.track, QColor("#484848"), 1)
-    assert same(dark.switch_off, QColor("#444444"), 1)
+    assert same(dark.outline, QColor("#2b2b2b"), 1)  # a segment's edge
+    assert same(dark.track, QColor("#3c3c3c"), 1)
+    assert same(dark.switch_off, QColor("#373737"), 1)
     assert dark.field_hover.lightness() > dark.field.lightness()
     assert dark.popup.lightness() > dark.page.lightness()
     assert dark.accent_hover.lightness() > dark.accent.lightness()

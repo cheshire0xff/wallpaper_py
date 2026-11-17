@@ -289,7 +289,7 @@ def test_shows_a_shuffle_cycle(stats_page: LibraryPage, client: FakeClient) -> N
     assert tab.favourites.text() == "312 listed · 298 available · 120 here"
     assert tab.to_remove.text() == "60 listed · 48 available · 48 here"
     assert tab.to_remove_row.description.text() == "to-remove.txt"
-    assert page.count.text() == "· 20,431 images · 1,204 seen"
+    assert page.count.text() == "20,431 images · 1,204 seen"
 
 
 def test_shows_a_sorted_walk(stats_page: LibraryPage, client: FakeClient) -> None:
@@ -520,7 +520,7 @@ def test_hide_removed_leaves_out_what_to_remove_lists(
     tab = page.grids["all"]
     kept = [images[0], *images[2:]]
     qtbot.waitUntil(lambda: shown(tab) == kept)
-    assert page.count.text() == "· 3 images"
+    assert page.count.text() == "3 images"
     tab.switch.click()  # off: every image, the removed one marked
     assert shown(tab) == images
     assert tab.grid.marks.to_remove == {path_key(images[1])}
@@ -539,11 +539,11 @@ def test_filtering_by_name_narrows_and_counts(
     answer(client, StatsRequest, stats_of())
     tab = page.grids["all"]
     qtbot.waitUntil(lambda: len(shown(tab)) == 12)
-    assert page.count.text() == "· 12 images · 1,204 seen"
+    assert page.count.text() == "12 images · 1,204 seen"
     tab.filter.setText(images[10].stem.upper())
-    assert page.count.text() == "· 12 images · 1,204 seen"  # not narrowed yet
+    assert page.count.text() == "12 images · 1,204 seen"  # not narrowed yet
     qtbot.waitUntil(lambda: shown(tab) == [images[10]])  # after a pause
-    assert page.count.text() == "· 1 of 12 · 1,204 seen"
+    assert page.count.text() == "1 of 12 · 1,204 seen"
     assert tab.grid.needle == images[10].stem.upper()  # the tiles' captions
     tab.filter.setText("no such name")
     qtbot.waitUntil(lambda: not shown(tab))
@@ -657,7 +657,7 @@ def test_an_empty_list_says_so(
     page.show()
     tab = page.grids["favourites"]
     qtbot.waitUntil(lambda: tab.message.text() == "No favourites.")
-    assert page.count.text() == "· 0 images"
+    assert page.count.text() == "0 images"
 
 
 # -- History and Upcoming ----------------------------------------------------------

@@ -84,6 +84,19 @@ def allow_foreground() -> None:
         allow()
 
 
+def set_title_bar_colour(window: int, rgb: tuple[int, int, int]) -> None:
+    """
+    Paint a window's title bar (`window`: its native id) in `rgb`, where the
+    system lets an app do that: Windows 11. Elsewhere (KDE: the window
+    manager's, in the colour scheme) nothing.
+    """
+    if sys.platform == "win32":
+        # pylint: disable=import-outside-toplevel
+        from .windows.title_bar import set_title_bar_colour as set_colour
+
+        set_colour(window, rgb)
+
+
 def get_autostart() -> Autostart:
     if sys.platform == "win32":
         # pylint: disable=import-outside-toplevel

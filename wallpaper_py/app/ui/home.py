@@ -54,6 +54,7 @@ from ...protocol import (
 from ...texts import format_size, members, not_rotating, rounded_duration
 from ..client import Client, OneAtATime, ReplyTo
 from . import theme
+from .header import PageHeader
 from .arrangement import MonitorsView
 from .thumbnails import ROW_THUMBNAIL, ImageInfo, Thumbnail, ThumbnailLoader
 
@@ -480,8 +481,9 @@ class HomePage(QWidget):
         panel_layout.addWidget(self.monitors_view)
 
         content = QWidget(self)
-        layout = theme.page_layout(content, bottom=theme.PAGE_MARGIN)
-        layout.addWidget(theme.title("Home", content))
+        layout = theme.page_layout(
+            content, top=theme.space(2.5), bottom=theme.PAGE_MARGIN
+        )
         layout.addWidget(self.banner)
         layout.addWidget(panel)
         layout.addSpacing(theme.space())
@@ -504,6 +506,8 @@ class HomePage(QWidget):
         self._scroll.setWidget(content)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        outer.addWidget(PageHeader("Home", self))
         outer.addWidget(self._scroll)
 
     # -- from the daemon ------------------------------------------------------------
