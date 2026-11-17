@@ -26,6 +26,7 @@ uv sync                                      # environment
 uv run python scripts/check.py               # black --check, mypy, pylint, pytest (as CI)
 uv run python scripts/check.py black         # format
 uv run python scripts/protocol_schema.py     # after changing protocol.py
+uv run python scripts/screenshots.py         # the README's, after changing the window's look
 ```
 
 CI runs the checks on Windows and Ubuntu; keep both green. Tests marked
