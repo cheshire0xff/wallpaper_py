@@ -21,7 +21,8 @@ own. Renders are cached by image, look and size, kept while drawn.
 
 Monitors sharing a name (two of one model) are told apart by a number
 counted left to right instead of the resolution: "1 of 2 · konachan"
-(`twins`). No outlines, except on hover:
+(`twins`). Each monitor has a thin grey edge, so a dark wallpaper (or
+Fit's black bars) doesn't melt into the panel. The accent only on hover:
 pointing at a monitor (`hovered`) or at a playlist's card highlights that
 playlist's monitors in the accent (`set_highlight`), so the accent only
 ever means "what you point at" or, on the Settings page, "what you are
@@ -68,6 +69,7 @@ MAX_HEIGHT = 400
 HEIGHT_RATIO = 0.3  # of the width
 INSET = 3  # px between neighbouring monitors, so they read as separate
 HIGHLIGHT_WIDTH = 2  # px, the hover outline
+EDGE_WIDTH = 1  # px, a monitor's edge
 SELECTED_GAP = 3  # px between a selected monitor and its outline
 
 
@@ -474,7 +476,7 @@ class MonitorsView(QWidget):
         pixmap: QPixmap | None,
         outline: QColor | None,
     ) -> None:
-        """The fill marks the edge; an outline only when highlighted (hover)."""
+        """The preview in a grey edge; the accent's instead when highlighted."""
         box = item.box
         rect = QRectF(box.x, box.y, box.width, box.height).adjusted(
             INSET, INSET, -INSET, -INSET
@@ -493,10 +495,14 @@ class MonitorsView(QWidget):
             painter.drawText(rect, int(Qt.AlignmentFlag.AlignCenter), "off")
         if outline is not None:
             painter.setOpacity(1.0)
-            painter.setPen(QPen(outline, HIGHLIGHT_WIDTH))
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            half = HIGHLIGHT_WIDTH / 2
-            painter.drawRect(rect.adjusted(half, half, -half, -half))
+            pen = QPen(outline, HIGHLIGHT_WIDTH)
+        else:
+            pen = QPen(tones.panel_edge, EDGE_WIDTH)
+        pen.setJoinStyle(Qt.PenJoinStyle.MiterJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        half = pen.widthF() / 2
+        painter.drawRect(rect.adjusted(half, half, -half, -half))
         painter.restore()
 
     @staticmethod

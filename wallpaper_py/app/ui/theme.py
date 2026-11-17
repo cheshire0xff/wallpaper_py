@@ -212,6 +212,7 @@ class Tones:
     panel_muted: QColor
     panel_accent: QColor  # readable on the panel
     panel_line: QColor  # a divider on the panel
+    panel_edge: QColor  # a monitor's edge in the drawing
     ok: QColor
     error: QColor
 
@@ -265,6 +266,7 @@ def derive_tones(palette: QPalette) -> Tones:
         panel_muted=panel_muted,
         panel_accent=accent,
         panel_line=mix(panel, panel_text, 0.09),
+        panel_edge=mix(panel, panel_text, 0.22),
         ok=OK[0] if dark else OK[1],
         error=ERROR[0] if dark else ERROR[1],
     )
