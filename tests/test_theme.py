@@ -91,12 +91,14 @@ def fixture_app_palette() -> Iterator[Callable[[QPalette], None]]:
 def test_dark_tones() -> None:
     tones = theme.derive_tones(DARK)
     assert tones.dark
-    # The page a shade darker than the palette's window; the sidebar's edge,
-    # the panels behind images and the fields lighter than the page.
-    assert tones.page.name() == "#1a1a1a"
-    assert tones.line.name() == "#2f2f2f"
-    assert tones.panel.name() == "#232323"
-    assert tones.field.name() == "#2a2a2a"
+    # The page near black (a third of the palette's window); the header
+    # band, the sidebar's edge, the panels behind images and the fields
+    # lighter than the page.
+    assert tones.page.name() == "#0b0b0b"
+    assert tones.header.name() == "#1c1c1c"
+    assert tones.line.name() == "#212121"
+    assert tones.panel.name() == "#151515"
+    assert tones.field.name() == "#1c1c1c"
     page = tones.page.lightness()
     assert page < tones.panel.lightness() < tones.field.lightness()
     assert tones.panel_text == tones.text
@@ -125,7 +127,7 @@ def test_tones_follow_the_application_palette(
     app_palette: Callable[[QPalette], None],
 ) -> None:
     app_palette(DARK)
-    assert theme.tones().dark and theme.tones().page.name() == "#1a1a1a"
+    assert theme.tones().dark and theme.tones().page.name() == "#0b0b0b"
     app_palette(LIGHT)
     assert not theme.tones().dark
 

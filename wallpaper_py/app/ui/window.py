@@ -23,6 +23,7 @@ from PySide6.QtCore import QEvent, QRectF, Qt, Signal, Slot
 from PySide6.QtGui import (
     QCloseEvent,
     QFont,
+    QGuiApplication,
     QPainter,
     QPaintEvent,
 )
@@ -36,6 +37,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ...backends import set_title_bar_colour
 from ...protocol import Overview, PageName
 from ..client import Client
 from . import theme
@@ -249,7 +251,6 @@ class MainWindow(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        layout.addWidget(theme.Divider(self))  # under the title area
         layout.addLayout(body, 1)
 
         self.setAutoFillBackground(True)
@@ -308,6 +309,11 @@ class MainWindow(QWidget):
             return
         self._applied = derived
         self.setPalette(theme.window_palette(derived))
+        if QGuiApplication.platformName() == "windows":  # not offscreen (tests)
+            page = derived.page
+            set_title_bar_colour(
+                int(self.winId()), (page.red(), page.green(), page.blue())
+            )
         self.update()
 
     def applied_tones(self) -> theme.Tones | None:

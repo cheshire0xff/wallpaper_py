@@ -23,11 +23,17 @@ usable.
 - **One window with a sidebar**: *Home*, *Library*, *Settings*, each a
   Lucide icon and a label; the selected page has an accent bar on its left
   edge, a faint accent fill and a bold label; the app's status ("Rotation
-  active" / paused / error) at the bottom. The title bar is the OS's own.
-- **Dark tones**: the sidebar is the page's colour, set apart only by a
-  thin lighter line; the page is a shade darker than Qt's default dark
-  window; panels behind images are a little lighter than the page, not a
-  dark well.
+  active" / paused / error) at the bottom. The title bar is the OS's own,
+  painted in the page's colour where the system lets an app (Windows 11),
+  with no line under it: the page runs up into it, as in Windows' Photos.
+- **A header band on each page**, as in the NVIDIA app: one solid tone a
+  little lighter than the page, 64 px, the page's title on the left and
+  its own controls on the right (Library: the count and a flat playlist
+  drop-down); the tabs below it.
+- **Dark tones**: near black, as in Windows' Photos (the palette's window
+  a third as light); the sidebar is the page's colour, set apart only by a
+  thin lighter line; panels behind images are a little lighter than the
+  page, not a dark well.
 - **Icons**: a small bundled set of Lucide SVGs (ISC licence, kept with
   them), tinted from the palette. Not `QIcon.fromTheme`: Windows has no
   theme icons, and mixing sources looks inconsistent.

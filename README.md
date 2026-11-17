@@ -183,7 +183,7 @@ and accent. It logs to `ui.log` next to `wallpaper.log`.
   their field and keep *Save* off. Unsaved changes stay while you visit
   other pages; closing the window with them asks first.
 - **Library** (`wallpaper ui library`, tray *Library*): a playlist's
-  images as thumbnails, in tabs: *All images* (its folder), *Favourites*,
+  images (picked at the top right) as thumbnails, in tabs: *All images* (its folder), *Favourites*,
   *To remove*, *History*, *Upcoming*, and *Stats* (images, seen and unseen
   in this shuffle cycle, skipped; the lists; *Rescan* and *Reset
   cycle…*). Each grid filters by name and sorts; badges mark favourites,

@@ -5,11 +5,12 @@ painted widgets. Not a framework. The controls (drop-down, segmented
 choice, switch, buttons, slider) are controls.py's.
 
 - **Tones** (`derive_tones`, `tones`): derived from the application's
-  `QPalette`, never hard-coded per OS. In dark mode the page is a shade
-  darker than the palette's Window colour; the sidebar is the same colour,
-  set apart only by a thin lighter `line`; image panels are a little
-  lighter than the page. Light mode keeps the palette's Window colour; the
-  panel behind images is a silver grey a step darker than the page, with
+  `QPalette`, never hard-coded per OS. In dark mode the page is near
+  black (the palette's Window colour a third as light); the sidebar is the
+  same colour, set apart only by a thin lighter `line`; a page's `header`
+  band and image panels are a little lighter than the page. Light mode
+  keeps the palette's Window colour; the panel behind images is a silver
+  grey a step darker than the page, with
   the palette's (dark) text on it (wallpapers look washed out on white;
   the old near-black panel was too stark). The
   accent is the palette's Accent on Windows and its Highlight elsewhere
@@ -188,7 +189,8 @@ class Tones:
     # pylint: disable=too-many-instance-attributes
     dark: bool
     page: QColor  # the page and the sidebar
-    line: QColor  # the sidebar's edge, under the title area, dividers
+    header: QColor  # a page's header band
+    line: QColor  # the sidebar's edge, dividers
     text: QColor
     muted: QColor  # descriptions, details
     field: QColor  # borderless filled fields and plain buttons
@@ -223,7 +225,7 @@ def derive_tones(palette: QPalette) -> Tones:
     window = palette.color(group, QPalette.ColorRole.Window)
     text = palette.color(group, QPalette.ColorRole.WindowText)
     dark = window.lightnessF() < 0.5
-    page = window.darker(122) if dark else QColor(window)
+    page = window.darker(300) if dark else QColor(window)
     accent = readable_accent(palette.color(group, ACCENT_ROLE), dark)
     soft = mix(text, page, 0.24)
     if dark:
@@ -242,6 +244,7 @@ def derive_tones(palette: QPalette) -> Tones:
     return Tones(
         dark=dark,
         page=page,
+        header=mix(page, text, 0.07 if dark else 0.04),
         line=mix(page, text, 0.09),
         text=QColor(text),
         muted=soft,
@@ -324,14 +327,6 @@ def scaled_font(base: QFont, scale: float = 1.0, bold: bool = False) -> QFont:
     font = QFont(base)
     font.setPointSizeF(font.pointSizeF() * scale)
     return with_weight(font, QFont.Weight.DemiBold) if bold else font
-
-
-def title(text: str, parent: QWidget | None = None) -> QLabel:
-    """A page's title ("Home", "Settings")."""
-    label = QLabel(text, parent)
-    label.setFont(scaled_font(label.font(), 1.55, bold=True))
-    label.setAccessibleName(text)
-    return label
 
 
 def heading(text: str, parent: QWidget | None = None) -> QLabel:
