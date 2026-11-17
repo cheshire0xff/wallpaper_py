@@ -14,11 +14,13 @@ KDE by hand on Kubuntu, then polish.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/home-dark.webp">
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/home-light.webp">
   <img alt="Home: the monitors as they are arranged, each with its wallpaper, and a row per playlist with previous / next, favourite, remove and hold" src="docs/images/home-light.webp">
 </picture>
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/library-dark.webp">
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/library-light.webp">
   <img alt="Library: a playlist's folder as a grid of thumbnails, with a filter, the sort, Hide removed and badges" src="docs/images/library-light.webp">
 </picture>
 
@@ -26,6 +28,7 @@ KDE by hand on Kubuntu, then polish.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/settings-dark.webp">
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/settings-light.webp">
   <img alt="Settings: the monitors drawn as arranged; the selected one's playlist and mode" src="docs/images/settings-light.webp">
 </picture>
 
