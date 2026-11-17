@@ -371,8 +371,8 @@ def test_chip(host: Callable[[QWidget], QWidget], dark: theme.Tones) -> None:
     assert toggled == [True, False]
     assert chip.width() == width
     assert same(shot(chip).pixelColor(chip.width() // 2, 1), dark.accent)  # ring
-    chip.set_label("Only a playlist with a long name")
-    assert chip.accessibleName() == "Only a playlist with a long name"
+    chip.set_label("Only a long playlist")  # fits: no tooltip
+    assert chip.accessibleName() == "Only a long playlist"
     assert chip.width() > width and not chip.toolTip()
     long = "Only " + "a very long playlist name " * 4
     chip.set_label(long)  # elided: the whole of it in the tooltip
