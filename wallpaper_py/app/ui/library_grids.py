@@ -120,6 +120,8 @@ class GridTab(QWidget):
         self.badges_label = QLabel("Badges", self)
         self.badges = Switch("Badges", self)
         self.badges.setChecked(badges)
+        for widget in (self.filter, self.sort_box, self.switch, self.badges_label):
+            widget.setFont(theme.scaled_font(widget.font(), theme.CONTROL_TEXT))
 
         self.grid = ImageGrid(loader, self)
         self.grid.set_badges(badges)

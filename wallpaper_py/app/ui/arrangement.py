@@ -62,7 +62,7 @@ from .thumbnails import PREVIEW_SIDE, to_qimage
 DEFAULT_SIZE = (1920, 1080)  # for a detached monitor never seen attached
 DETACHED_GAP = 0.15  # between the arrangement and detached ones, x its height
 MARGIN = theme.space(2)
-LABEL_HEIGHT = 40  # two lines under each monitor
+LABEL_HEIGHT = 46  # two lines under each monitor
 MIN_HEIGHT = 220
 MAX_HEIGHT = 400
 HEIGHT_RATIO = 0.3  # of the width
@@ -523,7 +523,7 @@ class MonitorsView(QWidget):
         painter.save()
         if not item.attached:
             painter.setOpacity(0.6)
-        painter.setFont(theme.scaled_font(self.font(), 0.93, bold=True))
+        painter.setFont(theme.scaled_font(self.font(), 1.0, bold=True))
         painter.setPen(tones.panel_text)
         flags = int(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
         metrics = painter.fontMetrics()
@@ -532,7 +532,7 @@ class MonitorsView(QWidget):
             flags,
             metrics.elidedText(name, Qt.TextElideMode.ElideRight, int(rect.width())),
         )
-        painter.setFont(theme.scaled_font(self.font(), 0.86))
+        painter.setFont(theme.scaled_font(self.font(), 0.93))
         painter.setPen(tones.panel_muted)
         rect.setTop(rect.top() + metrics.height())
         metrics = painter.fontMetrics()

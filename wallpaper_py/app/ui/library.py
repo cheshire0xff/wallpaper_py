@@ -173,6 +173,9 @@ class LibraryPage(QWidget):
 
         self.playlist_combo = combo(self, "Playlist")
         self.playlist_combo.setFixedWidth(COMBO_WIDTH)
+        self.playlist_combo.setFont(
+            theme.scaled_font(self.playlist_combo.font(), theme.CONTROL_TEXT)
+        )
         self.count = theme.muted("", self)
         self.banner = theme.Banner(self)
         self.tabs = theme.Tabs(self)

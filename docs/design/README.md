@@ -31,8 +31,13 @@ usable.
 - **Icons**: a small bundled set of Lucide SVGs (ISC licence, kept with
   them), tinted from the palette. Not `QIcon.fromTheme`: Windows has no
   theme icons, and mixing sources looks inconsistent.
-- **Text**: at least 10.5 pt (Windows 11's body text is 14 px; Qt's
-  default there is 9 pt), so a larger system font is kept.
+- **Text**: Segoe UI Variable on Windows (Windows 11's own; Segoe UI
+  has no Medium), the system's font elsewhere. Content sized as in the
+  NVIDIA app: a setting's name as large as the tabs, in Medium; muted
+  text at body size; a control's text a little larger (`CONTROL_TEXT`,
+  also Home's file names); fields 40 px tall. Body text at least 10.5 pt
+  (Windows 11's is 14 px; Qt's default there is 9 pt), so a larger system
+  font is kept.
 - **The accent means "what you point at"**: hovering a playlist row
   outlines its monitors; a toggle that is on is the accent icon on a faint
   accent fill. Tooltips and accessible names say what a click does

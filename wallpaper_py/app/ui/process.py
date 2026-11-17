@@ -27,6 +27,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from PySide6.QtCore import QCoreApplication, QObject, Qt, QTimer, Slot
+from PySide6.QtGui import QFont, QFontDatabase
 from PySide6.QtWidgets import QApplication
 
 from ...backends import allow_foreground
@@ -37,7 +38,6 @@ from ..client import SocketClient
 from ..icon import app_icon
 from ..ipc import server_name
 from ..processes import autostart_command, quit_on_interrupt, start_detached
-from . import theme
 from .window import MainWindow
 
 log = logging.getLogger(__name__)
@@ -141,6 +141,26 @@ class _WindowProcess(QObject):
             self._app.quit()
 
 
+BODY_POINTS = 10.5  # Windows 11's body text (14 px); a smaller system font grows
+# Windows 11's own font, in place of the system's "Segoe UI": the same
+# letters, but with every weight (Segoe UI has no Medium).
+WINDOWS_FONT = ("Segoe UI", "Segoe UI Variable Text")
+
+
+def body_font(system: QFont) -> QFont:
+    """
+    The window process's font: the system's, at least BODY_POINTS (Qt takes
+    9 pt on Windows, smaller than Windows 11's own body text).
+    """
+    font = QFont(system)
+    if 0 < font.pointSizeF() < BODY_POINTS:
+        font.setPointSizeF(BODY_POINTS)
+    system_family, windows_family = WINDOWS_FONT
+    if font.family() == system_family and windows_family in QFontDatabase.families():
+        font.setFamily(windows_family)
+    return font
+
+
 def _application() -> QApplication:
     app = QCoreApplication.instance()
     if app is None:
@@ -151,5 +171,5 @@ def _application() -> QApplication:
     app.setQuitOnLastWindowClosed(False)
     app.setApplicationName("wallpaper_py")
     app.setWindowIcon(app_icon())
-    app.setFont(theme.body_font(app.font()))
+    app.setFont(body_font(app.font()))
     return app

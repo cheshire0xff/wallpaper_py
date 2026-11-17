@@ -2,7 +2,6 @@
 1. Selectable images in grid where you can decide what to do with them like to fav them, remove then or undo etc
    (docs/plan.md, Phase 7, "Library, later").
 1. Separate the library viewer to make something like gwenview out of it?
-1. Make fonts bold and bigger in some places like nvidia app.
 1. Home: a click on a playlist's current image opens it enlarged (the Library's enlarged view).
 1. Start at login in the window's Settings (today only in the tray menu).
 

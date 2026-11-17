@@ -85,8 +85,8 @@ RADIUS = 6  # panels, hovered rows
 RADIUS_SMALL = 4  # buttons, fields, images
 ICON_SIZE = 20
 SMALL_ICON = 18  # in icon buttons
-BODY_POINTS = 10.5  # Windows 11's body text (14 px); a smaller system font grows
-FIELD_HEIGHT = 34
+FIELD_HEIGHT = 40
+CONTROL_TEXT = 1.05  # a control's text, times body text (as the NVIDIA app)
 FIELD_PADDING = 4  # px before a borderless field's text (its text margin)
 # QLineEdit's own space before its text, inside its text margins (Qt's
 # QLineEditPrivate::horizontalMargin; the same since Qt 4).
@@ -307,23 +307,21 @@ def window_palette(derived: Tones) -> QPalette:
 # -- text ------------------------------------------------------------------------
 
 
-def body_font(system: QFont) -> QFont:
+def with_weight(base: QFont, weight: QFont.Weight) -> QFont:
     """
-    The window process's font: the system's, at least BODY_POINTS (Qt takes
-    9 pt on Windows, smaller than Windows 11's own body text).
+    `base` at `weight`, also on a variable font's weight axis: Qt picks only
+    a named weight, and Segoe UI Variable names no Medium.
     """
-    font = QFont(system)
-    if 0 < font.pointSizeF() < BODY_POINTS:
-        font.setPointSizeF(BODY_POINTS)
+    font = QFont(base)
+    font.setWeight(weight)
+    font.setVariableAxis(QFont.Tag("wght"), float(weight.value))
     return font
 
 
 def scaled_font(base: QFont, scale: float = 1.0, bold: bool = False) -> QFont:
     font = QFont(base)
     font.setPointSizeF(font.pointSizeF() * scale)
-    if bold:
-        font.setWeight(QFont.Weight.DemiBold)
-    return font
+    return with_weight(font, QFont.Weight.DemiBold) if bold else font
 
 
 def title(text: str, parent: QWidget | None = None) -> QLabel:
@@ -346,7 +344,6 @@ def muted(text: str, parent: QWidget | None = None, *, wrap: bool = False) -> QL
     """Secondary text (descriptions, hints), in the muted tone."""
     label = QLabel(text, parent)
     label.setForegroundRole(QPalette.ColorRole.PlaceholderText)
-    label.setFont(scaled_font(label.font(), 0.93))
     label.setWordWrap(wrap)
     return label
 
