@@ -1,19 +1,14 @@
-## High priority
-
-1. Make mode act straight away after change.
-1. Home preview does not reflect the playlist selected mode.
-- Maybe create some virtual monitors on which our algs act so we can reuse the calculations?
-1. Mode should be settable per monitor not per playlist. Try to think of a way to make settings user friendly.
-Setting up multiple monitors in a playlists is awkward anyway, with some multi checkboxes and minitors adding up with '+' in description.
-Really consider the best way to handle it in backend and ui.
-1. Selctable background color for fitted images. Maybe also per monitor?
-1. Auto color selection with selectable heurestic alg(average, edges etc).
-1. Try to make any future settings per monitor instead of playlist. Don't see a reason not to.
-
 ## Normal prio
 1. Delete playlist needs a confirmation box? Maybe not since you can revert it, think it through.
-1. 'Saved; the app is using it.' I don't even know what it is, for sure normal user wouldn't as well.
 1. Cache rotation?
+1. Techincally all images could incorporate favs by using, those toggleable, tags forgot how are they called.
+1. Why allow select in a library grid? Is there a plan what it would do?
+1. Selectable images in grid where you can decide what to do with them like to fav them, remove then or undo etc
+1. Separate the library viewer to make something like gwenview out of it?
+1. Chips instead of toggles.
+1. kinda like on the phone that filter by name showed drop down since it told be if I filter correctly and not pick up things I do not want.
+1. Is docs/design up to date? Does it make sense to keep it?
+1. Make fonts bold and bigger in some places like nvidia app.
 
 ## Library window
 

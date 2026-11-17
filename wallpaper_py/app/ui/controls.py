@@ -14,7 +14,10 @@ light / dark mode and the accent still follow the system. No stylesheet.
 - `Segments`: a few choices side by side (Mode, Order), each a button with
   an optional icon; the chosen one outlined in the accent on a faint
   accent fill.
-- `Switch`: on / off.
+- `Switch`: on / off (a setting): a thin track under a bigger knob, as in
+  the NVIDIA app.
+- `FilterChip`: on / off in a toolbar (what narrows a grid): drawn as a
+  segment is, with a ✓ before its label while on.
 - `Button`: the main action (`primary`: filled with the accent) or a
   neutral one (the field tone).
 - `Slider`: a thin track, the accent up to a round knob.
@@ -29,6 +32,7 @@ from __future__ import annotations
 from typing import override
 
 from PySide6.QtCore import (
+    QEvent,
     QPoint,
     QPointF,
     QRect,
@@ -71,10 +75,11 @@ POPUP_PADDING = 4
 SEGMENT_GAP = 6
 SEGMENT_PADDING = 12
 SEGMENT_ICON = 16
+CHIP_LABEL = 32  # a chip's label at most, in average characters, then …
 BUTTON_PADDING = 18
-SWITCH = (40, 20)  # the track
-SWITCH_KNOB = 14
-SWITCH_ROOM = theme.RING + 2  # around the track: the ring, 2 px off it
+SWITCH = (36, 12)  # the track
+SWITCH_KNOB = 20  # taller than the track, as in the NVIDIA app
+SWITCH_ROOM = theme.RING + 2  # around the knob's path: the ring, 2 px off it
 KNOB = 16  # the slider's knob
 TRACK = 4  # the slider's track: its thickness
 
@@ -387,6 +392,23 @@ def _paint_marks(painter: QPainter, rect: QRectF, pointed: bool, current: bool) 
 # -- segmented choice --------------------------------------------------------------
 
 
+def _choice_colours(button: QAbstractButton) -> tuple[QColor, QColor, QColor]:
+    """
+    A segment's or a filter chip's fill, edge and ink (text and icon) now:
+    outlined; chosen (on), outlined in the accent on a faint accent fill.
+    """
+    tones = theme.tones()
+    enabled = button.isEnabled()
+    if button.isChecked():
+        if not enabled:
+            return tones.accent_fill, tones.disabled, tones.disabled
+        return tones.accent_fill, tones.accent, tones.accent
+    fill = QColor(0, 0, 0, 0)
+    if enabled and (button.underMouse() or button.isDown()):
+        fill = tones.accent_fill if button.isDown() else tones.hover
+    return fill, tones.outline, tones.text if enabled else tones.disabled
+
+
 class _Segment(theme.PaintedButton):
     """One choice of `Segments`: its icon (if any) and its label."""
 
@@ -400,16 +422,7 @@ class _Segment(theme.PaintedButton):
 
     def colours(self) -> tuple[QColor, QColor, QColor]:
         """Its fill, edge and ink (text and icon) now."""
-        tones = theme.tones()
-        enabled = self.isEnabled()
-        if self.isChecked():
-            if not enabled:
-                return tones.accent_fill, tones.disabled, tones.disabled
-            return tones.accent_fill, tones.accent, tones.accent
-        fill = QColor(0, 0, 0, 0)
-        if enabled and (self.underMouse() or self.isDown()):
-            fill = tones.accent_fill if self.isDown() else tones.hover
-        return fill, tones.outline, tones.text if enabled else tones.disabled
+        return _choice_colours(self)
 
     @override
     def paintEvent(self, event: QPaintEvent) -> None:  # pylint: disable=invalid-name
@@ -517,22 +530,42 @@ class Segments(QWidget):
 # -- switch ---------------------------------------------------------------------------
 
 
+def switch_on(tones: theme.Tones) -> QColor:
+    """A switch's track while on: the accent, dimmed toward the page."""
+    return theme.mix(tones.accent, tones.page, 0.55)
+
+
+def knob_off(tones: theme.Tones) -> QColor:
+    """A switch's knob while off: a grey between the track and the text."""
+    return theme.mix(tones.page, tones.text, 0.62 if tones.dark else 0.5)
+
+
 class Switch(theme.PaintedButton):
     """
-    On / off: a pill, the accent while on, its knob at the right. It takes
-    a little room around the pill for the focus ring.
+    On / off, as in the NVIDIA app: a thin track under a round knob taller
+    than it; on, the knob in the accent at the right, on the accent dimmed;
+    off, a grey knob at the left on a grey track. It takes a little room
+    around the knob's path for the focus ring.
     """
 
     def __init__(self, name: str, parent: QWidget | None = None) -> None:
         super().__init__("", parent, checkable=True)
         self.setAccessibleName(name)
-        width, height = SWITCH
-        self.setFixedSize(width + 2 * SWITCH_ROOM, height + 2 * SWITCH_ROOM)
+        width, _ = SWITCH
+        self.setFixedSize(width + 2 * SWITCH_ROOM, SWITCH_KNOB + 2 * SWITCH_ROOM)
 
     def track(self) -> QRectF:
-        """The pill, in the widget."""
+        """The thin pill, in the widget, centred on the knob's path."""
         width, height = SWITCH
-        return QRectF(SWITCH_ROOM, SWITCH_ROOM, width, height)
+        top = SWITCH_ROOM + (SWITCH_KNOB - height) / 2
+        return QRectF(SWITCH_ROOM, top, width, height)
+
+    def knob(self) -> QRectF:
+        """The knob now: at the track's right end while on, else its left."""
+        track = self.track()
+        x = track.right() - SWITCH_KNOB if self.isChecked() else track.left()
+        top = track.center().y() - SWITCH_KNOB / 2
+        return QRectF(x, top, SWITCH_KNOB, SWITCH_KNOB)
 
     @override
     def paintEvent(self, event: QPaintEvent) -> None:  # pylint: disable=invalid-name
@@ -543,25 +576,104 @@ class Switch(theme.PaintedButton):
         on, enabled = self.isChecked(), self.isEnabled()
         hovered = enabled and self.underMouse()
         track = self.track()
-        radius = track.height() / 2
         if self.shows_focus():
-            ring = track.adjusted(-SWITCH_ROOM, -SWITCH_ROOM, SWITCH_ROOM, SWITCH_ROOM)
+            ring = QRectF(self.rect())
             theme.draw_focus_ring(painter, ring, ring.height() / 2)
-        if not enabled:
-            painter.setOpacity(0.4)
         if on:
-            fill = tones.accent_hover if hovered else tones.accent
-            knob = tones.on_accent
+            fill = switch_on(tones)
+            knob = tones.accent_hover if hovered else tones.accent
         else:
             fill = tones.switch_off_hover if hovered else tones.switch_off
-            knob = tones.text if hovered else tones.muted
+            knob = tones.text if hovered else knob_off(tones)
+        if not enabled:  # faded, but solid: the track mustn't show through
+            fill, knob = theme.mix(fill, tones.page, 0.6), theme.mix(
+                knob, tones.page, 0.6
+            )
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(fill)
+        radius = track.height() / 2
         painter.drawRoundedRect(track, radius, radius)
-        inset = (track.height() - SWITCH_KNOB) / 2
-        x = track.right() - inset - SWITCH_KNOB if on else track.left() + inset
         painter.setBrush(knob)
-        painter.drawEllipse(QRectF(x, track.top() + inset, SWITCH_KNOB, SWITCH_KNOB))
+        painter.drawEllipse(self.knob())
+        painter.end()
+
+
+# -- chip -----------------------------------------------------------------------------
+
+
+class FilterChip(theme.PaintedButton):
+    """
+    On / off in a toolbar, drawn as a chosen or other segment is (the same
+    box, height and colours as Mode's), with a ✓ before its bold label
+    while on. As wide as it needs: it grows by the ✓ when on (it ends a row
+    of controls, so nothing after it moves). A label longer than
+    `CHIP_LABEL` ends in …, the whole of it in the tooltip.
+    """
+
+    def __init__(self, text: str, parent: QWidget | None = None) -> None:
+        super().__init__(text, parent, checkable=True)
+        self.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.toggled.connect(self._toggled)
+        self.set_label(text)
+
+    def set_label(self, text: str) -> None:
+        self.setText(text)
+        self.setAccessibleName(text)
+        self._fit()
+
+    def label(self) -> str:
+        """The label as drawn: elided past `CHIP_LABEL` (Only <a long name>)."""
+        metrics = QFontMetrics(self.label_font())
+        most = CHIP_LABEL * metrics.averageCharWidth()
+        return metrics.elidedText(self.text(), Qt.TextElideMode.ElideRight, most)
+
+    def colours(self) -> tuple[QColor, QColor, QColor]:
+        """Its fill, edge and ink (text and ✓) now."""
+        return _choice_colours(self)
+
+    def label_font(self) -> QFont:
+        return _bold(self.font()) if self.isChecked() else QFont(self.font())
+
+    def _fit(self) -> None:
+        label = self.label()
+        self.setToolTip("" if label == self.text() else self.text())
+        width = QFontMetrics(self.label_font()).horizontalAdvance(label)
+        if self.isChecked():
+            width += SEGMENT_ICON + theme.space()
+        self.setFixedSize(width + 2 * SEGMENT_PADDING, theme.FIELD_HEIGHT)
+
+    @override
+    def changeEvent(self, event: QEvent) -> None:  # pylint: disable=invalid-name
+        super().changeEvent(event)
+        if event.type() in (QEvent.Type.FontChange, QEvent.Type.StyleChange):
+            self._fit()  # the label's width changed
+
+    @Slot(bool)
+    def _toggled(self, on: bool) -> None:
+        del on
+        self._fit()
+
+    @override
+    def paintEvent(self, event: QPaintEvent) -> None:  # pylint: disable=invalid-name
+        del event
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        fill, edge, ink = self.colours()
+        _paint_box(painter, QRectF(self.rect()), fill, self.shows_focus(), edge)
+        x = float(SEGMENT_PADDING)
+        if self.isChecked():
+            pixmap = theme.tinted_pixmap(
+                "check", ink, SEGMENT_ICON, self.devicePixelRatioF()
+            )
+            top = round((self.height() - SEGMENT_ICON) / 2)
+            painter.drawPixmap(round(x), top, pixmap)
+            x += SEGMENT_ICON + theme.space()
+        painter.setFont(self.label_font())
+        painter.setPen(ink)
+        flags = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        painter.drawText(
+            QRectF(x, 0, self.width() - x, self.height()), int(flags), self.label()
+        )
         painter.end()
 
 

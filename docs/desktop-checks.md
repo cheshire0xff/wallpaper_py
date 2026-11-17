@@ -87,3 +87,8 @@ per-user log directory: `%LOCALAPPDATA%\wallpaper_py\Logs` on Windows).
 14. **The system's colour dialog.** A monitor on Fit, *Colour*, click the
     swatch: the system's colour dialog opens, and dragging in it moves the
     preview's bars live (on KDE, note here if they change only after OK).
+15. **The Library with 20k images.** A playlist on a folder of ~20k
+    images, Library > All images: drag the fast-scroll bar from top to
+    bottom and back, then scroll with the wheel. It stays smooth, tiles
+    fill in within a moment of stopping, and the window process's memory
+    (Task Manager, `wallpaper ui`) stays under ~2 GB however far you go.

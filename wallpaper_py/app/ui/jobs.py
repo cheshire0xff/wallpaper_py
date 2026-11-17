@@ -9,6 +9,11 @@ result)` per result) until it returns: the grid's tile workers. `close()`
 drops the jobs not started yet, waits for the running ones and delivers
 nothing after; the owner calls it before it goes away.
 
+`LatestRead` is for reads whose latest answer is all that counts (the
+Library's folder, lists and history): one thread, and `done(key, result)`
+only for the read asked last. A read that raises still answers, with what
+its `failed(error)` makes of it, so its owner shows why and can ask again.
+
 Workers emit on a relay that lives on the main thread, so delivery is queued
 (AGENTS.md, Qt rules). The pool is made before the relay: children go in
 creation order, so a pool deleted without `close()` still waits for its
@@ -106,4 +111,75 @@ class Jobs(QObject):
     @Slot(object, object)
     def _delivered(self, key: object, result: object) -> None:
         if not self._closed:
+            self.done.emit(key, result)
+
+
+class _IfLatest:
+    """A `LatestRead`'s work: skipped if another read was asked before it starts."""
+
+    def __init__(
+        self,
+        owner: LatestRead,
+        number: int,
+        work: Callable[[], object],
+        failed: Callable[[Exception], object],
+    ):
+        self._owner = owner  # read from the pool thread: an int, set on the main thread
+        self._number = number
+        self._work = work
+        self._failed = failed
+
+    def __call__(self) -> object:
+        if self._number != self._owner.latest:
+            return None  # stale: never delivered
+        try:
+            return self._work()
+        except Exception as err:  # pylint: disable=broad-exception-caught
+            log.exception("A read failed")
+            return self._failed(err)
+
+
+class LatestRead(QObject):
+    """
+    A read off the main thread, on a thread of its own: `read(key, work)`,
+    then `done(key, result)` on the main thread, for the latest read only.
+    An older one is dropped even if it was of the same key (it may have read
+    before the change that asked again), and skipped if it hasn't started.
+    `close()` before the owner goes away (it waits for a running read).
+    """
+
+    done = Signal(object, object)  # key, what `work` returned
+
+    def __init__(self, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._jobs = Jobs(parent=self)
+        self._jobs.done.connect(self._finished)
+        self.latest = 0  # the number of the read asked last
+        self._asked: object = None
+
+    def asked(self) -> object:
+        """The key being read, if any (None: none)."""
+        return self._asked
+
+    def read(
+        self,
+        key: object,
+        work: Callable[[], object],
+        failed: Callable[[Exception], object],
+    ) -> None:
+        """`work()` off the main thread; `failed(error)` is the result if it raises."""
+        self.latest += 1
+        self._asked = key
+        work = _IfLatest(self, self.latest, work, failed)
+        self._jobs.run((self.latest, key), work)
+
+    def close(self) -> None:
+        self._asked = None
+        self._jobs.close()
+
+    @Slot(object, object)
+    def _finished(self, tag: tuple[int, object], result: object) -> None:
+        number, key = tag
+        if number == self.latest:
+            self._asked = None
             self.done.emit(key, result)

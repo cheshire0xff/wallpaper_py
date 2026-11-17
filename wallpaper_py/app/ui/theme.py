@@ -116,12 +116,14 @@ ERROR = (QColor("#ff99a4"), QColor("#c42b1c"))
 # The bundled icons: Lucide names (https://lucide.dev), files in icons/.
 ICON_NAMES = (
     "arrow-down-a-z",
+    "check",
     "chevron-down",
     "circle-alert",
     "house",
     "images",
     "link",
     "pin",
+    "search",
     "shuffle",
     "skip-back",
     "skip-forward",

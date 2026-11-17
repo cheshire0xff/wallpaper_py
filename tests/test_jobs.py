@@ -1,7 +1,7 @@
 """
 Background jobs for the windows: work runs on the pool's threads, results
 come back on the main thread under their keys, and nothing comes after
-`close()`.
+`close()`. A `LatestRead` delivers only the read asked last.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from collections.abc import Iterator
 import pytest
 from pytestqt.qtbot import QtBot
 
-from wallpaper_py.app.ui.jobs import Deliver, Jobs
+from wallpaper_py.app.ui.jobs import Deliver, Jobs, LatestRead
 
 
 class Results:
@@ -96,3 +96,50 @@ def test_nothing_comes_after_close(qtbot: QtBot) -> None:
     jobs.run("after", lambda: "never")
     qtbot.wait(50)
     assert not results.got
+
+
+def test_only_the_latest_read_is_delivered(qtbot: QtBot) -> None:
+    reader = LatestRead()
+    gate, started = threading.Event(), threading.Event()
+    ran: list[str] = []
+
+    def work(name: str) -> str:
+        if name == "first":
+            started.set()
+            assert gate.wait(10)
+        ran.append(name)
+        return f"{name}'s"
+
+    got: list[tuple[object, object]] = []
+    reader.done.connect(lambda key, result: got.append((key, result)))
+    try:
+        reader.read("folder", lambda: work("first"), repr)
+        assert started.wait(10)
+        reader.read("folder", lambda: work("skipped"), repr)  # never starts
+        reader.read("folder", lambda: work("last"), repr)  # same key: still only this
+        assert reader.asked() == "folder"
+        gate.set()
+        qtbot.waitUntil(lambda: bool(got))
+        qtbot.wait(20)
+        assert got == [("folder", "last's")]
+        assert ran == ["first", "last"]
+        assert reader.asked() is None
+    finally:
+        reader.close()
+
+
+def test_a_read_that_raises_still_answers(qtbot: QtBot) -> None:
+    reader = LatestRead()
+    got: list[tuple[object, object]] = []
+    reader.done.connect(lambda key, result: got.append((key, result)))
+
+    def work() -> str:
+        raise ValueError("odd path")
+
+    try:
+        reader.read("folder", work, lambda error: f"failed: {error}")
+        qtbot.waitUntil(lambda: bool(got))
+        assert got == [("folder", "failed: odd path")]
+        assert reader.asked() is None  # so its owner can ask again
+    finally:
+        reader.close()

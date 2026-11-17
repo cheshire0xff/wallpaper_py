@@ -8,14 +8,18 @@ matters; light mode only has to stay usable.
 
 - **Follow the system**: the system's colours, light / dark mode and
   accent, read from the `QPalette`, with our own controls: drop-downs,
-  segmented choices, switches, buttons and sliders are painted in code
-  (`controls.dc.html`), so they look the same on Windows and KDE. The
+  segmented choices, switches, filter chips, buttons and sliders are
+  painted in code (`controls.dc.html`; not in it: the filter chips, and
+  the switch's NVIDIA-style knob, bigger than its track), so they look
+  the same on Windows and KDE. The
   style draws only what is left (text fields, scroll bars, dialogs):
   Windows 11 style on Windows, Fusion on Linux (PySide6's own Qt can't
   load the system's Breeze). No stylesheets and no hard-coded colours,
   except the panel behind images in light mode (wallpapers look washed out
-  on white) and the status dot's green / red (the palette has no such
-  roles). The page mockups stay the reference for layout.
+  on white), the status dot's green / red (the palette has no such
+  roles), and the badges on the Library's tiles (they sit on the image:
+  white outline icons and text on dark discs). The page mockups stay the
+  reference for layout.
 - **One window with a sidebar**: *Home*, *Library*, *Settings*, each a
   Lucide icon and a label; the selected page has an accent bar on its left
   edge, a faint accent fill and a bold label; the app's status ("Rotation
@@ -39,9 +43,9 @@ matters; light mode only has to stay usable.
   have a heading and a thin divider. Secondary actions are accent text
   buttons; Save / Revert and the status line sit in a footer bar; sub-tabs
   have an accent underline.
-- **Library** (Phase 5) follows the same page pattern: tabs, a toolbar
-  (filter, sort, *Hide removed*), the grid on the panel tone, a slim
-  fast-scroll bar.
+- **Library** follows the same page pattern: tabs, a toolbar (filter,
+  sort, *Hide removed* / *Only <playlist>*), the grid on the panel tone,
+  a slim fast-scroll bar painted in code.
 
 ## Files
 

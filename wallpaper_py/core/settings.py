@@ -378,10 +378,20 @@ def format_duration(seconds: float) -> str:
 
 
 def format_ago(seconds: float) -> str:
-    """How long ago, roughly: 'just now', '2 min ago', '3 h ago'."""
+    """
+    How long ago, roughly: 'just now', '2 min ago', '3 h ago', '5 d ago',
+    '2 mo ago' (30 days), '1 yr ago' (365 days).
+    """
     minutes = int(max(0.0, seconds) // 60)
+    hours, days = minutes // 60, minutes // (60 * 24)
     if minutes < 1:
         return "just now"
     if minutes < 60:
         return f"{minutes} min ago"
-    return f"{minutes // 60} h ago"
+    if hours < 24:
+        return f"{hours} h ago"
+    if days < 30:
+        return f"{days} d ago"
+    if days < 365:
+        return f"{days // 30} mo ago"
+    return f"{days // 365} yr ago"

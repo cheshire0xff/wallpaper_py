@@ -17,6 +17,7 @@ from wallpaper_py.core.settings import (
     check_folders,
     check_settings,
     settings_problems,
+    format_ago,
     format_duration,
     parse_duration,
 )
@@ -57,6 +58,28 @@ def test_parse_duration_rejects_garbage(text: str) -> None:
 def test_format_duration(seconds: float, text: str) -> None:
     assert format_duration(seconds) == text
     assert parse_duration(text) == round(seconds)
+
+
+DAY = 24 * 3600
+
+
+@pytest.mark.parametrize(
+    ("seconds", "text"),
+    [
+        (-5, "just now"),  # a clock set back
+        (59, "just now"),
+        (120, "2 min ago"),
+        (3 * 3600 + 59, "3 h ago"),
+        (DAY - 1, "23 h ago"),
+        (DAY, "1 d ago"),
+        (29 * DAY, "29 d ago"),
+        (30 * DAY, "1 mo ago"),
+        (364 * DAY, "12 mo ago"),
+        (800 * DAY, "2 yr ago"),
+    ],
+)
+def test_format_ago(seconds: float, text: str) -> None:
+    assert format_ago(seconds) == text
 
 
 def test_defaults() -> None:
