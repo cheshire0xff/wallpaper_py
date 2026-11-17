@@ -42,13 +42,18 @@ app/                          PySide6 (Qt only here); two processes
     window.py    MainWindow: the sidebar (NavButton per page, the daemon's status)
                  and the pages; asks before closing with unsaved settings
     home.py      Home: the monitors on a panel, then a row per playlist
-    library.py   Library: a playlist drop-down, the tabs; asks `stats` and
-                 `reset_cycle`; All images (the other grid tabs come later
-                 in Phase 5); owns the grids' thumbnails
-    library_overview.py  OverviewTab: a playlist's numbers, Rescan, Reset cycle…
+    library.py   Library: a playlist drop-down, the count, the tabs; reads
+                 what each grid tab shows (or asks `upcoming`), asks `stats`
+                 and `reset_cycle`; owns the grids' thumbnails
+    library_grids.py  GridTab: a grid tab's toolbar (filter, sort, chips),
+                 its grid and fast-scroll bar
+    library_stats.py  StatsTab: a playlist's numbers, Rescan, Reset cycle…
+    enlarged.py  EnlargedView: one image over the page, read at full size,
+                 zoom and pan (ImageCanvas), the info card, the toggles, Show on
+    entries.py   Entry (a tile: path, order, keys worked out once), the
+                 readers (folder, lists, history), sorting and filtering
     grid.py      ImageGrid: a QListView of fixed-size tiles over a list model
-                 of paths, tiles fading in; FolderScan (a folder, listed off
-                 the main thread)
+                 of entries, tiles fading in, badges; FastScroll
     tiles.py     TileLoader: the grid's thumbnails (newest request first,
                  dropped off screen, a memory budget); Pregenerator: fills
                  and prunes the disk cache while the window is open
@@ -65,14 +70,15 @@ app/                          PySide6 (Qt only here); two processes
     arrangement.py  the monitors drawn to scale (arrange(): pure geometry),
                  each with its preview (the renderer's, at a small output)
     jobs.py      Jobs: background work on a thread pool of its own, results
-                 delivered on the main thread (every pool of the window process)
+                 delivered on the main thread (every pool of the window process);
+                 LatestRead: only the latest of a kind of read is delivered
     thumbnails.py   ThumbnailLoader: a small copy of each image, its thumbnail
                  and details, off the main thread
     theme.py     the shared look: tones derived from the palette, spacing,
                  tinted icons, the focus ring, painted widgets (IconButton,
                  TextButton, Tabs, Divider, Panel, Banner, Chip, ImageView)
     controls.py  the controls painted in code: FieldCombo (drop-down and its
-                 list), Segments, Switch, Button, Slider
+                 list), Segments, Switch, FilterChip, Button, Slider
     icons/       bundled Lucide SVGs (ISC licence alongside), package data
 commands.py                   runs a request on the service (one `match`, a case per
                               request model) -> a reply model (+ the change made);

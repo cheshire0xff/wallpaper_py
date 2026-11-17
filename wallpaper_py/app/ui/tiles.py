@@ -1,5 +1,5 @@
 """
-Thumbnails for the Library's grids (docs/plan.md, Phase 5, "Thumbnails"):
+Thumbnails for the Library's grids (docs/plan.md at 268a951, "Thumbnails"):
 a second pipeline beside `ThumbnailLoader` (which stays for Home's few
 images), made for thousands of tiles.
 

@@ -80,10 +80,15 @@ per-user log directory: `%LOCALAPPDATA%\wallpaper_py\Logs` on Windows).
     the command itself, the wallpaper changes, and no process is left
     behind.
 13. **The look.** At 150 % display scale, dark mode: Home and Settings
-    look like the mockups in [design/](design/README.md), and the previews
+    follow the rules in [design/](design/README.md), and the previews
     and thumbnails are sharp. Switch the system to light mode with the
     window open: it follows. Tab reaches every control, with a visible
     focus outline.
 14. **The system's colour dialog.** A monitor on Fit, *Colour*, click the
     swatch: the system's colour dialog opens, and dragging in it moves the
     preview's bars live (on KDE, note here if they change only after OK).
+15. **The Library with 20k images.** A playlist on a folder of ~20k
+    images, Library > All images: drag the fast-scroll bar from top to
+    bottom and back, then scroll with the wheel. It stays smooth, tiles
+    fill in within a moment of stopping, and the window process's memory
+    (Task Manager, `wallpaper ui`) stays under ~2 GB however far you go.

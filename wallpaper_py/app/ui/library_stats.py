@@ -1,6 +1,7 @@
 """
-The Library page's Overview tab: a playlist's library in numbers, named
-as in the phone app's Information dialog (docs/plan.md, "Overview tab").
+The Library page's Stats tab: a playlist's library in numbers, named
+as in the phone app's Information dialog (docs/plan.md at 268a951,
+"Stats tab").
 
     This cycle                                        6 %  ▓░░░░░
       Images    D:\\pictures\\KONACHAN, scanned 2 min ago  20,431  Rescan
@@ -60,7 +61,7 @@ def list_text(stats: ListStats, here: int) -> str:
     )
 
 
-class OverviewTab(QWidget):
+class StatsTab(QWidget):
     """
     See the module docstring. `show_stats` fills it, `show_message` puts a
     line in place of the numbers (an error, or no playlists).

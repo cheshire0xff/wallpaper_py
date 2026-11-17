@@ -12,18 +12,31 @@ from collections.abc import Callable, Iterator
 
 import pytest
 from PySide6.QtCore import QPoint, Qt
-from PySide6.QtGui import QColor, QImage, QPainter, QPalette, QPixmap
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QFontMetrics,
+    QImage,
+    QPainter,
+    QPalette,
+    QPixmap,
+)
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QWidget
 from pytestqt.qtbot import QtBot
 
 from wallpaper_py.app.ui import theme
 from wallpaper_py.app.ui.controls import (
+    CHIP_LABEL,
+    SEGMENT_PADDING,
     Button,
+    FilterChip,
     FieldCombo,
     Segments,
     Slider,
     Switch,
+    knob_off,
+    switch_on,
 )
 
 from .test_theme import DARK, LIGHT
@@ -305,23 +318,73 @@ def test_switch(host: Callable[[QWidget], QWidget], dark: theme.Tones) -> None:
     toggled: list[bool] = []
     switch.toggled.connect(toggled.append)
     track = switch.track()
-    left = QPoint(round(track.left()) + 1, round(track.center().y()))
-    assert same(shot(switch).pixelColor(left), dark.switch_off)
+    middle = round(track.center().y())
+    left, right = QPoint(round(track.left()) + 3, middle), QPoint(
+        round(track.right()) - 3, middle
+    )
+
+    def knob() -> QPoint:
+        return switch.knob().center().toPoint()
+
+    assert switch.knob().height() > track.height()  # the knob stands out
+    image = shot(switch)
+    assert same(image.pixelColor(knob()), knob_off(dark))  # off: at the left
+    assert same(image.pixelColor(right), dark.switch_off)
     QTest.mouseClick(switch, Qt.MouseButton.LeftButton)
     assert toggled == [True]
     image = shot(switch)
-    assert same(image.pixelColor(left), dark.accent)
-    # The knob at the right, in the text colour on the accent.
-    knob = QPoint(round(track.right()) - 10, round(track.center().y()))
-    assert same(image.pixelColor(knob), dark.on_accent)
+    assert switch.knob().center().x() > track.center().x()  # on: at the right
+    assert same(image.pixelColor(knob()), dark.accent)
+    assert same(image.pixelColor(left), switch_on(dark))  # the accent, dimmed
     tab_into(switch)
     QTest.keyClick(switch, Qt.Key.Key_Space)
     assert toggled == [True, False]
-    ring = QPoint(1, round(track.center().y()))  # 2 px off the pill
+    ring = QPoint(1, middle)  # 2 px off the knob's path
     assert same(shot(switch).pixelColor(ring), dark.accent)
     switch.setChecked(True)
     switch.setEnabled(False)
-    assert not same(shot(switch).pixelColor(left), dark.accent)  # faded
+    assert not same(shot(switch).pixelColor(knob()), dark.accent)  # faded
+
+
+# -- chip ------------------------------------------------------------------------
+
+
+def test_chip(host: Callable[[QWidget], QWidget], dark: theme.Tones) -> None:
+    chip = FilterChip("Hide removed")
+    host(chip)
+    assert chip.accessibleName() == "Hide removed"
+    toggled: list[bool] = []
+    chip.toggled.connect(toggled.append)
+    middle = chip.height() // 2
+    assert same(shot(chip).pixelColor(0, middle), dark.outline)  # edge
+    width = chip.width()
+    QTest.mouseClick(chip, Qt.MouseButton.LeftButton)
+    assert toggled == [True]
+    assert chip.width() > width  # room for the ✓
+    image = shot(chip)
+    xs = range(SEGMENT_PADDING, SEGMENT_PADDING + 16)  # the ✓, in the accent
+    ys = range(middle - 8, middle + 8)
+    assert any(same(image.pixelColor(x, y), dark.accent, 40) for x in xs for y in ys)
+    assert same(image.pixelColor(0, middle), dark.accent)  # as a chosen segment
+    tab_into(chip)
+    QTest.keyClick(chip, Qt.Key.Key_Space)
+    assert toggled == [True, False]
+    assert chip.width() == width
+    assert same(shot(chip).pixelColor(chip.width() // 2, 1), dark.accent)  # ring
+    chip.set_label("Only a long playlist")  # fits: no tooltip
+    assert chip.accessibleName() == "Only a long playlist"
+    assert chip.width() > width and not chip.toolTip()
+    long = "Only " + "a very long playlist name " * 4
+    chip.set_label(long)  # elided: the whole of it in the tooltip
+    assert chip.label().endswith("…") and chip.toolTip() == long
+    most = CHIP_LABEL * QFontMetrics(chip.label_font()).averageCharWidth()
+    assert chip.width() <= most + 2 * SEGMENT_PADDING
+    font = QFont(chip.font())
+    font.setPointSizeF(font.pointSizeF() * 2)
+    chip.set_label("Hide removed")
+    width = chip.width()
+    chip.setFont(font)  # a font change: measured again
+    assert chip.width() > width
 
 
 # -- buttons ---------------------------------------------------------------------
@@ -444,7 +507,10 @@ def test_every_control_paints_at_a_ratio_of_2(
     on = Switch("On")
     on.setChecked(True)
     slider = blur()
-    for control in (combo, modes(), on, Button("Save", primary=True), slider):
+    chip = FilterChip("Hide removed")
+    chip.setChecked(True)
+    controls = (combo, modes(), on, Button("Save", primary=True), slider, chip)
+    for control in controls:
         host(control)
         image = at_ratio_2(control)
         assert image.size() == control.size() * 2

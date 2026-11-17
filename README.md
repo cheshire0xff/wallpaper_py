@@ -8,9 +8,34 @@ libraries (10k+ images). See [todo.md](todo.md) for the feature list,
 [docs/plan.md](docs/plan.md) for the phases and
 [docs/architecture.md](docs/architecture.md) for the design.
 
-**Status:** the core, the Windows and KDE backends, the playlist service and
-the tray app exist, plus the window process with its window (Home and
-Settings). The library is next.
+**Status:** the core, the Windows and KDE backends, the playlist service,
+the tray app and the window (Home, Library, Settings) exist. Left: trying
+KDE by hand on Kubuntu, then polish.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/home-dark.webp">
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/home-light.webp">
+  <img alt="Home: the monitors as they are arranged, each with its wallpaper, and a row per playlist with previous / next, favourite, remove and hold" src="docs/images/home-light.webp">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/library-dark.webp">
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/library-light.webp">
+  <img alt="Library: a playlist's folder as a grid of thumbnails, with a filter, the sort, Hide removed and badges" src="docs/images/library-light.webp">
+</picture>
+
+<details><summary>Settings</summary>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/settings-dark.webp">
+  <source media="(prefers-color-scheme: light)" srcset="docs/images/settings-light.webp">
+  <img alt="Settings: the monitors drawn as arranged; the selected one's playlist and mode" src="docs/images/settings-light.webp">
+</picture>
+
+</details>
+
+The photos are NASA's (crew Earth observations, public domain); the
+screenshots are made by `scripts/screenshots.py`, with made-up monitors.
 
 ## Install
 
@@ -158,14 +183,17 @@ and accent. It logs to `ui.log` next to `wallpaper.log`.
   their field and keep *Save* off. Unsaved changes stay while you visit
   other pages; closing the window with them asks first.
 - **Library** (`wallpaper ui library`, tray *Library*): a playlist's
-  library in numbers (Overview: images, seen and unseen in this shuffle
-  cycle, skipped; the favourites and to-remove lists), with *Rescan* and
-  *Reset cycle…*, and *All images*: its folder as a grid of thumbnails.
-  The thumbnails are made in the background while the window is open
-  (every playlist's folder and the lists) and kept in the thumbnail cache,
-  so the next opening is fast; it deletes the ones no image needs any
-  more. The other grids, filtering and sorting come later. The playlist
-  and tab shown are remembered.
+  images as thumbnails, in tabs: *All images* (its folder), *Favourites*,
+  *To remove*, *History*, *Upcoming*, and *Stats* (images, seen and unseen
+  in this shuffle cycle, skipped; the lists; *Rescan* and *Reset
+  cycle…*). Each grid filters by name and sorts; badges mark favourites,
+  images to remove and what is on screen. A click opens an image over the
+  page: ← / → go through the grid's images, the wheel zooms, and it can be
+  marked a favourite or to remove, or shown now on a playlist. The
+  thumbnails are made in the background while the window is open (every
+  playlist's folder and the lists) and kept in the thumbnail cache, so the
+  next opening is fast; it deletes the ones no image needs any more. The
+  playlist, the tab and each grid's sort are remembered.
 
 Other programs can drive the app over the same socket: see
 [docs/protocol.md](docs/protocol.md).

@@ -1,6 +1,6 @@
 """
 The Settings page's form (settings.py), as rows without boxes
-(docs/design/settings-monitors.dc.html): each `SettingRow` has its name
+(docs/design/README.md, "The look"): each `SettingRow` has its name
 and a muted one-line description on the left and its control on the
 right, all controls in one column; fields are borderless and filled,
 the other controls painted (controls.py).
@@ -19,7 +19,7 @@ from collections.abc import Mapping
 from typing import override
 
 from PySide6.QtCore import QEvent, QPointF, QRectF, Qt, Signal, Slot
-from PySide6.QtGui import QColor, QPainter, QPaintEvent, QPalette, QPen
+from PySide6.QtGui import QColor, QFont, QPainter, QPaintEvent, QPalette, QPen
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
@@ -57,6 +57,9 @@ CHANGES_HELP = {
     EVERY: "Active time: pauses while locked, idle or asleep",
     MANUALLY: "Only next, previous or pick change it",
 }
+# A row's name, times body text: as large as the tabs, in Medium, as in the
+# NVIDIA app's settings.
+NAME_SCALE = 1.1
 
 
 # -- small widgets -------------------------------------------------------------------
@@ -150,15 +153,22 @@ class SettingRow(QWidget):
     ) -> None:
         super().__init__(parent)
         self.label = QLabel(name, self)
+        self.label.setFont(
+            theme.with_weight(
+                theme.scaled_font(self.label.font(), NAME_SCALE),
+                QFont.Weight.Medium,
+            )
+        )
         # Wraps rather than widening the row (a long "Mirrors …" text).
         self.description = theme.muted(description, self, wrap=True)
         self.description.setVisible(bool(description))
         labels = QVBoxLayout()
-        labels.setSpacing(2)
+        labels.setSpacing(theme.space(0.5))
         labels.addWidget(self.label)
         labels.addWidget(self.description)
 
         column = QWidget(self)
+        column.setFont(theme.scaled_font(self.font(), theme.CONTROL_TEXT))
         column.setFixedWidth(theme.CONTROL_WIDTH)
         column_layout = QVBoxLayout(column)
         column_layout.setContentsMargins(0, 0, 0, 0)
@@ -171,11 +181,11 @@ class SettingRow(QWidget):
             column_layout.addWidget(problem)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(indent, theme.space(1.25), 0, theme.space(1.25))
+        layout.setContentsMargins(indent, theme.space(1.75), 0, theme.space(1.75))
         layout.setSpacing(theme.space(3))
         layout.addLayout(labels, 1)
         layout.addWidget(column)
-        self.setMinimumHeight(theme.space(7))
+        self.setMinimumHeight(theme.space(8))
 
     def set_description(self, text: str) -> None:
         self.description.setText(text)

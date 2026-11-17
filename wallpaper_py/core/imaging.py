@@ -111,6 +111,21 @@ def load_filled(source: Path, size: tuple[int, int]) -> Image.Image:
     return image.resize(size, Image.Resampling.LANCZOS, box=box, reducing_gap=3.0)
 
 
+def load_full(source: Path) -> Image.Image:
+    """
+    `source` at its own size, RGB and upright: the Library's enlarged view.
+
+    Raises:
+        ImageLoadError: as `load`.
+    """
+    try:
+        with Image.open(source) as img:
+            oriented = ImageOps.exif_transpose(img) or img
+            return oriented.convert("RGB")  # a copy, detached from the file
+    except (OSError, SyntaxError, ValueError, Image.DecompressionBombError) as err:
+        raise ImageLoadError(f"Cannot load {source}: {err}") from err
+
+
 def _load(source: Path, size: tuple[int, int]) -> tuple[Image.Image, tuple[int, int]]:
     """The image (see `load`) and the file's own size, upright."""
     try:

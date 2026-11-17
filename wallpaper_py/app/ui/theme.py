@@ -1,8 +1,8 @@
 """
-The look every page shares (docs/design/README.md, "The look"; the
-mockups in docs/design/): the system's palette, a few tones derived from
-it, constants and small painted widgets. Not a framework. The controls
-(drop-down, segmented choice, switch, buttons, slider) are controls.py's.
+The look every page shares (docs/design/README.md, "The look"): the
+system's palette, a few tones derived from it, constants and small
+painted widgets. Not a framework. The controls (drop-down, segmented
+choice, switch, buttons, slider) are controls.py's.
 
 - **Tones** (`derive_tones`, `tones`): derived from the application's
   `QPalette`, never hard-coded per OS. In dark mode the page is a shade
@@ -11,7 +11,7 @@ it, constants and small painted widgets. Not a framework. The controls
   lighter than the page. Light mode keeps the palette's Window colour; the
   panel behind images is a silver grey a step darker than the page, with
   the palette's (dark) text on it (wallpapers look washed out on white;
-  the old near-black panel was too stark; chosen from the mockup). The
+  the old near-black panel was too stark). The
   accent is the palette's Accent on Windows and its Highlight elsewhere
   (`ACCENT_ROLE`): Qt puts KDE's accent only in Highlight.
   `window_palette` puts the tones into the palette roles the native
@@ -19,23 +19,20 @@ it, constants and small painted widgets. Not a framework. The controls
   fields, PlaceholderText for muted text); the main window sets it, and
   everything painted here reads `tones()` when it paints, so a change of
   the system's light / dark mode re-derives everything.
-- Spacing in 8 px steps (`space`), corner radii, the control column's
-  width, field heights.
-- Icons: bundled Lucide SVGs (`icons/`, ISC licence kept with them),
-  tinted when drawn (`tinted_pixmap`, `icon`); a toggle that is on shows
-  its icon filled.
+- Spacing in 8 px steps (`space`), radii, the control column, field heights.
+- Icons: bundled Lucide SVGs (`icons/`, ISC licence kept with them), tinted
+  when drawn (`tinted_pixmap`, `icon`); a toggle that is on is filled.
 - Widgets: `ValueLabel` (a read-only value lined up with the fields),
   `IconButton` (borderless; on: accent icon on a faint accent fill),
-  `TextButton` (accent text, for secondary actions), `Tabs`
-  (sub-tabs with an accent underline), `Divider` (the thin line), `Panel`
+  `TextButton` (accent text, for secondary actions), `Tabs` (sub-tabs
+  with an accent underline), `Divider` (the thin line), `Panel`
   (the lighter panel behind images), `Banner` (a page's message), `Chip`,
   `ImageView` (an image letterboxed on the panel tone).
-- The keyboard focus: a 2 px accent ring (`draw_focus_ring`), only when
-  the focus came from the keyboard (`keyboard_focus`).
+- The keyboard focus: a 2 px accent ring (`draw_focus_ring`), if by key.
 
 No stylesheet is set anywhere. The style draws only what is still native
-(text fields, scroll bars, dialogs): Windows 11 style on Windows, Fusion
-on Linux (PySide6's own Qt can't load the system's Breeze).
+(text fields, scroll bars, dialogs): Windows 11 style on Windows, Fusion on
+Linux (PySide6's own Qt can't load the system's Breeze).
 """
 
 from __future__ import annotations
@@ -88,8 +85,8 @@ RADIUS = 6  # panels, hovered rows
 RADIUS_SMALL = 4  # buttons, fields, images
 ICON_SIZE = 20
 SMALL_ICON = 18  # in icon buttons
-BODY_POINTS = 10.5  # Windows 11's body text (14 px); a smaller system font grows
-FIELD_HEIGHT = 34
+FIELD_HEIGHT = 40
+CONTROL_TEXT = 1.05  # a control's text, times body text (as the NVIDIA app)
 FIELD_PADDING = 4  # px before a borderless field's text (its text margin)
 # QLineEdit's own space before its text, inside its text margins (Qt's
 # QLineEditPrivate::horizontalMargin; the same since Qt 4).
@@ -116,12 +113,17 @@ ERROR = (QColor("#ff99a4"), QColor("#c42b1c"))
 # The bundled icons: Lucide names (https://lucide.dev), files in icons/.
 ICON_NAMES = (
     "arrow-down-a-z",
+    "arrow-left",
+    "check",
     "chevron-down",
+    "chevron-left",
+    "chevron-right",
     "circle-alert",
     "house",
     "images",
     "link",
     "pin",
+    "search",
     "shuffle",
     "skip-back",
     "skip-forward",
@@ -210,6 +212,7 @@ class Tones:
     panel_muted: QColor
     panel_accent: QColor  # readable on the panel
     panel_line: QColor  # a divider on the panel
+    panel_edge: QColor  # a monitor's edge in the drawing
     ok: QColor
     error: QColor
 
@@ -263,6 +266,7 @@ def derive_tones(palette: QPalette) -> Tones:
         panel_muted=panel_muted,
         panel_accent=accent,
         panel_line=mix(panel, panel_text, 0.09),
+        panel_edge=mix(panel, panel_text, 0.22),
         ok=OK[0] if dark else OK[1],
         error=ERROR[0] if dark else ERROR[1],
     )
@@ -305,23 +309,21 @@ def window_palette(derived: Tones) -> QPalette:
 # -- text ------------------------------------------------------------------------
 
 
-def body_font(system: QFont) -> QFont:
+def with_weight(base: QFont, weight: QFont.Weight) -> QFont:
     """
-    The window process's font: the system's, at least BODY_POINTS (Qt takes
-    9 pt on Windows, smaller than Windows 11's own body text).
+    `base` at `weight`, also on a variable font's weight axis: Qt picks only
+    a named weight, and Segoe UI Variable names no Medium.
     """
-    font = QFont(system)
-    if 0 < font.pointSizeF() < BODY_POINTS:
-        font.setPointSizeF(BODY_POINTS)
+    font = QFont(base)
+    font.setWeight(weight)
+    font.setVariableAxis(QFont.Tag("wght"), float(weight.value))
     return font
 
 
 def scaled_font(base: QFont, scale: float = 1.0, bold: bool = False) -> QFont:
     font = QFont(base)
     font.setPointSizeF(font.pointSizeF() * scale)
-    if bold:
-        font.setWeight(QFont.Weight.DemiBold)
-    return font
+    return with_weight(font, QFont.Weight.DemiBold) if bold else font
 
 
 def title(text: str, parent: QWidget | None = None) -> QLabel:
@@ -344,7 +346,6 @@ def muted(text: str, parent: QWidget | None = None, *, wrap: bool = False) -> QL
     """Secondary text (descriptions, hints), in the muted tone."""
     label = QLabel(text, parent)
     label.setForegroundRole(QPalette.ColorRole.PlaceholderText)
-    label.setFont(scaled_font(label.font(), 0.93))
     label.setWordWrap(wrap)
     return label
 

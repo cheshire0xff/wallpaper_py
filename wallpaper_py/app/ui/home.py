@@ -1,7 +1,7 @@
 """
 Home, the main window's first page: the monitors to scale on a panel, then
 one row per playlist with its current wallpaper (docs/design/README.md,
-"The look"; docs/design/home.png).
+"The look").
 
 Everything it shows comes from the daemon through `Client`: it redraws from
 `overview_changed` (never polls), and after each new overview asks once
@@ -51,7 +51,7 @@ from ...protocol import (
     TargetCommand,
     target_request,
 )
-from ...texts import members, not_rotating, rounded_duration
+from ...texts import format_size, members, not_rotating, rounded_duration
 from ..client import Client, OneAtATime, ReplyTo
 from . import theme
 from .arrangement import MonitorsView
@@ -63,16 +63,6 @@ Clock = Callable[[], float]
 
 
 # -- text ------------------------------------------------------------------------
-
-
-def format_size(size: int) -> str:
-    """Bytes for people: 980 B, 12 KB, 4.2 MB, 1.1 GB."""
-    value = float(size)
-    for unit in ("B", "KB", "MB"):
-        if value < 1000:
-            return f"{value:.0f} {unit}" if unit != "MB" else f"{value:.1f} {unit}"
-        value /= 1000
-    return f"{value:.1f} GB"
 
 
 def counting(view: PlaylistView, paused: str | None) -> bool:
@@ -181,9 +171,9 @@ class PlaylistRow(QWidget):
         )
         self.monitors.setMinimumWidth(theme.space(5))
         self.monitors.setForegroundRole(QPalette.ColorRole.PlaceholderText)
-        self.monitors.setFont(theme.scaled_font(self.monitors.font(), 0.93))
         self.chip = theme.Chip(self)
         self.file = ElidedLabel(self)
+        self.file.setFont(theme.scaled_font(self.file.font(), theme.CONTROL_TEXT))
         self.details = theme.muted("", self, wrap=True)
         self.message_icon = QLabel(self)
         self.message = QLabel(self)

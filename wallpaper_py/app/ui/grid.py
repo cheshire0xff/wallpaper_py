@@ -1,21 +1,36 @@
 """
-The Library's image grid (docs/plan.md, Phase 5, "Thumbnails"), built
-from the Phase 0 spike (spikes/grid_prototype.py): a `QListView` in icon
-mode over a list model of paths, every tile one size (`tiles.TILE`, 16:9),
-so only the tiles on screen are painted or asked for, even with 20k
-images. The number of columns follows the width.
+The Library's image grid (docs/plan.md at 268a951, "Thumbnails" and "Grid
+tabs"), built from the Phase 0 spike (spikes/grid_prototype.py): a
+`QListView` in icon mode over a list model of entries (entries.py), every
+tile one size (`tiles.TILE`, 16:9), so only the tiles on screen are painted
+or asked for, even with 20k images. The number of columns follows the width.
 
 A tile is the image filling it, cropped to the middle as Fill shows a
 wallpaper, so every tile looks alike (as in the phone app); it fades in
 from the panel tone when its thumbnail arrives. An image whose file is
 gone is a "missing" tile with its name, one that can't be read says so;
-neither is an error.
+neither is an error. Badges: a star for a favourite, a bin for one listed
+to remove, *On screen* for the current image of any playlist (`Marks`,
+which the page keeps up to date), and in History when it was shown ("2 h
+ago"). They sit on the image, so their colours are fixed (white outline
+icons and text on dark discs and pills), not the page's. With badges off
+(`set_badges`), only "2 h ago" stays.
+
+While the list is narrowed by name (`set_needle`), each tile has a caption
+at its bottom: the file name around the match, the match in bold (so you
+see why it is there). Not on a missing tile, which shows its name already.
+
+Nothing is selected: a click opens the image enlarged (the grid tab's
+`open_requested`; enlarged.py), and `reveal` scrolls to it again after.
+
 The tiles come from a `TileLoader` (tiles.py): each tile painted without
 its thumbnail asks for it, and the grid tells the loader which tiles are
 on screen after every scroll, resize or new list, so requests for tiles
 scrolled away are dropped.
 
-`FolderScan` lists a folder's images off the main thread for the grid.
+The grid's own scroll bar stays hidden: `FastScroll`, beside it, is a slim
+one painted here, whose handle can be dragged (or the track pressed) to
+anywhere in the list at once.
 """
 
 from __future__ import annotations
@@ -23,46 +38,53 @@ from __future__ import annotations
 import bisect
 import time
 from collections.abc import Sequence
-from functools import partial
+from dataclasses import dataclass
 from pathlib import Path
 from typing import override
 
 from PySide6.QtCore import (
     QAbstractListModel,
+    QCoreApplication,
+    QEvent,
     QModelIndex,
     QObject,
     QPersistentModelIndex,
+    QPointF,
     QRect,
     QRectF,
     QSize,
     Qt,
     QTimer,
-    Signal,
     Slot,
 )
 from PySide6.QtGui import (
+    QColor,
+    QEnterEvent,
+    QFont,
     QFontMetrics,
     QHideEvent,
+    QMouseEvent,
     QPainter,
     QPainterPath,
+    QPaintEvent,
     QPalette,
-    QPen,
     QResizeEvent,
     QShowEvent,
+    QWheelEvent,
 )
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QFrame,
     QListView,
-    QStyle,
+    QScrollBar,
     QStyledItemDelegate,
     QStyleOptionViewItem,
     QWidget,
 )
 
-from ...core.library import scan
+from ...core.settings import format_ago
 from . import theme
-from .jobs import Jobs
+from .entries import Entry
 from .tiles import TILE, TileLoader
 
 SPACING = 8  # px between tiles
@@ -70,46 +92,80 @@ FADE_S = 0.18  # a tile fading in from the panel tone
 FADE_FRAME_MS = 16
 MARGIN_ROWS = 1  # rows of tiles above and below the screen also asked for
 
-PATH_ROLE = Qt.ItemDataRole.UserRole
+# Badges, on the image.
+BADGE = 22  # a disc's diameter
+BADGE_ICON = 13
+BADGE_INSET = 6  # from the tile's edge
+BADGE_GAP = 4
+BADGE_BACK = QColor(0, 0, 0, 140)
+PILL_BACK = QColor(0, 0, 0, 153)
+PILL_TEXT = QColor("#ffffff")
+PILL_PADDING = 8
+PILL_FONT = 0.8  # of the body text
+CAPTION_BACK = QColor(0, 0, 0, 166)  # the match caption's strip
+CAPTION_TEXT = QColor("#ffffff")
+CAPTION_PADDING = 8  # left and right of its text
+CAPTION_HEIGHT = 6  # above and below its text, in all
+BADGE_MARK = QColor("#ffffff")  # the star and the bin, outlined as on Home
+
+# The fast-scroll bar: its width takes the pointer; the track is slimmer.
+SCROLL_WIDTH = 16
+SCROLL_TRACK = 6
+SCROLL_TRACK_ACTIVE = 8  # hovered or dragged
+SCROLL_HANDLE_MIN = 36
+
+ENTRY_ROLE = Qt.ItemDataRole.UserRole
 
 Index = QModelIndex | QPersistentModelIndex
 
 
+@dataclass(frozen=True)
+class Marks:
+    """What the badges show: `library.path_key`s."""
+
+    favourites: frozenset[str] = frozenset()
+    to_remove: frozenset[str] = frozenset()
+    on_screen: frozenset[str] = frozenset()  # the current image of any playlist
+
+
 class GridModel(QAbstractListModel):
-    """The grid's images, in the order shown (a path may repeat: History)."""
+    """The grid's entries, in the order shown (a path may repeat: History)."""
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
-        self._paths: list[Path] = []
+        self._entries: list[Entry] = []
 
-    def set_paths(self, paths: Sequence[Path]) -> None:
+    def set_entries(self, entries: Sequence[Entry]) -> None:
         self.beginResetModel()
-        self._paths = list(paths)
+        self._entries = list(entries)
         self.endResetModel()
 
+    def entries(self) -> list[Entry]:
+        return list(self._entries)
+
     def paths(self) -> list[Path]:
-        return list(self._paths)
+        return [e.path for e in self._entries]
 
     def path(self, row: int) -> Path:
-        return self._paths[row]
+        return self._entries[row].path
 
     @override
     def rowCount(  # pylint: disable=invalid-name
         self, parent: Index = QModelIndex()
     ) -> int:
-        return 0 if parent.isValid() else len(self._paths)
+        return 0 if parent.isValid() else len(self._entries)
 
     @override
     def data(self, index: Index, role: int = Qt.ItemDataRole.DisplayRole) -> object:
-        if not index.isValid() or not 0 <= index.row() < len(self._paths):
+        if not index.isValid() or not 0 <= index.row() < len(self._entries):
             return None
-        path = self._paths[index.row()]
-        if role == PATH_ROLE:
-            return path
+        entry = self._entries[index.row()]
+        if role == ENTRY_ROLE:
+            return entry
         if role == Qt.ItemDataRole.DisplayRole:
-            return path.name
+            return entry.path.name
         if role == Qt.ItemDataRole.ToolTipRole:
-            return str(path)
+            return str(entry.path)
         return None
 
 
@@ -131,14 +187,15 @@ class TileDelegate(QStyledItemDelegate):
     def paint(
         self, painter: QPainter, option: QStyleOptionViewItem, index: Index
     ) -> None:
-        path = index.data(PATH_ROLE)
-        if not isinstance(path, Path):
+        entry = index.data(ENTRY_ROLE)
+        if not isinstance(entry, Entry):
             return
+        path = entry.path
         rect = QRectF(option.rect)
-        selected = bool(option.state & QStyle.StateFlag.State_Selected)
-        tile = self._grid.loader.get(path)
+        grid = self._grid
+        tile = grid.loader.get(path)
         if tile is None:
-            self._grid.loader.request(path)
+            grid.loader.request(path)
         derived = theme.tones()
         painter.save()
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -147,25 +204,24 @@ class TileDelegate(QStyledItemDelegate):
         clip.addRoundedRect(rect, theme.RADIUS_SMALL, theme.RADIUS_SMALL)
         painter.setClipPath(clip)
         painter.fillRect(rect, derived.panel)
+        bottom = rect.bottom()  # of what is free for the pills
         if tile is not None and tile.pixmap is not None:
-            painter.setOpacity(self._grid.opacity(path))
+            painter.setOpacity(grid.opacity(path))
             source = QRectF(tile.pixmap.rect())
             painter.drawPixmap(rect, tile.pixmap, source)  # already the tile's shape
             painter.setOpacity(1.0)
         elif tile is not None:
-            _draw_name(
+            draw_name(
                 painter, rect, path.name, "Missing" if tile.missing else "Can't open"
             )
-        if selected:
-            pen = QPen(derived.accent, 2)
-            painter.setPen(pen)
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            inner = rect.adjusted(1, 1, -1, -1)
-            painter.drawRoundedRect(inner, theme.RADIUS_SMALL, theme.RADIUS_SMALL)
+        if grid.needle and (tile is None or tile.pixmap is not None):
+            bottom = _draw_caption(painter, rect, path.name, grid.needle, option.font)
+        marks = grid.marks if grid.badges else Marks()
+        _draw_badges(painter, rect, entry, marks, option, bottom)
         painter.restore()
 
 
-def _draw_name(painter: QPainter, rect: QRectF, name: str, why: str) -> None:
+def draw_name(painter: QPainter, rect: QRectF, name: str, why: str) -> None:
     """A tile without an image: its file name, and why below it."""
     derived = theme.tones()
     metrics = QFontMetrics(painter.font())
@@ -180,12 +236,152 @@ def _draw_name(painter: QPainter, rect: QRectF, name: str, why: str) -> None:
     painter.drawText(QRectF(inner.x(), top + line, inner.width(), line), centered, why)
 
 
+def split_match(name: str, needle: str) -> tuple[str, str, str]:
+    """
+    `name` as (before, match, after) around its first match of `needle`,
+    ignoring case (no match: the name and two empty strings).
+    """
+    for fold in (str.casefold, str.lower):
+        folded = fold(name)
+        at = folded.find(fold(needle))
+        if at >= 0 and len(folded) == len(name):  # the same positions in `name`
+            end = at + len(fold(needle))
+            return name[:at], name[at:end], name[end:]
+    return name, "", ""
+
+
+def fit_match(
+    parts: tuple[str, str, str],
+    plain: QFontMetrics,
+    bold: QFontMetrics,
+    width: int,
+) -> tuple[str, str, str]:
+    """
+    `split_match`'s parts cut to fit `width` px, the match kept whole if it
+    fits: "…before" and "after…", each given at least half the room left.
+    """
+    before, match, after = parts
+    room = width - bold.horizontalAdvance(match)
+    if plain.horizontalAdvance(before) + plain.horizontalAdvance(after) <= room:
+        return parts
+    if room <= 0:
+        return "", bold.elidedText(match, Qt.TextElideMode.ElideRight, width), ""
+    left_room = max(room // 2, room - plain.horizontalAdvance(after))
+    left = plain.elidedText(before, Qt.TextElideMode.ElideLeft, left_room)
+    right_room = room - plain.horizontalAdvance(left)
+    return left, match, plain.elidedText(after, Qt.TextElideMode.ElideRight, right_room)
+
+
+def _draw_caption(
+    painter: QPainter, rect: QRectF, name: str, needle: str, font: QFont
+) -> float:
+    """
+    The match caption on a dark strip at the tile's bottom; returns the
+    strip's top (the pills go above it).
+    """
+    plain = theme.scaled_font(font, PILL_FONT)
+    bold = theme.scaled_font(font, PILL_FONT, bold=True)
+    plain_metrics, bold_metrics = QFontMetrics(plain), QFontMetrics(bold)
+    height = max(plain_metrics.height(), bold_metrics.height()) + CAPTION_HEIGHT
+    strip = QRectF(rect.left(), rect.bottom() - height, rect.width(), height)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(CAPTION_BACK)
+    painter.drawRect(strip)
+    width = int(strip.width()) - 2 * CAPTION_PADDING
+    parts = fit_match(split_match(name, needle), plain_metrics, bold_metrics, width)
+    _draw_runs(painter, strip, ((parts[0], plain), (parts[1], bold), (parts[2], plain)))
+    return strip.top()
+
+
+def _draw_runs(
+    painter: QPainter, strip: QRectF, runs: Sequence[tuple[str, QFont]]
+) -> None:
+    """Texts in their fonts one after the other, centred in `strip`."""
+    advances = [QFontMetrics(font).horizontalAdvance(text) for text, font in runs]
+    x = strip.left() + (strip.width() - sum(advances)) / 2
+    painter.setPen(CAPTION_TEXT)
+    flags = int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+    for (text, font), advance in zip(runs, advances):
+        if text:
+            painter.setFont(font)
+            room = QRectF(x, strip.top(), advance + 1, strip.height())
+            painter.drawText(room, flags, text)
+        x += advance
+
+
+def _draw_badges(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    painter: QPainter,
+    rect: QRectF,
+    entry: Entry,
+    marks: Marks,
+    option: QStyleOptionViewItem,
+    bottom: float,
+) -> None:
+    """The star and the bin at the top right, the pills above `bottom`."""
+    listed = ((marks.favourites, "star"), (marks.to_remove, "trash-2"))
+    _draw_discs(painter, rect, [name for keys, name in listed if entry.key in keys])
+    font = theme.scaled_font(option.font, PILL_FONT, bold=True)
+    below = rect.bottom() - bottom
+    if entry.key in marks.on_screen:
+        _draw_pill(painter, rect, "On screen", font, below, left=True)
+    if entry.shown_at is not None:
+        ago = format_ago(time.time() - entry.shown_at)
+        _draw_pill(painter, rect, ago, font, below)
+
+
+def _draw_discs(painter: QPainter, rect: QRectF, icons: Sequence[str]) -> None:
+    """These icons on dark discs, from the top right leftwards."""
+    ratio = painter.device().devicePixelRatioF()
+    right = rect.right() - BADGE_INSET
+    for name in icons:
+        disc = QRectF(right - BADGE, rect.top() + BADGE_INSET, BADGE, BADGE)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(BADGE_BACK)
+        painter.drawEllipse(disc)
+        pixmap = theme.tinted_pixmap(name, BADGE_MARK, BADGE_ICON, ratio)
+        corner = disc.center() - QPointF(BADGE_ICON / 2, BADGE_ICON / 2)
+        painter.drawPixmap(corner, pixmap)
+        right = disc.left() - BADGE_GAP
+
+
+def _draw_pill(  # pylint: disable=too-many-arguments
+    painter: QPainter,
+    rect: QRectF,
+    text: str,
+    font: QFont,
+    below: float,
+    *,
+    left: bool = False,
+) -> None:
+    """
+    A short text on a dark pill at the bottom left (or right) of a tile,
+    `below` px higher (above the caption).
+    """
+    painter.setFont(font)
+    metrics = painter.fontMetrics()
+    height = metrics.height() + 4
+    width = metrics.horizontalAdvance(text) + 2 * PILL_PADDING
+    x = rect.left() + BADGE_INSET if left else rect.right() - BADGE_INSET - width
+    top = rect.bottom() - below - BADGE_INSET - height
+    pill = QRectF(x, top, width, height)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(PILL_BACK)
+    painter.drawRoundedRect(pill, height / 2, height / 2)
+    painter.setPen(PILL_TEXT)
+    painter.drawText(pill, int(Qt.AlignmentFlag.AlignCenter), text)
+
+
 class ImageGrid(QListView):
     """See the module docstring."""
+
+    # pylint: disable=too-many-instance-attributes
 
     def __init__(self, loader: TileLoader, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.loader = loader
+        self.marks = Marks()
+        self.badges = True  # the marks shown (History's "2 h ago" always)
+        self.needle = ""  # the filter text: captions show the match
         self._fading: dict[Path, float] = {}  # arrived at (time.monotonic())
         self.list_model = GridModel(self)
         self.setViewMode(QListView.ViewMode.IconMode)
@@ -194,14 +390,16 @@ class ImageGrid(QListView):
         self.setUniformItemSizes(True)
         self.setSpacing(SPACING)
         self.setWrapping(True)
-        self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.verticalScrollBar().setSingleStep(TILE.height() // 3)
         self.setFrameShape(QFrame.Shape.NoFrame)
         self.viewport().setBackgroundRole(QPalette.ColorRole.Window)
         self.setItemDelegate(TileDelegate(self))
         self.setModel(self.list_model)
         self.setAccessibleName("Images")
+        self.viewport().setCursor(Qt.CursorShape.PointingHandCursor)  # opens it
 
         self._wanted_timer = QTimer(self)  # once per burst of changes
         self._wanted_timer.setSingleShot(True)
@@ -213,17 +411,45 @@ class ImageGrid(QListView):
         self.verticalScrollBar().valueChanged.connect(self._scrolled)
         loader.loaded.connect(self._tile_loaded)
 
-    def set_images(self, paths: Sequence[Path]) -> None:
-        """Show these, from the top (the same ones again: nothing changes)."""
-        if list(paths) == self.list_model.paths():
+    def set_entries(self, entries: Sequence[Entry], *, top: bool = True) -> None:
+        """
+        Show these, from the top (`top`), else where it was (the same list
+        read again, with an image more or less). The same ones again: nothing
+        changes.
+        """
+        if list(entries) == self.list_model.entries():
+            if top:
+                self.scrollToTop()
             return
+        scroll = self.verticalScrollBar()
+        kept = 0 if top else scroll.value()
         self._fading.clear()
-        self.list_model.set_paths(paths)
-        self.scrollToTop()
+        self.list_model.set_entries(entries)
+        if kept:
+            self.doItemsLayout()  # the new range, so the value isn't clipped to 0
+            scroll.setValue(kept)
+        else:
+            self.scrollToTop()
         self._wanted_timer.start()
 
     def images(self) -> list[Path]:
         return self.list_model.paths()
+
+    def set_marks(self, marks: Marks) -> None:
+        if marks != self.marks:
+            self.marks = marks
+            self.viewport().update()
+
+    def set_badges(self, on: bool) -> None:
+        if on != self.badges:
+            self.badges = on
+            self.viewport().update()
+
+    def set_needle(self, needle: str) -> None:
+        """The filter text the list is narrowed by ("": none, no captions)."""
+        if needle != self.needle:
+            self.needle = needle
+            self.viewport().update()
 
     def visible_rows(self, margin: int = 0) -> range:
         """
@@ -240,6 +466,17 @@ class ImageGrid(QListView):
         )
         end = bisect.bisect_left(rows, True, key=lambda r: self._rect(r).top() > bottom)
         return range(first, end)
+
+    def reveal(self, row: int, path: Path) -> None:
+        """
+        Scroll to the tile of `path`: at `row` if it is still there, else
+        its first one (the list may have changed meanwhile).
+        """
+        model = self.list_model
+        if not 0 <= row < model.rowCount() or model.path(row) != path:
+            row = next((r for r, p in enumerate(model.paths()) if p == path), -1)
+        if row >= 0:
+            self.scrollTo(model.index(row), QAbstractItemView.ScrollHint.EnsureVisible)
 
     def opacity(self, path: Path) -> float:
         """A fading tile's opacity now (1: shown fully)."""
@@ -305,38 +542,126 @@ class ImageGrid(QListView):
         self.viewport().update()
 
 
-# -- listing a folder off the main thread -------------------------------------------
+# -- the fast-scroll bar ------------------------------------------------------------
 
 
-class FolderScan(QObject):
+class FastScroll(QWidget):
     """
-    A folder's images (`library.scan`: recursive, natural order), listed
-    on a thread of its own; `scanned(folder, paths)` for the latest asked
-    for only. `close()` before the owner goes away (it waits for a scan).
+    A slim scroll bar for a grid, painted here: it follows the grid's own
+    (hidden) `bar` and moves it. Dragging the handle moves the grid with the
+    pointer; pressing the track elsewhere jumps there first, so one drag
+    reaches anywhere in 20k images. The wheel over it scrolls the grid. No
+    handle while there is nothing to scroll.
     """
 
-    scanned = Signal(object, object)  # Path, list[Path]
-
-    def __init__(self, parent: QObject | None = None) -> None:
+    def __init__(self, bar: QScrollBar, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._jobs = Jobs(parent=self)
-        self._jobs.done.connect(self._done)
-        self._asked: Path | None = None
+        self._bar = bar
+        self._grab: float | None = None  # while dragging: the pointer in the handle
+        self.setFixedWidth(SCROLL_WIDTH)
+        self.setAccessibleName("Scroll position")
+        bar.valueChanged.connect(self._moved)
+        bar.rangeChanged.connect(self._range_changed)
 
-    def asked(self) -> Path | None:
-        """The folder being listed, if any."""
-        return self._asked
+    def handle(self) -> QRectF | None:
+        """The handle, in the widget (None: nothing to scroll)."""
+        scroll = self._bar
+        span = scroll.maximum() - scroll.minimum()
+        if span <= 0 or self.height() <= 0:
+            return None
+        height = float(self.height())
+        page = max(1, scroll.pageStep())
+        length = min(height, max(SCROLL_HANDLE_MIN, height * page / (span + page)))
+        top = (height - length) * (scroll.value() - scroll.minimum()) / span
+        return QRectF(0, top, self.width(), length)
 
-    def scan(self, folder: Path) -> None:
-        self._asked = folder
-        self._jobs.run(folder, partial(scan, folder))
+    def dragging(self) -> bool:
+        return self._grab is not None
 
-    def close(self) -> None:
-        self._asked = None
-        self._jobs.close()
+    def _scroll_to(self, handle_top: float, length: float) -> None:
+        """Moves the grid so the handle's top is at `handle_top`."""
+        scroll = self._bar
+        room = self.height() - length
+        share = 0.0 if room <= 0 else min(1.0, max(0.0, handle_top / room))
+        scroll.setValue(
+            scroll.minimum() + round(share * (scroll.maximum() - scroll.minimum()))
+        )
 
-    @Slot(object, object)
-    def _done(self, folder: Path, paths: list[Path]) -> None:
-        if folder == self._asked:
-            self._asked = None
-            self.scanned.emit(folder, paths)
+    @override
+    def mousePressEvent(  # pylint: disable=invalid-name
+        self, event: QMouseEvent
+    ) -> None:
+        handle = self.handle()
+        if event.button() != Qt.MouseButton.LeftButton or handle is None:
+            super().mousePressEvent(event)
+            return
+        y = event.position().y()
+        if handle.top() <= y <= handle.bottom():
+            self._grab = y - handle.top()
+        else:  # jump there: the handle centred on the pointer
+            self._grab = handle.height() / 2
+            self._scroll_to(y - self._grab, handle.height())
+        self.update()
+
+    @override
+    def mouseMoveEvent(
+        self, event: QMouseEvent
+    ) -> None:  # pylint: disable=invalid-name
+        handle = self.handle()
+        if self._grab is None or handle is None:
+            return
+        self._scroll_to(event.position().y() - self._grab, handle.height())
+
+    @override
+    def mouseReleaseEvent(  # pylint: disable=invalid-name
+        self, event: QMouseEvent
+    ) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:  # what started the drag
+            self._grab = None
+            self.update()
+
+    @override
+    def wheelEvent(self, event: QWheelEvent) -> None:  # pylint: disable=invalid-name
+        QCoreApplication.sendEvent(self._bar, event)
+
+    @override
+    def enterEvent(self, event: QEnterEvent) -> None:  # pylint: disable=invalid-name
+        super().enterEvent(event)
+        self.update()
+
+    @override
+    def leaveEvent(self, event: QEvent) -> None:  # pylint: disable=invalid-name
+        super().leaveEvent(event)
+        self.update()
+
+    @override
+    def paintEvent(self, event: QPaintEvent) -> None:  # pylint: disable=invalid-name
+        del event
+        handle = self.handle()
+        if handle is None:
+            return
+        tones = theme.tones()
+        active = self.dragging() or self.underMouse()
+        width = SCROLL_TRACK_ACTIVE if active else SCROLL_TRACK
+        x = (self.width() - width) / 2
+        radius = width / 2
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(tones.field)
+        painter.drawRoundedRect(QRectF(x, 0, width, self.height()), radius, radius)
+        painter.setBrush(tones.text if active else tones.muted)
+        painter.drawRoundedRect(
+            QRectF(x, handle.top(), width, handle.height()), radius, radius
+        )
+        painter.end()
+
+    @Slot(int)
+    def _moved(self, value: int) -> None:
+        del value
+        self.update()
+
+    @Slot(int, int)
+    def _range_changed(self, low: int, high: int) -> None:
+        del low, high
+        self.update()

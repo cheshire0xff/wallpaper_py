@@ -25,12 +25,7 @@ from wallpaper_py.app.ui.arrangement import (
     playlists_by_monitor,
     twins,
 )
-from wallpaper_py.app.ui.home import (
-    HomePage,
-    details_text,
-    format_size,
-    schedule_text,
-)
+from wallpaper_py.app.ui.home import HomePage, details_text, schedule_text
 from wallpaper_py.app.ui.thumbnails import (
     Decoded,
     ImageInfo,
@@ -57,6 +52,7 @@ from wallpaper_py.protocol import (
     StatusRequest,
     StatusResult,
 )
+from wallpaper_py.texts import format_size
 
 from .fake_client import FakeClient as BaseFakeClient
 

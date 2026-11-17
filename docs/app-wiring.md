@@ -18,8 +18,8 @@ the receiving thread's event loop, so the sender never waits.
 |---|---|
 | **daemon**, main thread (Qt event loop) | `QApplication`, `Tray`, `ScreenWatcher`, `ServiceThread` (the handle on the service thread) and its `LocalClient`, the tray's `Client` |
 | **daemon**, service thread (`QThread` "playlist-service") | `ServiceWorker` and everything it creates on that thread: the `CommandServer` (socket), the tick `QTimer`, COM (`backends.thread_scope`), the backend, the SQLite `Store`, the `PlaylistService` |
-| **window process** (`wallpaper ui`, on demand), main thread | `QApplication`, `SocketClient` (the daemon's socket, subscribed as the window), and the one `MainWindow`: its `ThumbnailLoader` (shared by Home and Settings), its `Sidebar` and its pages, `HomePage` (with its `PlaylistRow`s and `MonitorsView`), `LibraryPage` (with its `OverviewTab`, the All images `ImageGrid`, and the grids' `TileLoader`, `Pregenerator` and `FolderScan`), `SettingsPage` (with its `PlaylistEditor`s, `LookEditor`, a `MonitorsView` and the About tab) |
-| **window process**, pool threads (a `Jobs` each: `ThumbnailLoader` 2, `TileLoader` 4, `Pregenerator` 1 at low priority, `FolderScan` 1) | nothing lives there: jobs read files (images, thumbnails, folders) and hand their results to `Jobs.done` on the main thread |
+| **window process** (`wallpaper ui`, on demand), main thread | `QApplication`, `SocketClient` (the daemon's socket, subscribed as the window), and the one `MainWindow`: its `ThumbnailLoader` (shared by Home and Settings), its `Sidebar` and its pages, `HomePage` (with its `PlaylistRow`s and `MonitorsView`), `LibraryPage` (with its `GridTab`s, each an `ImageGrid` and a `FastScroll`, its `StatsTab`, its `EnlargedView` with an `ImageCanvas`, the grids' `TileLoader` and `Pregenerator`, and a `LatestRead` each for the folder, the lists, the history and the enlarged image), `SettingsPage` (with its `PlaylistEditor`s, `LookEditor`, a `MonitorsView` and the About tab) |
+| **window process**, pool threads (a `Jobs` each: `ThumbnailLoader` 2, `TileLoader` 4, `Pregenerator` 1 at low priority, each `LatestRead` 1) | nothing lives there: jobs read files (images, thumbnails, folders, the lists, the history, an image at full size) and hand their results to `Jobs.done` on the main thread |
 | **CLI** (a separate process) | `ipc.send`: blocking client, no event loop |
 
 ## Overview
@@ -37,7 +37,7 @@ flowchart LR
         client["SocketClient"]
         windows["MainWindow<br/>HomePage, LibraryPage,<br/>SettingsPage"]
         thumbs["ThumbnailLoader<br/>thread pool"]
-        tiles["TileLoader, Pregenerator,<br/>FolderScan: thread pools"]
+        tiles["TileLoader, Pregenerator,<br/>LatestRead: thread pools"]
     end
     subgraph UI["daemon: main thread"]
         tray["Tray"]
@@ -55,11 +55,11 @@ flowchart LR
     send ==>|"request / reply"| server
     client ==>|"subscribe as the window: events, show_page<br/>commands: request / reply"| server
     client -->|"overview_changed, changed,<br/>marks_changed, show_requested"| windows
-    windows -->|"run (also stats, reset_cycle,<br/>settings, save_settings)"| client
+    windows -->|"run (also stats, upcoming, reset_cycle,<br/>settings, save_settings)"| client
     windows -->|"want"| thumbs
     thumbs -.->|"loaded"| windows
-    windows -->|"request, set_wanted,<br/>start (pre-generation), scan"| tiles
-    tiles -.->|"loaded, scanned"| windows
+    windows -->|"request, set_wanted,<br/>start (pre-generation), read"| tiles
+    tiles -.->|"loaded, done"| windows
     server -->|"received, subscribed"| worker
     worker -->|"reply, broadcast,<br/>show_window"| server
     tray -->|"run (also show_window)"| local
@@ -231,7 +231,8 @@ sequenceDiagram
     C->>S: SettingsPage.saved: the new revision, and the warnings if any
 ```
 
-The Library page's Overview tab (the numbers come from the daemon):
+The Library page's Stats tab and Upcoming (from the daemon), one request
+of each kind at a time:
 
 ```mermaid
 sequenceDiagram
@@ -239,30 +240,36 @@ sequenceDiagram
     participant L as LibraryPage
     participant W as ServiceWorker<br/>daemon, service thread
 
-    Note over L: shown (LibraryPage.showEvent), or its tab or playlist chosen
+    Note over L: shown (LibraryPage.showEvent), or its playlist chosen: stats (the header's seen count on every tab)
+    Note over L: the Stats or Upcoming tab chosen: that one
     L->>C: Client.run(stats: its playlist), reply to LibraryPage.stats_replied
     C->>W: stats: commands.execute counts from the scan, the deck and the lists
     W->>C: StatsResult
-    C->>L: OverviewTab.show_stats
-    C->>L: overview_changed, marks_changed, or changed of its playlist: asked again
+    C->>L: StatsTab.show_stats, and the header's count
+    L->>C: Client.run(upcoming: 500), reply to LibraryPage.upcoming_replied
+    C->>L: the UpcomingResult: GridTab.set_entries, in its order
+    C->>L: changed of its playlist, marks_changed: asked again (and on overview_changed: stats always, upcoming after a save)
 ```
 
-The Library page's All images tab (the page reads the folder and the
-images itself, off the main thread; nothing goes through the daemon):
+The grid tabs that the page reads itself, off the main thread (nothing
+goes through the daemon):
 
 ```mermaid
 sequenceDiagram
     participant L as LibraryPage
-    participant F as FolderScan<br/>(its thread)
-    participant G as ImageGrid
+    participant R as LatestRead<br/>(a thread each)
+    participant G as GridTab, ImageGrid
     participant T as TileLoader<br/>(tile threads)
     participant P as Pregenerator<br/>(its thread)
 
     Note over L,P: an overview names the playlists: LibraryPage._pregenerate
     L->>P: Pregenerator.start(the folders, the chosen one first, and the lists)
-    Note over L: All images shown, or its playlist chosen
-    L->>F: FolderScan.scan(the folder)
-    F--)L: FolderScan.scanned: ImageGrid.set_images
+    Note over L: shown, marks_changed: the lists (badges on every grid)
+    Note over L: All images shown, or its playlist chosen: the folder
+    Note over L: History shown, changed of its playlist: the history
+    L->>R: LatestRead.read(key, entries.read_lists / read_folder / read_history)
+    R--)L: LatestRead.done (the latest read only): LibraryPage._fill narrows by the chip
+    L->>G: GridTab.set_entries: narrowed by name, sorted, ImageGrid.set_entries
     G->>T: TileLoader.set_wanted(rows on screen), TileLoader.request (painted tiles)
     T--)G: TileLoader.loaded: the tile fades in
     P->>P: waits on TileLoader.idle, then ThumbnailCache.ensure per image, and at the end prunes

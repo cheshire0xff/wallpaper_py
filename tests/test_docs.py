@@ -11,11 +11,12 @@ from wallpaper_py.app.screens import ScreenWatcher
 from wallpaper_py.app.tray import Tray
 from wallpaper_py.app.ui.arrangement import MonitorsView
 from wallpaper_py.app.client import Client, SocketClient
-from wallpaper_py.app.ui.grid import FolderScan, ImageGrid
+from wallpaper_py.app.ui.grid import FastScroll, ImageGrid
 from wallpaper_py.app.ui.home import HomePage, PlaylistRow
-from wallpaper_py.app.ui.jobs import Jobs
+from wallpaper_py.app.ui.jobs import Jobs, LatestRead
 from wallpaper_py.app.ui.library import LibraryPage
-from wallpaper_py.app.ui.library_overview import OverviewTab
+from wallpaper_py.app.ui.library_grids import GridTab
+from wallpaper_py.app.ui.library_stats import StatsTab
 from wallpaper_py.app.ui.settings import SettingsPage
 from wallpaper_py.app.ui.settings_form import PlaylistEditor
 from wallpaper_py.app.ui.settings_look import LookEditor
@@ -35,16 +36,18 @@ OWNERS: dict[str, type | ModuleType] = {
     "cli": cli,
     "Client": Client,
     "CommandServer": CommandServer,
-    "FolderScan": FolderScan,
+    "FastScroll": FastScroll,
     "HomePage": HomePage,
     "ImageGrid": ImageGrid,
+    "GridTab": GridTab,
     "Jobs": Jobs,
+    "LatestRead": LatestRead,
     "LibraryPage": LibraryPage,
     "LocalClient": LocalClient,
     "LookEditor": LookEditor,
     "MonitorsView": MonitorsView,
     "MainWindow": MainWindow,
-    "OverviewTab": OverviewTab,
+    "StatsTab": StatsTab,
     "PlaylistRow": PlaylistRow,
     "PlaylistEditor": PlaylistEditor,
     "Pregenerator": Pregenerator,
