@@ -1,6 +1,6 @@
 """
 The Library page: what a playlist picks up, as images and in numbers
-(docs/plan.md at 268a951, Phase 5; docs/design/library.png).
+(docs/plan.md at 268a951, Phase 5).
 
 The title, a playlist drop-down and the open tab's count ("· 20,431 images
 · 1,204 seen"; "312 of 20,431" while filtered by name; the seen count, the

@@ -1,6 +1,6 @@
 """
 The Settings page's form (settings.py), as rows without boxes
-(docs/design/settings-monitors.dc.html): each `SettingRow` has its name
+(docs/design/README.md, "The look"): each `SettingRow` has its name
 and a muted one-line description on the left and its control on the
 right, all controls in one column; fields are borderless and filled,
 the other controls painted (controls.py).

@@ -9,13 +9,12 @@ A tile is the image filling it, cropped to the middle as Fill shows a
 wallpaper, so every tile looks alike (as in the phone app); it fades in
 from the panel tone when its thumbnail arrives. An image whose file is
 gone is a "missing" tile with its name, one that can't be read says so;
-neither is an error. Badges, as in docs/design/library.png: a star for a
-favourite, a bin for one listed to remove, *On screen* for the current
-image of any playlist (`Marks`, which the page keeps up to date), and in
-History when it was shown ("2 h ago"). They sit on the image, so their
-colours are fixed (white outline icons and text on dark discs and
-pills), not the page's. With badges off (`set_badges`), only "2 h ago"
-stays.
+neither is an error. Badges: a star for a favourite, a bin for one listed
+to remove, *On screen* for the current image of any playlist (`Marks`,
+which the page keeps up to date), and in History when it was shown ("2 h
+ago"). They sit on the image, so their colours are fixed (white outline
+icons and text on dark discs and pills), not the page's. With badges off
+(`set_badges`), only "2 h ago" stays.
 
 While the list is narrowed by name (`set_needle`), each tile has a caption
 at its bottom: the file name around the match, the match in bold (so you
@@ -93,7 +92,7 @@ FADE_S = 0.18  # a tile fading in from the panel tone
 FADE_FRAME_MS = 16
 MARGIN_ROWS = 1  # rows of tiles above and below the screen also asked for
 
-# Badges (docs/design/mockup.dc.html, the Library page), on the image.
+# Badges, on the image.
 BADGE = 22  # a disc's diameter
 BADGE_ICON = 13
 BADGE_INSET = 6  # from the tile's edge

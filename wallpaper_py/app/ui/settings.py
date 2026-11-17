@@ -1,6 +1,6 @@
 """
 The Settings page, monitor-first (docs/architecture.md, "App shell";
-docs/design/settings-monitors.dc.html): settings as rows, sub-tabs, and
+docs/design/README.md, "The look"): settings as rows, sub-tabs, and
 Save / Revert with the status line in a footer bar.
 
 The daemon keeps the settings (in its state database); the page reads them

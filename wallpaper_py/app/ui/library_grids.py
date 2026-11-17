@@ -1,7 +1,7 @@
 """
-A grid tab of the Library page (docs/plan.md at 268a951, "Grid tabs";
-docs/design/library.png): its toolbar, then an `ImageGrid` with its
-`FastScroll`, or a line in place of the grid (nothing to show, or why not).
+A grid tab of the Library page (docs/plan.md at 268a951, "Grid tabs"):
+its toolbar, then an `ImageGrid` with its `FastScroll`, or a line in place
+of the grid (nothing to show, or why not).
 
     [🔍 Filter by name      ]  [Name A–Z ▾]  (✓ Hide removed)    Badges  (●)
 
@@ -158,7 +158,7 @@ class GridTab(QWidget):
 
         grid_area = QWidget(self)
         grid_layout = QHBoxLayout(grid_area)
-        # The bar sits in the page's right margin, as in the mockup.
+        # The bar sits in the page's right margin.
         grid_layout.setContentsMargins(theme.PAGE_MARGIN, 0, theme.space(), 0)
         grid_layout.setSpacing(theme.space())
         grid_layout.addWidget(self.grid, 1)

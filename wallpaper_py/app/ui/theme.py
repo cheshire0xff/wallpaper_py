@@ -1,8 +1,8 @@
 """
-The look every page shares (docs/design/README.md, "The look"; the
-mockups in docs/design/): the system's palette, a few tones derived from
-it, constants and small painted widgets. Not a framework. The controls
-(drop-down, segmented choice, switch, buttons, slider) are controls.py's.
+The look every page shares (docs/design/README.md, "The look"): the
+system's palette, a few tones derived from it, constants and small
+painted widgets. Not a framework. The controls (drop-down, segmented
+choice, switch, buttons, slider) are controls.py's.
 
 - **Tones** (`derive_tones`, `tones`): derived from the application's
   `QPalette`, never hard-coded per OS. In dark mode the page is a shade
@@ -11,7 +11,7 @@ it, constants and small painted widgets. Not a framework. The controls
   lighter than the page. Light mode keeps the palette's Window colour; the
   panel behind images is a silver grey a step darker than the page, with
   the palette's (dark) text on it (wallpapers look washed out on white;
-  the old near-black panel was too stark; chosen from the mockup). The
+  the old near-black panel was too stark). The
   accent is the palette's Accent on Windows and its Highlight elsewhere
   (`ACCENT_ROLE`): Qt puts KDE's accent only in Highlight.
   `window_palette` puts the tones into the palette roles the native

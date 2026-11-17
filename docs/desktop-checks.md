@@ -80,7 +80,7 @@ per-user log directory: `%LOCALAPPDATA%\wallpaper_py\Logs` on Windows).
     the command itself, the wallpaper changes, and no process is left
     behind.
 13. **The look.** At 150 % display scale, dark mode: Home and Settings
-    look like the mockups in [design/](design/README.md), and the previews
+    follow the rules in [design/](design/README.md), and the previews
     and thumbnails are sharp. Switch the system to light mode with the
     window open: it follows. Tab reaches every control, with a visible
     focus outline.

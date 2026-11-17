@@ -1,8 +1,9 @@
-# Design mockups
+# Design
 
 The look the windows are built from (approved by the user; the rules
-below, the details in `app/ui/theme.py`). Dark mode is the one that
-matters; light mode only has to stay usable.
+below, the details in `app/ui/theme.py`). The app itself is the reference
+for layout. Dark mode is the one that matters; light mode only has to stay
+usable.
 
 ## The look
 
@@ -18,8 +19,7 @@ matters; light mode only has to stay usable.
   except the panel behind images in light mode (wallpapers look washed out
   on white), the status dot's green / red (the palette has no such
   roles), and the badges on the Library's tiles (they sit on the image:
-  white outline icons and text on dark discs). The page mockups stay the
-  reference for layout.
+  white outline icons and text on dark discs).
 - **One window with a sidebar**: *Home*, *Library*, *Settings*, each a
   Lucide icon and a label; the selected page has an accent bar on its left
   edge, a faint accent fill and a bold label; the app's status ("Rotation
@@ -47,34 +47,22 @@ matters; light mode only has to stay usable.
   sort, *Hide removed* / *Only <playlist>*), the grid on the panel tone,
   a slim fast-scroll bar painted in code. A tile opens enlarged over the
   whole page: the image on the panel tone under a bar on the page tone,
-  and the info card on the page tone over the image's bottom left (no
-  mockup: built from docs/plan.md at 268a951, "Enlarged view").
+  and the info card on the page tone over the image's bottom left.
 
 ## Files
 
-- `home.png`: the Home page (monitors panel, playlists as rows).
-- `settings.png`: the Settings page (settings as rows, no boxes).
-- `library.png`: the Library page (Phase 5 direction).
-- `settings-monitors.dc.html`: the monitor-first Settings page (Phase 4b;
-  approved, replaces `settings.png`). Interactive: click a monitor, change
-  its playlist, mode and background, edit, save and revert playlists.
-- `settings-monitors-twins.dc.html`: two monitors of one model ("1 of 2"),
-  with the monitor list open (switched-off and not-connected ones last).
-- `mockup.dc.html`: the mockup's source, for exact colours, sizes and
-  spacing. It is not a runnable page: `{{...}}` are template holes, filled
-  in by the script at the bottom (the `dark` theme object holds the
-  colours). Pages are switched by `page` / `flow`: Home is
-  `page="layout"` with `flow`, Settings `page="settings"` with `flow`;
-  light mode's panel tone by `panel` (`silver` is the one built).
 - `controls.dc.html`: the controls painted in code (Phase 5, step 2;
   approved): drop-down (closed and open), segmented choice, switch,
   buttons, slider, each at rest, hovered, focused, pressed and disabled,
-  in Settings and in the Library's toolbar. Same kind of source as
-  `mockup.dc.html`; `dark` and `accent` (the system's, made readable as
-  `theme.readable_accent` does) are its inputs. The look it aims for came
-  from the NVIDIA app; that screenshot stays out of the repo.
+  in Settings and in the Library's toolbar. Not a runnable page: `{{...}}`
+  are template holes, filled in by the script at the bottom; `dark` and
+  `accent` (the system's, made readable as `theme.readable_accent` does)
+  are its inputs. The look it aims for came from the NVIDIA app; that
+  screenshot stays out of the repo.
 
-Where a screenshot and the source differ, the screenshot wins. The images
-in the mockup are colourful stand-ins, not real wallpapers. Colours are
-the Windows 11 dark palette; the app takes them from the system palette
-(QPalette), so the values here are a reference, not constants to copy.
+The page mockups (Home, Settings, Library; screenshots and their source)
+were the target before the pages were built; the app has since moved past
+them, so they went. They are in git: `git show 4ea9572 -- docs/design/`.
+The colours here are the Windows 11 dark palette; the app takes them from
+the system palette (QPalette), so they are a reference, not constants to
+copy.
