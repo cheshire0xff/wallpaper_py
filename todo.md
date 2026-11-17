@@ -1,5 +1,4 @@
 ## Normal prio
-1. Delete playlist needs a confirmation box? Maybe not since you can revert it, think it through.
 1. Selectable images in grid where you can decide what to do with them like to fav them, remove then or undo etc
    (docs/plan.md, Phase 7, "Library, later").
 1. Separate the library viewer to make something like gwenview out of it?

@@ -106,10 +106,6 @@ Library, later (left out of Phase 5):
   view.
 - An *Unmarked only* chip on All images (neither listed).
 
-Open (todo.md, normal priority): whether Save asks first when it deletes
-a playlist's history (today the footer names it: "delete X and its
-history").
-
 Sound on wallpaper change: a per-playlist setting (off by default), a row
 in the playlist's settings. Played by the app (it runs anyway; the UI
 process may not), on any change the playlist makes: scheduled, next / prev
